@@ -1,0 +1,3256 @@
+<!DOCTYPE html>
+<html lang="it" data-theme="noir">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05070a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>pi web ui</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<style>
+  /* ===== themes =====
+     Scala di superfici per zona. Regola: la CHAT e' la superficie piu' scura
+     (piu' chiara nel tema light), sidebar/rail/header/composer salgono di
+     luminanza e hanno una sfumatura verticale propria + un bordo superiore
+     chiaro (--hair) che simula il lato sollevato. */
+  :root, [data-theme="noir"] {
+    color-scheme: dark;
+    --bg: #0b0d11;        /* chat: la piu' scura */
+    --bg-2: #07090c;      /* campi incassati */
+    --panel: #14171d;     /* rail / sidebar / diff */
+    --panel-2: #1a1e26;   /* card, dropdown */
+    --panel-3: #232833;   /* hover */
+    --line: #262b34;
+    --line-2: #353b47;
+    --hair: #ffffff0f;
+    --txt: #e9edf3;
+    --txt-dim: #9aa5b6;
+    --txt-faint: #6470829a;
+    --faint: #647082;
+    --teal: #2fe0c0;
+    --teal-dim: #2fe0c01f;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --crit: #f87171;
+    --on-accent: #04211c;
+    --code-bg: #070a0e;
+    --grid: #ffffff05;
+    --chat-bg: radial-gradient(120% 70% at 50% -10%, #171b2299, transparent 65%);
+    --side-bg: linear-gradient(180deg, #1a1e26, #14171d 38%, #101318);
+    --head-bg: linear-gradient(180deg, #1c212ae6, #16191fe6);
+    --composer-bg: linear-gradient(180deg, #1e232c, #171a21);
+    --card-bg: linear-gradient(180deg, #1a1e25, #15181e);
+  }
+  [data-theme="violet"] {
+    color-scheme: dark;
+    --bg: #0b0814; --bg-2: #070510; --panel: #17122a; --panel-2: #1e1836; --panel-3: #292244;
+    --line: #2c2447; --line-2: #3b3159; --hair: #ffffff12;
+    --txt: #ece9f7; --txt-dim: #a79ec4; --txt-faint: #7a6fa09a; --faint: #7a6fa0;
+    --teal: #a78bfa; --teal-dim: #a78bfa22; --ok: #6ee7b7; --warn: #fcd34d; --crit: #fb7185;
+    --on-accent: #150c2b; --code-bg: #07050e; --grid: #ffffff06;
+    --chat-bg: radial-gradient(120% 70% at 50% -10%, #1d1636aa, transparent 65%);
+    --side-bg: linear-gradient(180deg, #1e1836, #17122a 38%, #120e22);
+    --head-bg: linear-gradient(180deg, #201a3ae6, #1a1430e6);
+    --composer-bg: linear-gradient(180deg, #221b3e, #191330);
+    --card-bg: linear-gradient(180deg, #1e1835, #181228);
+  }
+  [data-theme="ember"] {
+    color-scheme: dark;
+    --bg: #0e0a06; --bg-2: #090603; --panel: #1b130c; --panel-2: #241a10; --panel-3: #302317;
+    --line: #33261a; --line-2: #453425; --hair: #ffffff0e;
+    --txt: #f6ece4; --txt-dim: #bda694; --txt-faint: #8a725c9a; --faint: #8a725c;
+    --teal: #fb923c; --teal-dim: #fb923c1f; --ok: #a3e635; --warn: #fbbf24; --crit: #f87171;
+    --on-accent: #241204; --code-bg: #0a0704; --grid: #ffffff05;
+    --chat-bg: radial-gradient(120% 70% at 50% -10%, #241a109e, transparent 65%);
+    --side-bg: linear-gradient(180deg, #241a10, #1b130c 38%, #150e08);
+    --head-bg: linear-gradient(180deg, #261c12e6, #1e1610e6);
+    --composer-bg: linear-gradient(180deg, #291e13, #1f1710);
+    --card-bg: linear-gradient(180deg, #241a10, #1c150d);
+  }
+  [data-theme="nord"] {
+    color-scheme: dark;
+    --bg: #0a0f17; --bg-2: #060a11; --panel: #141d29; --panel-2: #1a2534; --panel-3: #243144;
+    --line: #24303f; --line-2: #334156; --hair: #ffffff10;
+    --txt: #e6eef8; --txt-dim: #a0b1c6; --txt-faint: #6d8098a0; --faint: #6d8098;
+    --teal: #7dd3fc; --teal-dim: #7dd3fc1f; --ok: #86efac; --warn: #fcd34d; --crit: #fca5a5;
+    --on-accent: #06202e; --code-bg: #070c13; --grid: #ffffff06;
+    --chat-bg: radial-gradient(120% 70% at 50% -10%, #16202ea6, transparent 65%);
+    --side-bg: linear-gradient(180deg, #1a2534, #141d29 38%, #101721);
+    --head-bg: linear-gradient(180deg, #1c2736e6, #16202ce6);
+    --composer-bg: linear-gradient(180deg, #1e2a3a, #17212e);
+    --card-bg: linear-gradient(180deg, #1a2533, #151e29);
+  }
+  [data-theme="rose"] {
+    color-scheme: dark;
+    --bg: #0f0812; --bg-2: #0a050d; --panel: #1c1122; --panel-2: #24172c; --panel-3: #2f1f38;
+    --line: #2f1e38; --line-2: #40294c; --hair: #ffffff12;
+    --txt: #f7ebf6; --txt-dim: #c2a3c0; --txt-faint: #8a6a889a; --faint: #8a6a88;
+    --teal: #f472b6; --teal-dim: #f472b61f; --ok: #6ee7b7; --warn: #fcd34d; --crit: #fb7185;
+    --on-accent: #2b0a1d; --code-bg: #0b060e; --grid: #ffffff06;
+    --chat-bg: radial-gradient(120% 70% at 50% -10%, #22152aa6, transparent 65%);
+    --side-bg: linear-gradient(180deg, #24172c, #1c1122 38%, #170d1c);
+    --head-bg: linear-gradient(180deg, #26182ee6, #1e1226e6);
+    --composer-bg: linear-gradient(180deg, #291a31, #1f1327);
+    --card-bg: linear-gradient(180deg, #24172b, #1d1224);
+  }
+  [data-theme="daylight"] {
+    color-scheme: light;
+    /* nel tema chiaro la logica si inverte: la chat e' la superficie piu' chiara */
+    --bg: #ffffff; --bg-2: #f1f3f7; --panel: #f7f8fa; --panel-2: #ffffff; --panel-3: #eaedf3;
+    --line: #e6e9ee; --line-2: #d3d9e2; --hair: #ffffff;
+    --txt: #14181f; --txt-dim: #4a5361; --txt-faint: #8b94a2; --faint: #8b94a2;
+    --teal: #0d9488; --teal-dim: #0d948814; --ok: #16a34a; --warn: #d97706; --crit: #dc2626;
+    --on-accent: #ffffff; --code-bg: #f4f6f9; --grid: #0000000a;
+    --chat-bg: radial-gradient(120% 70% at 50% -10%, #0d948809, transparent 65%);
+    --side-bg: linear-gradient(180deg, #fbfcfd, #f5f6f9);
+    --head-bg: linear-gradient(180deg, #ffffffe8, #f8f9fbe8);
+    --composer-bg: linear-gradient(180deg, #ffffff, #fbfcfd);
+    --card-bg: #ffffff;
+  }
+  /* elevazione condivisa da tutti i temi */
+  :root {
+    --elev-1: 0 1px 2px #00000038;
+    --elev-2: 0 4px 14px -4px #00000055, 0 1px 2px #00000040;
+    --elev-3: 0 20px 50px -14px #00000070, 0 2px 6px #00000045;
+    --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-display: "Inter Tight", "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  }
+  [data-theme="daylight"] {
+    --elev-1: 0 1px 2px #0b132414;
+    --elev-2: 0 2px 8px -2px #0b13241f, 0 1px 2px #0b132414;
+    --elev-3: 0 18px 50px -18px #0b132433, 0 2px 8px -2px #0b132414;
+  }
+  [data-theme="daylight"] .msg.md :not(pre) > code,
+  [data-theme="daylight"] .filechip { background: var(--bg-2); }
+  [data-theme="daylight"] .toast { background: #fff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--txt); display: flex; overflow: hidden;
+    font: 14.5px/1.65 var(--font-ui); letter-spacing: -.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; touch-action: manipulation; }
+  input, textarea, select { font: inherit; color: inherit; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--panel-3); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--line-2); background-clip: content-box; }
+  .hide { display: none !important; }
+
+  /* grid backdrop like the reference */
+  .grid-bg {
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 46px 46px;
+  }
+
+  /* ---------- shared ---------- */
+  .btn {
+    display: inline-flex; align-items: center; gap: .45rem; padding: .42rem .7rem;
+    border-radius: 10px; color: var(--txt-dim); border: 1px solid transparent;
+    white-space: nowrap; transition: background .15s, color .15s, border-color .15s;
+  }
+  .btn:hover { background: var(--panel-3); color: var(--txt); }
+  .btn.outline { border-color: var(--line); background: var(--panel-2); color: var(--txt); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); }
+  .btn.outline:hover { border-color: var(--line-2); transform: translateY(-1px); box-shadow: var(--elev-2), inset 0 1px 0 var(--hair); }
+  .btn.teal { background: var(--teal); color: var(--on-accent); font-weight: 600; }
+  .btn.teal:hover { background: color-mix(in srgb, var(--teal) 82%, #fff); }
+  .btn.danger:hover { background: #2a1418; color: #ff9b93; }
+  .btn.icon { padding: .45rem; }
+  .btn[disabled] { opacity: .4; cursor: default; }
+  .chip {
+    display: inline-flex; align-items: center; gap: .5rem; padding: .35rem .6rem;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); font-size: .82rem; color: var(--txt-dim); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair);
+  }
+  .chip:hover { border-color: var(--line-2); color: var(--txt); }
+  .kbd { font: 400 11px var(--font-mono); color: var(--faint); border: 1px solid var(--line); border-radius: 5px; padding: 0 .32rem; }
+  .card { background: var(--card-bg); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); }
+  .badge { font-size: .68rem; padding: .1rem .4rem; border-radius: 999px; border: 1px solid var(--line-2); color: var(--txt-dim); }
+  .badge.ok { color: var(--teal); border-color: #2fe0c055; background: var(--teal-dim); }
+  .badge.no { color: var(--crit); border-color: #f8717155; }
+
+  /* ---------- icon rail ---------- */
+  #rail {
+    width: 58px; flex-shrink: 0; background: var(--side-bg); border-right: 1px solid var(--line); box-shadow: inset 0 1px 0 var(--hair);
+    display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: .8rem 0;
+  }
+  #rail .logo-tile {
+    width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; margin-bottom: .8rem;
+    background: linear-gradient(150deg, var(--teal), #12a894); color: #03211c; font-weight: 800; font-size: 17px;
+    transition: transform .12s, box-shadow .12s;
+  }
+  #rail .logo-tile:hover { transform: translateY(-1px); box-shadow: 0 6px 18px #2fe0c033; }
+  .rail-btn {
+    width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--faint);
+    position: relative; transition: .15s;
+  }
+  .rail-btn:hover { background: var(--panel-3); color: var(--txt); box-shadow: inset 0 1px 0 var(--hair); }
+  .rail-btn.on { background: var(--teal-dim); color: var(--teal); }
+  .rail-btn .count {
+    position: absolute; top: 2px; right: 2px; min-width: 15px; height: 15px; border-radius: 8px;
+    background: var(--teal); color: #04211c; font: 700 10px/15px ui-sans-serif; text-align: center;
+  }
+
+  /* ---------- sidebar ---------- */
+  #sidebar {
+    width: var(--sbw, 230px); flex-shrink: 0; background: var(--side-bg); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow: hidden; transition: width .18s; position: relative;
+  }
+  #sidebar.collapsed { width: 0; border-right: none; }
+  /* maniglia di ridimensionamento: trascina il bordo destro (min 190 / max 460) */
+  #sidebarResize {
+    position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 20;
+  }
+  #sidebarResize::after {
+    content: ''; position: absolute; top: 0; left: 3px; width: 1px; height: 100%; background: transparent; transition: background .12s;
+  }
+  #sidebarResize:hover::after, body.sb-resizing #sidebarResize::after { background: var(--teal); }
+  #sidebar.collapsed #sidebarResize { display: none; }
+  body.sb-resizing { cursor: col-resize; user-select: none; }
+  body.sb-resizing #sidebar { transition: none; }
+  .side-pad { padding: .8rem .75rem .55rem; display: flex; flex-direction: column; gap: .5rem; }
+  .search {
+    display: flex; align-items: center; gap: .5rem; background: var(--bg-2);
+    border: 1px solid var(--line); border-radius: 10px; padding: .42rem .6rem;
+  }
+  .search input { flex: 1; min-width: 0; background: none; border: none; outline: none; font-size: .85rem; }
+  .search input::placeholder { color: var(--faint); }
+  .filters { display: flex; gap: .4rem; }
+  .filters select {
+    flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--line); border-radius: 9px;
+    padding: .34rem .4rem; font-size: .76rem; color: var(--txt-dim); outline: none;
+  }
+  .filters #filterDd { flex: 0 0 auto; }
+  #filterBtn { position: relative; background: var(--bg-2); border: 1px solid var(--line); border-radius: 9px; }
+  #filterBtn.on { color: var(--teal); border-color: #2fe0c055; background: var(--teal-dim); }
+  #filterBtn .count {
+    position: absolute; top: -5px; right: -5px; min-width: 14px; height: 14px; border-radius: 8px;
+    background: var(--teal); color: #04211c; font: 700 9px/14px ui-sans-serif; text-align: center; padding: 0 2px;
+  }
+  #filterMenu { min-width: 190px; }
+  #filterMenu .dd-item.sel { background: var(--teal-dim); color: var(--teal); }
+  .side-label {
+    display: flex; justify-content: space-between; padding: .5rem .95rem .3rem;
+    font-size: .69rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint);
+  }
+  #sessionList { flex: 1; overflow-y: auto; padding: 0 .5rem .6rem; }
+  .sessionItem { position: relative; padding: .5rem .6rem; border-radius: 10px; cursor: pointer; margin-bottom: 2px; transition: filter .15s, opacity .15s; }
+  .sessionItem:hover { background: var(--panel-2); }
+  /* hover: vetro sfocato sulla riga + i due tasti (concludi / preferito) */
+  .sessionItem .acts {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: flex-end;
+    gap: .25rem; padding: 0 .5rem; border-radius: 10px; z-index: 2;
+    backdrop-filter: blur(1.5px) saturate(.95); -webkit-backdrop-filter: blur(1.5px) saturate(.95);
+    background: color-mix(in srgb, var(--panel-2) 35%, transparent);
+  }
+  .sessionItem:hover .acts { display: flex; }
+  .sessionItem .acts button {
+    border: 1px solid var(--hair); background: var(--panel-3); color: var(--faint);
+    border-radius: 8px; cursor: pointer; font-size: .8rem; line-height: 1;
+    padding: .25rem .4rem; transition: color .12s, border-color .12s, background .12s;
+  }
+  .sessionItem .acts button:hover { background: var(--panel); color: var(--fg); }
+  .sessionItem .acts .fav.on, .sessionItem .acts .fav:hover { color: #e2557b; }
+  .sessionItem .acts .doneBtn.on, .sessionItem .acts .doneBtn:hover { color: var(--teal); }
+  /* chat conclusa: spenta, testo scuro, in fondo alla lista */
+  .sessionItem.done { opacity: .55; }
+  .sessionItem.done .lbl, .sessionItem.done .title { color: var(--faint); }
+  .sessionItem.done .meta, .sessionItem.done .proj { color: var(--faint); opacity: .6; }
+  .sessionItem.done .meta .logo { filter: grayscale(1); opacity: .6; }
+  .sessionItem.done:hover { opacity: .85; }
+  /* chat attiva (non conclusa): pallino verde discreto prima del titolo */
+  .sessionItem .liveDot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); opacity: .75; }
+  .sessionItem .reopened { flex: none; font-size: .6rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--teal); border: 1px solid var(--hair); border-radius: 6px; padding: 0 .25rem; }
+  .sessionItem.active { position: relative; background: var(--panel-3); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); }
+  .sessionItem.active::before { content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2.5px; border-radius: 2px; background: var(--teal); }
+  .sessionItem .title { font-size: .845rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sessionItem .meta { display: flex; gap: .35rem; align-items: center; margin-top: .15rem; font-size: .7rem; color: var(--faint); }
+  .sessionItem .meta .logo { width: 13px; height: 13px; border-radius: 4px; }
+  .sessionItem .meta .logo svg { width: 13px; height: 13px; }
+  /* intestazioni dei gruppi nella lista chat (giorno / progetto / modello) */
+  .sessGroup {
+    display: flex; align-items: center; gap: .4rem; padding: .55rem .6rem .25rem;
+    font-size: .67rem; text-transform: uppercase; letter-spacing: .09em; color: var(--faint);
+  }
+  .sessGroup::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  .sessionItem .proj { color: var(--teal); opacity: .8; max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sessionItem .title { display: flex; align-items: center; gap: .4rem; }
+  /* in elaborazione: punto rosso che appare e scompare */
+  .sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #e2557b;
+    box-shadow: 0 0 6px #e2557b80; animation: pulse 1.4s ease-in-out infinite; }
+  .sessionItem .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* cuoricino sempre visibile quando è un preferito (fuori dal pannello hover) */
+  .sessionItem .favMark { margin-left: auto; flex: none; font-size: .8rem; color: #e2557b; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  .side-foot { border-top: 1px solid var(--line); background: linear-gradient(180deg, transparent, #00000026); padding: .5rem .6rem; display: flex; align-items: center; gap: .3rem; font-size: .78rem; }
+  #conn { font-size: .7rem; color: var(--faint); display: flex; align-items: center; gap: .35rem; }
+  #conn .d { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  #conn.off .d { background: var(--crit); }
+
+  /* ---------- main ---------- */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  header {
+    display: flex; align-items: center; gap: .45rem; padding: .5rem .8rem;
+    border-bottom: 1px solid var(--line); background: var(--head-bg); box-shadow: 0 1px 0 #00000026, inset 0 1px 0 var(--hair); backdrop-filter: blur(10px); z-index: 5;
+    min-width: 0;
+  }
+  /* NB: no `overflow:hidden` here — it would clip the .dd-menu dropdowns, which
+     are absolutely positioned inside the header. Overflow is contained by letting
+     the chips shrink and ellipsize instead. */
+  header > * { flex-shrink: 0; min-width: 0; }
+  header .dd { flex: 0 1 auto; }
+  header .chip { min-width: 0; overflow: hidden; }
+  header .chip > span:not(.logo) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header .spacer { flex: 1 1 auto; min-width: 0; }
+  #stats { font: 400 11px var(--font-mono); color: var(--faint); white-space: nowrap; }
+  button#stats { cursor: pointer; padding: .2rem .45rem; border-radius: 8px; border: 1px solid transparent; }
+  button#stats:hover { color: var(--txt); background: var(--panel-3); border-color: var(--line); }
+  #statsDd .dd-menu { left: auto; right: 0; min-width: 300px; }
+  .statsRow { display: flex; align-items: center; gap: .55rem; padding: .4rem .55rem; font-size: .8rem; border-radius: 8px; }
+  .statsRow.total { border-top: 1px solid var(--line); margin-top: .2rem; padding-top: .55rem; color: var(--txt); }
+  .statsRow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .statsRow .vals { margin-left: auto; font: 400 11px var(--font-mono); color: var(--txt-dim); white-space: nowrap; }
+  .statsRow .vals b { color: var(--teal); font-weight: 600; }
+  /* when the diff panel steals horizontal space, drop the header extras
+     (the same info stays visible above the composer) */
+  body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
+  #ctxBar { width: 70px; height: 4px; background: var(--bg-2); border-radius: 3px; overflow: hidden; }
+  /* git chip: branch + pending changes count */
+  #gitChip { font-size: .78rem; }
+  #gitChip .gb { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #gitChip .count {
+    min-width: 17px; height: 17px; border-radius: 9px; display: grid; place-items: center;
+    background: var(--teal-dim); color: var(--teal); font: 700 10.5px/1 ui-sans-serif; padding: 0 .3rem;
+  }
+  #gitChip .count.warn { background: #fbbf2422; color: var(--warn); }
+  /* settings nav: replaces the chat list inside the sidebar */
+  #settingsNav { display: none; flex: 1; overflow-y: auto; padding: .6rem .5rem; flex-direction: column; gap: 2px; }
+  #sidebar.mode-settings #settingsNav { display: flex; }
+  #sidebar.mode-settings .side-pad, #sidebar.mode-settings .side-label, #sidebar.mode-settings #sessionList { display: none; }
+  .snav-label { padding: 0 .45rem .4rem; font-size: .69rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); }
+  .snavItem { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border-radius: 9px; font-size: .83rem; color: var(--txt-dim); text-align: left; width: 100%; }
+  .snavItem:hover { background: var(--panel-2); color: var(--txt); }
+  .snavItem.on { background: var(--panel-3); color: var(--teal); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); }
+  #ctxFill { height: 100%; width: 0; background: var(--teal); transition: width .3s; }
+  #ctxFill.warn { background: var(--warn); }
+  #ctxFill.crit { background: var(--crit); }
+  #runState { display: none; align-items: center; gap: .5rem; }
+  #runState.on { display: inline-flex; }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); animation: pulse 1.1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
+
+  /* ---------- account usage widget (claude.ai / kimi.com real limits, in composer) ---------- */
+  #usageWidget {
+    display: none; align-items: center; gap: .4rem; font-size: .71rem; color: var(--faint);
+    margin-left: auto; padding-right: .2rem;
+  }
+  #usageWidget.show { display: flex; }
+  #usageWidget b { color: var(--txt-dim); font-weight: 600; }
+  #usageWidget .bar { width: 46px; height: 5px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
+  #usageWidget .bar > i { display: block; height: 100%; width: 0; background: var(--teal); transition: width .3s; }
+  #usageWidget .bar.warn > i { background: var(--warn); }
+  #usageWidget .bar.crit > i { background: var(--crit); }
+  #usageWidget .txt { font: 400 11px var(--font-mono); }
+  #usageWidget .err { color: var(--crit); }
+
+  /* ---------- dropdown ---------- */
+  .dd { position: relative; }
+  .dd-menu {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; min-width: 270px; max-height: 62vh;
+    overflow-y: auto; padding: .35rem; background: var(--panel-2); border: 1px solid var(--line-2);
+    border-radius: 14px; box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); display: none;
+  }
+  .dd.open .dd-menu { display: block; }
+  .dd-group { font-size: .67rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); padding: .45rem .55rem .25rem; }
+  .dd-item { display: flex; align-items: center; gap: .55rem; width: 100%; text-align: left; padding: .45rem .55rem; border-radius: 9px; font-size: .85rem; }
+  .dd-item:hover { background: var(--panel-3); }
+  .dd-item.sel { background: var(--teal-dim); }
+  .dd-item .col { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+  .dd-item .desc, .dd-item .sub { font-size: .71rem; color: var(--faint); }
+  .dd-item .sub { margin-left: auto; }
+  .logo { width: 17px; height: 17px; border-radius: 5px; flex-shrink: 0; display: grid; place-items: center; overflow: hidden; }
+  .logo svg { width: 17px; height: 17px; }
+  .logo.lg, .logo.lg svg { width: 23px; height: 23px; border-radius: 7px; }
+  /* tema loghi monocromatico: stesso glifo, niente colori di brand */
+  /* .logo.fixed = anteprime nelle card di scelta: restano com'erano, servono a
+     mostrare la differenza fra le due opzioni e non seguono il tema attivo */
+  [data-logo="mono"] .logo:not(.fixed) { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+  .logoStyleCard[data-l="mono"] .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+
+  /* sotto-menu dei modelli: provider a sinistra, modelli in un flyout laterale */
+  .dd-sub { position: relative; }
+  .dd-sub > .dd-item .caret { margin-left: auto; opacity: .6; }
+  /* fixed, non absolute: il menu padre ha overflow:auto e ritaglierebbe il flyout.
+     Resta attaccato al bordo del menu provider, come una sua estensione. */
+  .dd-flyout {
+    position: fixed; z-index: 200; min-width: 300px; max-height: 60vh; overflow-y: auto; padding: .35rem;
+    background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 0 14px 14px 0;
+    box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); display: none;
+  }
+  .dd-flyout.flip { border-radius: 14px 0 0 14px; box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); }
+  .dd-flyout.on { display: block; }
+  .dd-sub.open > .dd-item { background: var(--panel-3); }
+  .dd-sub > .dd-item.hasSel { box-shadow: inset 0 0 0 1px #2fe0c044; }
+
+  /* cartelle recenti nel menu della cartella di lavoro */
+  .recentBox { margin-top: .55rem; border-top: 1px solid var(--line); padding-top: .45rem; }
+  .recentHead {
+    display: flex; align-items: center; gap: .4rem; width: 100%; padding: .3rem .2rem;
+    font-size: .73rem; color: var(--txt-dim); border-radius: 8px;
+  }
+  .recentHead:hover { color: var(--txt); }
+  .recentHead .arw { transition: transform .15s; }
+  .recentBox.open .recentHead .arw { transform: rotate(90deg); }
+  .recentList { display: none; max-height: 190px; overflow-y: auto; margin-top: .2rem; }
+  .recentBox.open .recentList { display: block; }
+  .recentItem {
+    display: flex; align-items: center; gap: .45rem; width: 100%; text-align: left;
+    padding: .34rem .4rem; border-radius: 8px; font-size: .78rem; color: var(--txt-dim);
+  }
+  .recentItem:hover { background: var(--panel-3); color: var(--txt); }
+  .recentItem.cur { color: var(--teal); }
+  .recentItem .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recentItem .pth { font: 10.5px ui-monospace, monospace; color: var(--txt-faint); margin-left: auto; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recentItem .del { flex: none; opacity: 0; color: var(--faint); padding: 0 .15rem; }
+  .recentItem:hover .del { opacity: .7; }
+  .recentItem .del:hover { opacity: 1; color: var(--crit); }
+  #cwdMenu { width: 390px; padding: .65rem; }
+  #cwdMenu input {
+    width: 100%; background: var(--bg-2); border: 1px solid var(--line); border-radius: 9px;
+    padding: .45rem .55rem; font: 400 12px var(--font-mono); outline: none;
+  }
+  #cwdMenu .hint { font-size: .72rem; color: var(--faint); margin-bottom: .45rem; }
+  #cwdMenu .row { display: flex; gap: .4rem; margin-top: .55rem; align-items: center; }
+  #cwdLabel { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- chat ---------- */
+  #chatView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #chatWrap { flex: 1; overflow-y: auto; position: relative; background-color: var(--bg); }
+  #chatWrap::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 420px; pointer-events: none;
+    background: var(--chat-bg);
+  }
+  #chat { max-width: 960px; margin: 0 auto; padding: 1.6rem 1.2rem 2rem; display: flex; flex-direction: column; gap: 1.5rem; position: relative; transition: max-width .18s; }
+  /* a sidebar chiusa il testo prende ancora più spazio */
+  body.sb-closed #chat { max-width: 1150px; }
+  /* every turn is left-aligned: chat feel without boxes */
+  .turn { display: grid; grid-template-columns: 30px 1fr; gap: .7rem; }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
+    font-size: 12px; font-weight: 700; margin-top: .1rem;
+  }
+  .turn.user .avatar { background: var(--panel-3); color: var(--txt-dim); border: 1px solid var(--line-2); box-shadow: inset 0 1px 0 var(--hair); }
+  .turn.pi .avatar { background: linear-gradient(150deg, var(--teal), #12a894); color: #03211c; }
+  /* assistant turn with a real provider logo instead of the π tile */
+  .turn.pi .avatar.hasLogo { background: none; border: 1px solid var(--line-2); padding: 0; }
+  .turn.pi .avatar .logo { width: 20px; height: 20px; }
+  .turn.pi .avatar .logo svg { width: 20px; height: 20px; }
+  .who { display: flex; align-items: center; gap: .35rem; }
+  .who .mprov { color: var(--txt-faint); }
+  .turn .body { min-width: 0; }
+  .who { font: 600 .72rem var(--font-ui); color: var(--faint); text-transform: uppercase; letter-spacing: .1em; margin-bottom: .2rem; }
+  .turn.user .who { color: var(--txt-dim); }
+  .msg { white-space: pre-wrap; line-height: 1.68; }
+  .turn.user .msg { color: var(--txt); }
+  .msg.md { white-space: normal; }
+  .msg.md > *:first-child { margin-top: 0; }
+  .msg.md > *:last-child { margin-bottom: 0; }
+  .msg.md p { margin: .5rem 0; }
+  .msg.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; padding: .8rem .9rem; overflow-x: auto; white-space: pre; }
+  .msg.md code { font-family: var(--font-mono); font-size: .85em; }
+  .msg.md :not(pre) > code { background: var(--panel-2); padding: .08rem .35rem; border-radius: 5px; }
+  .msg.md table { border-collapse: collapse; margin: .6rem 0; }
+  .msg.md th, .msg.md td { border: 1px solid var(--line); padding: .3rem .65rem; }
+  .msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
+  .msg.md a { color: var(--teal); }
+  .msg img { max-width: 240px; border-radius: 10px; display: block; margin: .4rem 0; border: 1px solid var(--line); }
+  /* immagini allegate: miniature compatte SOPRA il testo del messaggio */
+  .media { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .45rem; }
+  .media img {
+    height: 96px; width: auto; max-width: 160px; object-fit: cover; margin: 0;
+    border-radius: 9px; border: 1px solid var(--line-2); cursor: zoom-in; transition: border-color .12s, transform .12s;
+  }
+  .media img:hover { border-color: var(--teal); transform: translateY(-1px); }
+  /* hover toolbar under each turn: copy the message / fork a new chat from here */
+  .msgActions { display: flex; gap: .25rem; margin-top: .3rem; opacity: 0; transition: opacity .12s; }
+  .turn:hover .msgActions, .turn:focus-within .msgActions { opacity: 1; }
+  .msgActionBtn {
+    display: inline-flex; align-items: center; gap: .3rem; padding: .28rem .4rem; border-radius: 7px;
+    color: var(--faint); border: 1px solid transparent;
+  }
+  .msgActionBtn:hover { background: var(--panel-3); color: var(--txt); border-color: var(--line); }
+  .msgActionBtn.copied { color: var(--teal); }
+  /* copy button floating over any <pre> block (code fences, tool request/output) */
+  .codeBox { position: relative; }
+  .codeCopyBtn {
+    position: absolute; top: .45rem; right: .45rem; padding: .3rem .35rem; border-radius: 7px;
+    background: var(--panel-2); border: 1px solid var(--line-2); color: var(--txt-dim); opacity: 0;
+    transition: opacity .12s, color .12s, border-color .12s;
+  }
+  .codeBox:hover .codeCopyBtn { opacity: 1; }
+  .codeCopyBtn:hover { color: var(--txt); border-color: var(--teal); }
+  .codeCopyBtn.copied { color: var(--teal); border-color: #2fe0c055; }
+  .thinking { color: var(--faint); font-style: italic; font-size: .85rem; white-space: pre-wrap; }
+  .tool { display: inline-flex; align-items: center; gap: .4rem; font: 11.5px ui-monospace, monospace; color: #9d8bff; }
+  .sys { font-size: .78rem; color: var(--faint); }
+  /* errori: mai confondibili con un messaggio di sistema qualunque */
+  .msg.sys.err { color: var(--crit); font-weight: 600; }
+  .filechip {
+    display: inline-flex; align-items: center; gap: .35rem; font: 11.5px ui-monospace, monospace;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: .15rem .45rem; margin: .15rem .25rem 0 0;
+  }
+  /* hero */
+  #hero { padding: 3.6rem 0 1rem; }
+  #hero h1 { font-size: 2.3rem; line-height: 1.2; margin: 0 0 .5rem; font-weight: 500; letter-spacing: -.02em; }
+  #hero h1 .dim { color: var(--faint); }
+  #hero p { color: var(--txt-dim); margin: 0 0 1.4rem; font-size: .9rem; }
+  #hero p code { background: var(--panel-2); padding: .1rem .4rem; border-radius: 6px; font-size: .85em; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; }
+  .sugg { text-align: left; padding: .75rem .85rem; border-radius: 13px; border: 1px solid var(--line); background: linear-gradient(160deg, #0d141b, #0a0f15); transition: .15s; }
+  .sugg:hover { border-color: #2fe0c055; transform: translateY(-1px); }
+  .sugg .tag { display: inline-block; font-size: .72rem; padding: .1rem .45rem; border-radius: 6px; margin-bottom: .35rem; }
+  .sugg .d { font-size: .78rem; color: var(--faint); }
+
+  /* ---------- composer ---------- */
+  #composerWrap { padding: 0 1.2rem 1.1rem; }
+  #composer {
+    position: relative; max-width: 960px; margin: 0 auto; padding: .7rem .8rem .6rem; border-radius: 18px;
+    background: var(--composer-bg); border: 1px solid var(--line-2);
+    box-shadow: var(--elev-2), inset 0 1px 0 var(--hair); transition: border-color .15s, box-shadow .15s, max-width .18s;
+  }
+  /* "/" slash-command palette: skills, prompt templates, extension commands */
+  .cmdMenu {
+    position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 40;
+    max-height: 280px; overflow-y: auto; padding: .35rem; background: var(--panel-2); border: 1px solid var(--line-2);
+    border-radius: 14px; box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); display: none;
+  }
+  .cmdMenu.show { display: block; }
+  .cmdItem { width: 100%; }
+  .cmdItem .col > span:first-child { font: 12.5px ui-monospace, monospace; color: var(--teal); }
+  body.sb-closed #composer { max-width: 1150px; }
+  #composer:focus-within { border-color: color-mix(in srgb, var(--teal) 42%, var(--line-2)); box-shadow: var(--elev-2), inset 0 1px 0 var(--hair), 0 0 0 3px var(--teal-dim); }
+  .composer-top { display: flex; align-items: center; gap: .4rem; color: var(--teal); font-size: .74rem; margin-bottom: .1rem; }
+  #input { width: 100%; resize: none; background: none; border: none; outline: none; padding: .35rem .1rem; max-height: 240px; min-height: 40px; }
+  #input::placeholder { color: var(--faint); }
+  .composer-bar { display: flex; align-items: center; gap: .4rem; margin-top: .35rem; }
+  .composer-hint { margin-left: auto; margin-right: .3rem; font-size: .71rem; color: var(--faint); display: flex; gap: .55rem; }
+  #sendBtn { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; }
+  #attachments { display: flex; gap: .5rem; flex-wrap: wrap; padding: .1rem 0 .35rem; }
+  #attachments:empty { display: none; }
+  .thumb { position: relative; }
+  .thumb img { height: 54px; border-radius: 9px; border: 1px solid var(--line-2); display: block; }
+  .thumb .file { display: flex; align-items: center; gap: .4rem; height: 54px; padding: 0 .6rem; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 9px; font-size: .76rem; max-width: 190px; }
+  .thumb .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb .x { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel-3); border: 1px solid var(--line-2); font-size: 11px; line-height: 1; display: grid; place-items: center; }
+  .thumb .x:hover { background: #3a1e21; }
+
+  /* ---------- settings view ---------- */
+  #settingsView { flex: 1; overflow-y: auto; }
+  /* ---------- cost analytics dashboard ---------- */
+  #analytics { margin-bottom: 1.6rem; padding: 1rem; }
+  #analytics h3 { margin: 0 0 .15rem; font-size: 1rem; font-weight: 550; }
+  #analytics .note { color: var(--faint); font-size: .74rem; margin: 0 0 .9rem; }
+  .an-filters { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-bottom: .9rem; }
+  .an-filters select, .an-filters input[type=date] {
+    background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; color: var(--txt);
+    padding: .32rem .5rem; font-size: .78rem;
+  }
+  .an-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .5rem; margin-bottom: 1rem; }
+  .an-kpi { background: var(--card-bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); padding: .55rem .7rem; }
+  .an-kpi .k { font-size: .68rem; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; }
+  .an-kpi .v { font: 600 1.05rem ui-monospace, monospace; color: var(--txt); margin-top: .15rem; }
+  .an-chart { width: 100%; height: 190px; display: block; }
+  .an-chart .grid { stroke: var(--line); stroke-width: 1; }
+  .an-chart text { fill: var(--faint); font: 9px ui-monospace, monospace; }
+  .an-legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .4rem 0 1rem; font-size: .72rem; color: var(--txt-dim); }
+  .an-legend span { display: inline-flex; align-items: center; gap: .3rem; }
+  .an-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .an-table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+  .an-table th, .an-table td { padding: .35rem .5rem; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .an-table th { color: var(--faint); font-weight: 500; cursor: pointer; user-select: none; }
+  .an-table th:first-child, .an-table td:first-child { text-align: left; }
+  .an-table td { font: 400 12px var(--font-mono); }
+  .an-table tr:last-child td { border-bottom: 0; font-weight: 600; color: var(--teal); }
+
+  .settings-inner { max-width: 1000px; margin: 0 auto; padding: 1.6rem 1.4rem 3rem; }
+  .settings-inner h2 { font-size: 1.5rem; font-weight: 550; margin: 0 0 .2rem; letter-spacing: -.01em; }
+  .settings-inner .lead { color: var(--txt-dim); font-size: .87rem; margin: 0 0 1.4rem; }
+  .sec { margin-bottom: 1.8rem; }
+  .sec > h3 { font-size: .74rem; text-transform: uppercase; letter-spacing: .11em; color: var(--faint); margin: 0 0 .6rem; }
+  .modelGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: .7rem; }
+  .modelCard { padding: .8rem .85rem; border-radius: 14px; border: 1px solid var(--line); background: var(--card-bg); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); text-align: left; transition: .15s; }
+  .modelCard:hover { border-color: var(--line-2); }
+  .modelCard.sel { border-color: color-mix(in srgb, var(--teal) 45%, transparent); background: var(--teal-dim); }
+  .modelCard.off { opacity: .45; }
+  .modelCard .h { display: flex; align-items: center; gap: .55rem; margin-bottom: .5rem; }
+  .modelCard .nm { font-size: .9rem; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modelCard .pv { font-size: .72rem; color: var(--faint); }
+  .modelCard .row { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .kv { display: grid; grid-template-columns: 210px 1fr; gap: .3rem .8rem; font-size: .85rem; }
+  .kv .k { color: var(--faint); }
+  .kv .v { font-family: var(--font-mono); font-size: .8rem; word-break: break-all; }
+  .toolItem { display: flex; gap: .5rem; align-items: baseline; padding: .3rem 0; border-bottom: 1px solid var(--line); font-size: .82rem; }
+  .toolItem .n { font-family: var(--font-mono); color: var(--teal); min-width: 130px; }
+  .toolItem .d { color: var(--faint); font-size: .78rem; }
+  pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; padding: .8rem; overflow: auto; max-height: 320px; font-size: .76rem; }
+
+  /* settings form */
+  .setRow { display: grid; grid-template-columns: 1fr 260px; gap: .8rem; align-items: start; padding: .7rem 0; border-bottom: 1px solid var(--line); }
+  .setRow:last-child { border-bottom: none; }
+  .setRow .k { font-family: var(--font-mono); font-size: .82rem; color: var(--txt); }
+  .setRow .d { font-size: .78rem; color: var(--txt-dim); margin-top: .1rem; }
+  .setRow .def { font-size: .72rem; color: var(--faint); margin-top: .15rem; }
+  .setRow .ctl { display: flex; gap: .35rem; align-items: center; justify-content: flex-end; }
+  .setRow input[type=text], .setRow input[type=number], .setRow select {
+    width: 100%; background: var(--bg-2); border: 1px solid var(--line); border-radius: 9px;
+    padding: .35rem .5rem; font-size: .82rem; outline: none;
+  }
+  .setRow input:focus, .setRow select:focus { border-color: var(--teal); }
+  .setRow.ro .ctl { opacity: .55; }
+  .sw { width: 40px; height: 22px; border-radius: 999px; background: var(--line-2); position: relative; transition: .15s; flex-shrink: 0; }
+  .sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--txt-dim); transition: .15s; }
+  .sw.on { background: var(--teal); }
+  .sw.on::after { left: 21px; background: var(--on-accent); }
+  .saved { font-size: .72rem; color: var(--teal); opacity: 0; transition: opacity .2s; }
+  .saved.show { opacity: 1; }
+  .themeGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; }
+  .themeCard { padding: .6rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card-bg); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); text-align: left; }
+  .themeCard.sel { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-dim); }
+  .themeCard .sw-row { display: flex; gap: .25rem; margin-bottom: .45rem; }
+  .themeCard .sw-row i { width: 100%; height: 22px; border-radius: 6px; display: block; }
+  .themeCard .nm { font-size: .82rem; }
+  /* anteprima dei loghi dei provider nelle due varianti */
+  .logoStyleCard .prev { display: flex; gap: .3rem; margin-bottom: .45rem; }
+  .logoStyleCard[data-l="mono"] .prev .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+
+  /* tool call cards: click to see what the model is doing */
+  .toolCard { border: 1px solid var(--line); border-radius: 10px; background: var(--card-bg); overflow: hidden; margin: .15rem 0; }
+  .toolHead {
+    display: flex; align-items: center; gap: .5rem; width: 100%; text-align: left;
+    padding: .4rem .6rem; font: 400 12px var(--font-mono); color: var(--txt-dim);
+  }
+  .toolHead:hover { background: var(--panel-3); }
+  .toolHead .nm { color: #9d8bff; font-weight: 600; }
+  [data-theme="daylight"] .toolHead .nm { color: #6d28d9; }
+  .toolHead .sm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+  .toolHead .st { font-size: 11px; }
+  .toolHead .st.err { color: var(--crit); }
+  .toolHead .caret { transition: transform .15s; color: var(--faint); }
+  .toolCard.open .toolHead .caret { transform: rotate(90deg); }
+  .toolBody { display: none; border-top: 1px solid var(--line); padding: .5rem .6rem; }
+  .toolCard.open .toolBody { display: block; }
+  .toolBody h6 { margin: .3rem 0 .2rem; font: 600 10.5px ui-sans-serif; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+  .toolBody pre {
+    margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: .5rem .6rem; overflow: auto; max-height: 320px; font: 11.5px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word;
+  }
+
+  /* ---------- lightbox immagini ---------- */
+  #lightbox {
+    position: fixed; inset: 0; z-index: 400; display: none; place-items: center;
+    background: #000000d8; backdrop-filter: blur(6px); padding: 3rem;
+  }
+  #lightbox.on { display: grid; }
+  #lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: 0 30px 90px #000; }
+  #lightboxClose {
+    position: absolute; top: 1rem; right: 1.2rem; width: 40px; height: 40px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 1.2rem; color: var(--txt);
+    background: var(--panel-2); border: 1px solid var(--line-2);
+  }
+  #lightboxClose:hover { border-color: var(--crit); color: var(--crit); }
+
+  /* ---------- pannello scorciatoie (tieni premuto Shift) ---------- */
+  /* è lo SFONDO a essere sfocato; il pannello mostra tutte le scorciatoie in una
+     schermata sola, senza barre di scorrimento */
+  #shortcuts {
+    position: fixed; inset: 0; z-index: 380; display: none; place-items: center;
+    background: #04070a4d; backdrop-filter: blur(5px); animation: scFade .14s ease-out;
+  }
+  #shortcuts.on { display: grid; }
+  @keyframes scFade { from { opacity: 0 } to { opacity: 1 } }
+  #shortcuts .panel {
+    width: min(760px, 92vw); max-height: 92vh; padding: 1.4rem 1.6rem; border-radius: 22px; overflow: hidden;
+    background: linear-gradient(165deg, #0e1620f2, #0a0e14f2);
+    border: 1px solid #ffffff1a; box-shadow: 0 30px 90px #000c, inset 0 1px 0 #ffffff12;
+    animation: scIn .16s ease-out;
+  }
+  @keyframes scIn { from { opacity: 0; transform: scale(.97) } to { opacity: 1; transform: none } }
+  #shortcuts h3 { margin: 0 0 .15rem; font-size: 1.05rem; font-weight: 600; }
+  #shortcuts .lead { margin: 0 0 1rem; font-size: .74rem; color: var(--faint); }
+  #shortcuts .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3rem 1.4rem; }
+  #shortcuts .sc { display: flex; align-items: center; gap: .6rem; padding: .34rem .1rem; font-size: .84rem; min-width: 0; }
+  #shortcuts .sc .keys { flex: none; display: flex; gap: .15rem; }
+  #shortcuts .sc .d { color: var(--txt-dim); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 640px) { #shortcuts .grid { grid-template-columns: 1fr } #shortcuts .panel { padding: 1rem } }
+
+  /* ---------- overlays ---------- */
+  #drop { position: fixed; inset: 0; z-index: 200; display: none; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(4px); place-items: center; }
+  #drop.on { display: grid; }
+  #drop .box { border: 2px dashed var(--teal); border-radius: 20px; padding: 2.4rem 3.4rem; text-align: center; background: var(--panel-2); }
+  #drop .box b { display: block; font-size: 1.1rem; margin-bottom: .3rem; }
+  #toasts { position: fixed; bottom: 1rem; right: 1rem; z-index: 300; display: flex; flex-direction: column; gap: .5rem; }
+  .toast { background: var(--panel-2); border: 1px solid var(--line-2); border-left: 3px solid var(--crit); border-radius: 10px; padding: .55rem .8rem; font-size: .82rem; max-width: 380px; box-shadow: 0 10px 30px #0008; }
+  .toast.ok { border-left-color: var(--teal); }
+
+  /* ---------- tasks panel (chat/agenti in background) ---------- */
+  #tasksPanel { width: 0; flex-shrink: 0; overflow: hidden; background: var(--side-bg); border-left: 1px solid var(--line); transition: width .18s; display: flex; flex-direction: column; }
+  #tasksPanel.open { width: 32%; min-width: 300px; }
+  #tasksHead { padding: .6rem .8rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
+  #tasksBody { flex: 1; overflow-y: auto; padding: .4rem; }
+  .taskItem { padding: .5rem .55rem; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
+  .taskItem:hover { background: var(--panel-3); border-color: var(--line); }
+  .taskItem.active { background: var(--teal-dim); }
+  .taskItem .t { display: flex; align-items: center; gap: .4rem; font-size: .82rem; }
+  .taskItem .t .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .taskItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--teal); animation: pulse 1.4s ease-in-out infinite; }
+  .taskItem .m { display: flex; gap: .35rem; flex-wrap: wrap; font-size: .7rem; color: var(--txt-dim); margin-top: .2rem; }
+  .taskItem .m .st { color: var(--teal); }
+  .taskItem .m .idle { color: var(--faint); }
+  .taskItem .m .err { color: var(--crit); }
+  #navTasks.busy { color: var(--teal); }
+
+  /* ---------- diff panel ---------- */
+  #diffPanel { width: 0; flex-shrink: 0; overflow: hidden; background: var(--side-bg); border-left: 1px solid var(--line); transition: width .18s; display: flex; flex-direction: column; }
+  #diffPanel.open { width: 40%; min-width: 320px; }
+  #diffHead { padding: .6rem .8rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
+  #fileList { overflow-y: auto; max-height: 32%; border-bottom: 1px solid var(--line); padding: .3rem; }
+  .fileItem { padding: .35rem .5rem; border-radius: 8px; font: 400 12px var(--font-mono); cursor: pointer; display: flex; justify-content: space-between; gap: .5rem; }
+  .fileItem:hover, .fileItem.active { background: var(--panel-3); }
+  .fileItem .b { color: #9d8bff; }
+  #diffBody { flex: 1; overflow: auto; padding: .6rem; font: 400 12px var(--font-mono); }
+  .hunk { margin-bottom: .8rem; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .diffline { white-space: pre-wrap; padding: 0 .5rem; }
+  .diffline.del { background: #2a1418; color: #ff9b93; }
+  .diffline.add { background: #0f2a1d; color: #7ee7a5; }
+
+  /* ================= MOBILE OPTIMIZATIONS ================= */
+  #sidebarBackdrop { display: none; }
+  @media (max-width: 768px) {
+    body { overflow: hidden; }
+
+    /* icon rail: stay narrow, always visible */
+    #rail { width: 50px; padding: .6rem 0; }
+    #rail .logo-tile { width: 30px; height: 30px; margin-bottom: .5rem; }
+    .rail-btn { width: 34px; height: 34px; }
+
+    /* sidebar becomes a slide-over drawer above content */
+    #sidebar {
+      position: fixed; top: 0; left: 50px; height: 100dvh; z-index: 150;
+      width: min(84vw, 300px); box-shadow: 10px 0 40px #000b; transition: transform .2s, width 0s;
+    }
+    #sidebar.collapsed { width: min(84vw, 300px); transform: translateX(-110%); border-right: 1px solid var(--line); }
+    #sidebarBackdrop {
+      position: fixed; inset: 0; left: 50px; background: #000a; z-index: 140; display: none;
+    }
+    #sidebar:not(.collapsed) ~ #sidebarBackdrop { display: block; }
+
+    #main { width: 100%; }
+
+    /* header: horizontal scroll instead of overflow/wrap */
+    header { padding: .45rem .5rem; gap: .35rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    header::-webkit-scrollbar { display: none; }
+    header .chip { flex-shrink: 0; }
+    #cwdLabel { max-width: 11ch; }
+    #stats { display: none; }
+    #ctxBar { display: none; }
+
+    /* chat area */
+    #chat { padding: 1.1rem .8rem 1rem; gap: 1.1rem; }
+    .turn { grid-template-columns: 26px 1fr; gap: .55rem; }
+    .avatar { width: 26px; height: 26px; font-size: 10px; }
+    #hero { padding: 1.6rem 0 .6rem; }
+    #hero h1 { font-size: 1.6rem; }
+    .cards { grid-template-columns: 1fr; }
+    .msg img { max-width: 100%; }
+
+    /* composer: full-width, larger tap targets, 16px font avoids iOS auto-zoom */
+    #composerWrap { padding: 0 .6rem .7rem; }
+    #composer { padding: .55rem .6rem .5rem; border-radius: 16px; }
+    #input { font-size: 16px; min-height: 38px; }
+    .composer-hint { display: none; }
+    #attachBtn span, #attachBtn { font-size: .78rem; }
+    #usageWidget { display: none !important; }
+
+    /* dropdown menus: keep on-screen on narrow viewports */
+    .dd-menu { position: fixed; left: .5rem; right: .5rem; top: auto; min-width: 0; width: auto; max-height: 70vh; }
+    #cwdMenu { width: auto; }
+    #cwdMenu input, .search input { font-size: 16px; }
+
+    /* diff panel: full-screen overlay on mobile */
+    #diffPanel, #tasksPanel { position: fixed; inset: 0; z-index: 160; width: 0; }
+    #diffPanel.open, #tasksPanel.open { width: 100%; min-width: 0; }
+
+    /* settings view: single column, stacked rows */
+    .settings-inner { padding: 1.1rem .9rem 2.5rem; }
+    .settings-inner h2 { font-size: 1.25rem; }
+    .modelGrid { grid-template-columns: 1fr; }
+    .setRow { grid-template-columns: 1fr; gap: .35rem; }
+    .setRow .ctl { justify-content: flex-start; }
+    .setRow input[type=text], .setRow input[type=number], .setRow select { font-size: 16px; }
+    .kv { grid-template-columns: 1fr; gap: .1rem .5rem; }
+    .themeGrid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+
+    .toast { max-width: calc(100vw - 2rem); }
+    #toasts { left: 1rem; right: 1rem; }
+  }
+  @media (max-width: 420px) {
+    #hero h1 { font-size: 1.35rem; }
+    .toolHead .sm { max-width: 40vw; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ ICON RAIL ============ -->
+<nav id="rail">
+  <button class="logo-tile" id="homeBtn" title="Torna alla schermata iniziale (nuova chat)">π</button>
+  <button class="rail-btn on" id="navChat" title="Chat">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+  </button>
+  <button class="rail-btn" id="navSettings" title="Modelli e opzioni di pi">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" transform="translate(1.5 1.5) scale(.88)"/></svg>
+  </button>
+  <button class="rail-btn" id="navDiff" title="File modificati">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+    <span class="count hide" id="diffCount">0</span>
+  </button>
+  <button class="rail-btn" id="navTasks" title="Attività in background (chat e agenti aperti)">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    <span class="count hide" id="tasksCount">0</span>
+  </button>
+  <span style="flex:1"></span>
+  <button class="rail-btn" id="restartBtn" title="Riavvia il server locale pi-web-ui">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+  </button>
+  <button class="rail-btn" id="quit" title="Spegni il server locale pi-web-ui">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v9"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+  </button>
+</nav>
+
+<!-- ============ SIDEBAR ============ -->
+<aside id="sidebar">
+  <div class="side-pad">
+    <button class="btn outline" id="newSessionBtn" style="justify-content:center">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Nuova chat
+    </button>
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+      <input id="sessionSearch" placeholder="Cerca nelle chat…">
+    </div>
+    <div class="filters">
+      <div class="dd" id="filterDd">
+        <button class="btn icon" id="filterBtn" title="Filtra le chat">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+          <span class="count hide" id="filterCount">0</span>
+        </button>
+        <div class="dd-menu" id="filterMenu">
+          <div class="dd-group">Stato</div>
+          <button type="button" class="dd-item" data-filter="status" data-val="all">Tutte</button>
+          <button type="button" class="dd-item" data-filter="status" data-val="active">Attive</button>
+          <button type="button" class="dd-item" data-filter="status" data-val="done">Concluse</button>
+          <button type="button" class="dd-item" data-filter="status" data-val="favorite">Preferiti</button>
+          <div class="dd-group">Periodo</div>
+          <button type="button" class="dd-item" data-filter="period" data-val="all">Tutte</button>
+          <button type="button" class="dd-item" data-filter="period" data-val="today">Oggi</button>
+          <button type="button" class="dd-item" data-filter="period" data-val="week">Questa settimana</button>
+          <button type="button" class="dd-item" data-filter="period" data-val="month">Questo mese</button>
+        </div>
+      </div>
+      <select id="sortFilter" title="Ordina">
+        <option value="recent">Recenti</option>
+        <option value="old">Vecchie</option>
+        <option value="msgs">Più messaggi</option>
+      </select>
+    </div>
+    <div class="filters">
+      <select id="groupFilter" title="Raggruppa le chat">
+        <option value="none">Nessun raggruppamento</option>
+        <option value="day">Per giorno</option>
+        <option value="project">Per progetto</option>
+        <option value="model">Per modello</option>
+      </select>
+    </div>
+  </div>
+  <div class="side-label"><span>Chat</span><span id="sessionCount"></span></div>
+  <div id="sessionList"></div>
+  <div id="settingsNav"></div>
+  <div class="side-foot">
+    <span id="conn"><span class="d"></span><span id="connTxt">connesso</span></span>
+    <span style="flex:1"></span>
+    <button class="btn icon" id="sidebarToggle" title="Nascondi barra laterale">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+  </div>
+  <div id="sidebarResize" title="Trascina per ridimensionare la barra laterale"></div>
+</aside>
+<div id="sidebarBackdrop"></div>
+
+<!-- ============ MAIN ============ -->
+<div id="main">
+  <header>
+    <button class="btn icon" id="sidebarShow" title="Mostra barra laterale">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+    </button>
+
+    <div class="dd" id="modelDd">
+      <button class="chip" id="modelBtn">
+        <span class="logo" id="modelLogo"></span>
+        <span id="modelName">modello…</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="dd-menu" id="modelMenu"></div>
+    </div>
+
+    <div class="dd" id="thinkDd">
+      <button class="chip" id="thinkBtn" title="Livello di reasoning (solo quelli supportati dal modello)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3a6 6 0 0 0-3.5 10.9c.5.4.8 1 .8 1.6v.5h5.4v-.5c0-.6.3-1.2.8-1.6A6 6 0 0 0 12 3z"/><path d="M10 20h4"/></svg>
+        <span id="thinkName">reasoning</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="dd-menu" id="thinkMenu"></div>
+    </div>
+
+    <div class="dd" id="cwdDd">
+      <button class="chip" id="cwdChip" title="Cartella di lavoro dell'agente">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span id="cwdLabel">…</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="dd-menu" id="cwdMenu">
+        <div class="hint" id="cwdHint">Cartella di lavoro: l'agente legge e modifica i file al suo interno. La scegli qui prima di iniziare la chat.</div>
+        <input id="cwdInput" spellcheck="false" placeholder="C:\percorso\progetto">
+        <div class="row" id="cwdEditRow">
+          <button class="btn outline" id="browseBtn">Sfoglia…</button>
+          <span style="flex:1"></span>
+          <span class="sys" id="cwdMsg"></span>
+          <button class="btn teal" id="cwdApply">Imposta cartella</button>
+        </div>
+        <div class="row">
+          <button class="btn outline" id="explorerBtn" title="Apri questa cartella in Esplora risorse">Apri in Explorer</button>
+        </div>
+        <div class="recentBox" id="recentBox">
+          <button type="button" class="recentHead" id="recentHead">
+            <svg class="arw" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>
+            <span>Cartelle recenti</span>
+            <span style="flex:1"></span>
+            <span class="sys" id="recentCount"></span>
+          </button>
+          <div class="recentList" id="recentList"></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="chip" id="terminalBtn" title="Apri PowerShell in questa cartella e avvia pi">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
+    </button>
+
+    <span class="chip hide" id="gitChip" title="">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-4 4.5-8.5 4.7"/></svg>
+      <span class="gb" id="gitBranch">—</span>
+      <span class="count hide" id="gitCount">0</span>
+    </span>
+
+    <span class="spacer"></span>
+    <div id="runState">
+      <span class="pulse"></span>
+      <button class="btn outline" id="abort" title="Ferma la risposta in corso">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        Interrompi risposta
+      </button>
+    </div>
+    <div id="ctxBar" title="Utilizzo contesto"><div id="ctxFill"></div></div>
+    <div class="dd" id="statsDd">
+      <button id="stats" title="Token e costo di questa chat — clicca per il dettaglio per modello"></button>
+      <div class="dd-menu" id="statsMenu"></div>
+    </div>
+  </header>
+
+  <!-- chat view -->
+  <div id="chatView" class="grid-bg">
+    <div id="chatWrap" class="grid-bg"><div id="chat"></div></div>
+    <div id="composerWrap">
+      <form id="composer">
+        <div class="cmdMenu" id="cmdMenu"></div>
+        <div class="composer-top">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6z"/><path d="M18.5 14l.8 2.7 2.7.8-2.7.8-.8 2.7-.8-2.7-2.7-.8 2.7-.8z" opacity=".7"/></svg>
+          <span id="composerCtx">pronto</span>
+        </div>
+        <div id="attachments"></div>
+        <textarea id="input" rows="1" placeholder="Chiedimi qualsiasi cosa…  (trascina qui file e immagini)"></textarea>
+        <div class="composer-bar">
+          <input type="file" id="fileInput" multiple hidden>
+          <button type="button" class="chip" id="attachBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12.5 12.5 21a5 5 0 0 1-7-7l8-8a3.5 3.5 0 1 1 5 5l-8 8a2 2 0 1 1-3-3l7.5-7.5"/></svg>
+            Allega file
+          </button>
+          <span class="composer-hint">
+            <span><span class="kbd">Ctrl</span>+<span class="kbd">Invio</span> invia</span>
+            <span><span class="kbd">Invio</span> a capo</span>
+          </span>
+          <span id="usageWidget" title="">
+            <b id="usageWidgetLabel"></b>
+            <div class="bar" id="usageWidgetBar"><i></i></div>
+            <span class="txt" id="usageWidgetTxt"></span>
+            <div class="bar hide" id="usageWidgetBar2"><i></i></div>
+            <span class="txt hide" id="usageWidgetTxt2"></span>
+          </span>
+          <button type="submit" class="btn teal" id="sendBtn" title="Invia (Ctrl+Invio)">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- settings view -->
+  <div id="settingsView" class="hide grid-bg">
+    <div class="settings-inner">
+      <h2>Modelli e opzioni di pi</h2>
+      <p class="lead">Configurazione letta da <code id="agentDir">~/.pi/agent</code> — condivisa con la CLI di pi.</p>
+      <div class="card" id="analytics"><div class="sys">Caricamento analisi costi…</div></div>
+      <div id="settingsBody"><div class="sys">Caricamento…</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DIFF PANEL ============ -->
+<div id="diffPanel">
+  <div id="diffHead">
+    <strong>File modificati</strong><span style="flex:1"></span>
+    <button class="btn icon" id="diffClose">✕</button>
+  </div>
+  <div id="fileList"></div>
+  <div id="diffBody"><div class="sys" style="padding:.5rem">Seleziona un file</div></div>
+</div>
+
+<!-- ============ TASKS PANEL (background) ============ -->
+<div id="tasksPanel">
+  <div id="tasksHead">
+    <strong>Processi in background</strong><span class="sm" style="color:var(--txt-dim)">(questa chat)</span><span style="flex:1"></span>
+    <button class="btn icon" id="tasksRefresh" title="Rimuovi i task completati">Pulisci</button>
+    <button class="btn icon" id="tasksClose">✕</button>
+  </div>
+  <div id="tasksBody"><div class="sys" style="padding:.6rem">Caricamento…</div></div>
+</div>
+
+<!-- ============ LIGHTBOX IMMAGINI ============ -->
+<div id="lightbox">
+  <button id="lightboxClose" title="Chiudi (Esc)">✕</button>
+  <img id="lightboxImg" alt="">
+</div>
+
+<!-- ============ SCORCIATOIE (tieni premuto Shift) ============ -->
+<div id="shortcuts">
+  <div class="panel">
+    <h3>Scorciatoie da tastiera</h3>
+    <p class="lead">Tieni premuto <span class="kbd">Shift</span> per rivedere questo pannello · rilascia per chiuderlo</p>
+    <div class="grid" id="shortcutsGrid"></div>
+  </div>
+</div>
+
+<div id="drop"><div class="box"><b>Rilascia qui</b><span style="color:var(--txt-dim)">immagini e file di testo verranno allegati al prompt</span></div></div>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const chat = $('chat'), chatWrap = $('chatWrap');
+let currentAssistant = null, currentThinking = null, currentTurn = null;
+const state = { cwd: '', model: null, thinking: 'off', thinkingLevels: ['off'], streaming: false, turnModel: null };
+
+/* ---------------- per-tab chat binding ----------------
+   Ogni scheda è legata a UNA chat (la sua "session key" = path del file di
+   sessione). Sta in sessionStorage (indipendente per scheda) e nell'hash
+   dell'URL, così una scheda si può duplicare/riaprire sulla stessa chat.
+   Il server tiene viva la chat anche quando nessuna scheda la guarda: uscire
+   da una chat non interrompe più niente. */
+let sessionKey = null;
+try {
+  const h = new URLSearchParams(location.hash.slice(1)).get('s');
+  sessionKey = h || sessionStorage.getItem('piSessionKey') || null;
+} catch { sessionKey = null; }
+function setSessionKey(k, { reconnect = true } = {}) {
+  if (!k || k === sessionKey) { if (k) currentSessionPath = k; return; }
+  sessionKey = k;
+  currentSessionPath = k;
+  resetTasks();                    // i task in background sono per-chat
+  try { sessionStorage.setItem('piSessionKey', k); } catch {}
+  history.replaceState(null, '', '#s=' + encodeURIComponent(k));
+  if (reconnect) connect();
+}
+
+if (window.marked) marked.setOptions({ breaks: true, gfm: true });
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const fmt = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(Math.round(n ?? 0));
+const atBottom = () => chatWrap.scrollHeight - chatWrap.scrollTop - chatWrap.clientHeight < 90;
+const scrollDown = () => { chatWrap.scrollTop = chatWrap.scrollHeight; };
+
+function toast(msg, ok = false) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (ok ? ' ok' : '');
+  t.textContent = msg;
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 6000);
+}
+// every call goes through here: errors are always surfaced, never silent
+const withKey = (url) =>
+  sessionKey ? url + (url.includes('?') ? '&' : '?') + 's=' + encodeURIComponent(sessionKey) : url;
+async function api(url, opts) {
+  try {
+    const r = await fetch(url.startsWith('/api/') ? withKey(url) : url, opts);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) { toast(d.error || `${url}: HTTP ${r.status}`); return { error: d.error || `HTTP ${r.status}` }; }
+    if (d.key) setSessionKey(d.key, { reconnect: d.key !== sessionKey && !!sessionKey });
+    return d;
+  } catch (e) {
+    toast(`${url}: ${e.message}`);
+    return { error: e.message };
+  }
+}
+const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+
+/* ---------------- provider logos ----------------
+   Glifi minimali su una griglia 24x24, tutti con lo stesso peso ottico.
+   Il colore non è mai scritto nell'SVG (currentColor + background inline), così
+   il tema "mono" delle impostazioni può spegnere i colori di brand via CSS. */
+const LOGOS = {
+  anthropic: { bg: '#d97757', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.6 5h-3.2L5.2 19h2.9l1.1-3.1h5.6L15.9 19h2.9zM10.1 13.4 12 8.2l1.9 5.2z"/></svg>' },
+  // logo ufficiale OpenAI (nodo), path da Simple Icons
+  openai:    { bg: '#0b0b0b', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>' },
+  google:    { bg: '#f4f6fa', fg: '#4285f4', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2c.6 4.4 4.4 8.2 8.8 8.8-4.4.6-8.2 4.4-8.8 8.8-.6-4.4-4.4-8.2-8.8-8.8 4.4-.6 8.2-4.4 8.8-8.8z"/></svg>' },
+  kimi:      { bg: '#0f0f0f', fg: '#00e5a0', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 5v14"/><path d="M17 5.5 8.6 12 17 18.5"/></svg>' },
+  moonshot:  { bg: '#0f0f0f', fg: '#00e5a0', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.4 14.6A8.4 8.4 0 0 1 9.4 3.6a8.5 8.5 0 1 0 11 11z"/></svg>' },
+  deepseek:  { bg: '#4d6bfe', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12c4 0 6-1.9 7.5-5 1.5 3.1 3.5 5 7.5 5-4 0-6 1.9-7.5 5-1.5-3.1-3.5-5-7.5-5z"/></svg>' },
+  xai:       { bg: '#0b0b0b', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4.5h3.2l9.3 15h-3.2zM5.6 19.5l4.9-6 1.7 2.7-2.2 3.3z"/></svg>' },
+  mistral:   { bg: '#ff7000', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.5 5h3.6v3.6H3.5zm6.7 0h3.6v3.6h-3.6zm6.7 0h3.6v3.6h-3.6zM3.5 10.2h17v3.6h-17zM3.5 15.4h3.6V19H3.5zm13.4 0h3.6V19h-3.6z"/></svg>' },
+  meta:      { bg: '#0866ff', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3.6 15.4c1.2-5.6 3.1-7.8 5-7.8 1.9 0 3 1.9 4.2 4.1 1.2 2.2 2.2 3.7 3.7 3.7 1.6 0 2.6-1.6 2.6-4.1 0-2.5-1-3.9-2.3-3.9"/></svg>' },
+  ollama:    { bg: '#f4f6fa', fg: '#111', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 14c0-3 2.4-5 5.5-5s5.5 2 5.5 5-2.4 5.5-5.5 5.5S6.5 17 6.5 14z"/><path d="M7.3 9.4C6.6 7.2 6.8 4.6 8 4.4c1.2-.2 2.1 1.6 2.2 3.6M16.7 9.4c.7-2.2.5-4.8-.7-5-1.2-.2-2.1 1.6-2.2 3.6"/></svg>' },
+  groq:      { bg: '#f55036', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.4 3 6 13.2h4.6L9.8 21l7.6-10.4h-4.7z"/></svg>' },
+  openrouter:{ bg: '#151515', fg: '#8ab4ff', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12h4l3 5h6.5"/><path d="M3.5 12h4l3-5h6.5"/><path d="M15.5 4.5 19.5 7l-4 2.5zM15.5 14.5 19.5 17l-4 2.5z"/></svg>' },
+  github:    { bg: '#24292e', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.5c.5.1.6-.2.6-.5v-1.8c-2.6.6-3.2-1.2-3.2-1.2-.4-1.1-1-1.4-1-1.4-.9-.6 0-.6 0-.6 1 .1 1.5 1 1.5 1 .8 1.4 2.2 1 2.7.8.1-.6.3-1 .6-1.3-2.1-.2-4.3-1.1-4.3-4.7 0-1 .4-1.9 1-2.6-.1-.2-.4-1.2.1-2.5 0 0 .8-.3 2.6 1a8.9 8.9 0 0 1 4.8 0c1.8-1.3 2.6-1 2.6-1 .5 1.3.2 2.3.1 2.5.6.7 1 1.6 1 2.6 0 3.7-2.2 4.5-4.3 4.7.3.3.6.9.6 1.8v2.7c0 .3.2.6.7.5A9.5 9.5 0 0 0 12 2.5z"/></svg>' },
+  _:         { bg: '#1a2130', fg: '#8d97a8', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7.5"/><path d="M12 8.2v7.6M8.2 12h7.6"/></svg>' },
+};
+function logoFor(provider, id = '') {
+  const k = (provider + ' ' + id).toLowerCase();
+  for (const name of Object.keys(LOGOS)) if (name !== '_' && k.includes(name)) return LOGOS[name];
+  if (k.includes('claude') || k.includes('fable') || k.includes('opus') || k.includes('sonnet') || k.includes('haiku')) return LOGOS.anthropic;
+  if (k.includes('gpt') || k.match(/\bo[34]\b/)) return LOGOS.openai;
+  if (k.includes('gemini')) return LOGOS.google;
+  if (k.includes('k2') || k.includes('k3')) return LOGOS.kimi;
+  if (k.includes('llama')) return LOGOS.meta;
+  if (k.includes('grok')) return LOGOS.xai;
+  return LOGOS._;
+}
+const logoHtml = (p, id, cls = '') => {
+  const l = logoFor(p, id);
+  return `<span class="logo ${cls}" style="background:${l.bg};color:${l.fg}">${l.svg}</span>`;
+};
+// tema dei loghi: 'brand' (colori dei provider) o 'mono' (monocromatici) — il
+// CSS fa l'override, quindi cambiare tema non richiede di ridisegnare nulla
+const LOGO_STYLES = [
+  { id: 'brand', name: 'Colori del provider' },
+  { id: 'mono', name: 'Monocromatici' },
+];
+function applyLogoStyle(id) {
+  const v = LOGO_STYLES.some((s) => s.id === id) ? id : 'brand';
+  document.documentElement.dataset.logo = v;
+  localStorage.setItem('piLogoStyle', v);
+  document.querySelectorAll('.logoStyleCard').forEach((c) => c.classList.toggle('sel', c.dataset.l === v));
+}
+applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
+
+/* ---------------- dropdowns ---------------- */
+// i flyout dei modelli stanno nel <body>: vanno chiusi insieme al loro dropdown
+function closeFlyouts() {
+  document.querySelectorAll('body > .dd-flyout.on').forEach((f) => f.classList.remove('on'));
+  document.querySelectorAll('.dd-sub.open').forEach((s) => s.classList.remove('open'));
+}
+function setupDd(ddId, btnId) {
+  const dd = $(ddId);
+  $(btnId).addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = dd.classList.contains('open');
+    closeFlyouts();
+    document.querySelectorAll('.dd.open').forEach((d) => d.classList.remove('open'));
+    if (!open) dd.classList.add('open');
+  });
+  dd.querySelector('.dd-menu').addEventListener('click', (e) => e.stopPropagation());
+  return dd;
+}
+// filtri sidebar (stato + periodo), sostituiscono il vecchio filtro per progetto:
+// il progetto resta selezionabile via ricerca/raggruppamento "Per progetto"
+// (dichiarato qui, prima di ogni suo uso: setupDd/renderFilterMenu girano subito sotto)
+let sessionFilter = { status: 'all', period: 'all' };
+try { sessionFilter = { ...sessionFilter, ...JSON.parse(localStorage.getItem('piSessionFilter') || '{}') }; } catch {}
+const modelDd = setupDd('modelDd', 'modelBtn');
+const thinkDd = setupDd('thinkDd', 'thinkBtn');
+const cwdDd = setupDd('cwdDd', 'cwdChip');
+const statsDd = setupDd('statsDd', 'stats');
+const filterDd = setupDd('filterDd', 'filterBtn');
+function renderFilterMenu() {
+  $('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
+    b.classList.toggle('sel', sessionFilter[b.dataset.filter] === b.dataset.val);
+  });
+  const active = (sessionFilter.status !== 'all' ? 1 : 0) + (sessionFilter.period !== 'all' ? 1 : 0);
+  $('filterBtn').classList.toggle('on', active > 0);
+  $('filterCount').classList.toggle('hide', !active);
+  $('filterCount').textContent = active;
+}
+$('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
+  b.addEventListener('click', () => {
+    sessionFilter = { ...sessionFilter, [b.dataset.filter]: b.dataset.val };
+    localStorage.setItem('piSessionFilter', JSON.stringify(sessionFilter));
+    renderFilterMenu();
+    renderSessions();
+    filterDd.classList.remove('open');
+  });
+});
+renderFilterMenu();
+document.addEventListener('click', () => {
+  closeFlyouts();
+  document.querySelectorAll('.dd.open').forEach((d) => d.classList.remove('open'));
+});
+
+/* ---------------- chat rendering (everything left-aligned, no bubbles) ---------------- */
+function renderMarkdown(div) {
+  div.innerHTML = window.marked ? marked.parse(div.dataset.raw ?? '') : esc(div.dataset.raw ?? '');
+  if (window.hljs) div.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
+  addCopyButtons(div);
+}
+
+/* ---- copy-to-clipboard: whole messages and single code/context blocks ---- */
+const ICON_COPY = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_CHECK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
+const ICON_FORK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.3"/><circle cx="6" cy="18" r="2.3"/><circle cx="18" cy="12" r="2.3"/><path d="M6 8.3V15.7M8 7l7.5 3.5M8 17l7.5-3.5"/></svg>';
+async function copyToClipboard(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text ?? '');
+    if (btn) flashCopied(btn);
+  } catch {
+    toast('Copia non riuscita (permessi clipboard del browser)');
+  }
+}
+function flashCopied(btn) {
+  if (btn.dataset.flashing) return;
+  btn.dataset.flashing = '1';
+  const prev = btn.innerHTML;
+  btn.innerHTML = ICON_CHECK;
+  btn.classList.add('copied');
+  setTimeout(() => { btn.innerHTML = prev; btn.classList.remove('copied'); delete btn.dataset.flashing; }, 1200);
+}
+// wrap every <pre> (markdown code fences, tool request/output) in a box with a
+// floating copy button. The wrapper sits *outside* the <pre>, so re-rendering
+// the pre's content (streaming tool output, incremental markdown) never wipes
+// the button — only run once per <pre> (guarded by the wrapper check).
+function addCopyButtons(container) {
+  container.querySelectorAll('pre').forEach((pre) => {
+    if (pre.parentElement?.classList.contains('codeBox')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'codeBox';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'codeCopyBtn';
+    btn.title = 'Copia';
+    btn.innerHTML = ICON_COPY;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const codeEl = pre.querySelector('code');
+      copyToClipboard(codeEl ? codeEl.innerText : pre.innerText, btn);
+    });
+    wrap.appendChild(btn);
+  });
+}
+// hover toolbar under a turn: copy the whole message, or fork a new chat that
+// starts from exactly this point (native SessionManager branch extraction).
+function addMsgActions(body, div, { entryId } = {}) {
+  const bar = document.createElement('div');
+  bar.className = 'msgActions';
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'msgActionBtn';
+  copyBtn.title = 'Copia messaggio';
+  copyBtn.innerHTML = ICON_COPY;
+  copyBtn.addEventListener('click', () => copyToClipboard(div.dataset.raw ?? div.textContent, copyBtn));
+  bar.appendChild(copyBtn);
+  if (entryId) {
+    const forkBtn = document.createElement('button');
+    forkBtn.type = 'button';
+    forkBtn.className = 'msgActionBtn';
+    forkBtn.title = 'Nuova chat da qui';
+    forkBtn.innerHTML = ICON_FORK;
+    forkBtn.addEventListener('click', () => forkFrom(entryId));
+    bar.appendChild(forkBtn);
+  }
+  body.appendChild(bar);
+}
+async function forkFrom(entryId) {
+  const r = await post('/api/session', { action: 'forkFrom', entryId });
+  if (r.error) return;
+  setSessionKey(r.key);
+  await refreshAll();
+  toast('Nuova chat creata da questo punto', true);
+}
+function newTurn(role, model = null) {
+  $('hero')?.remove();
+  // Messaggi consecutivi dello stesso interlocutore (stesso modello, per
+  // l'assistente) restano nello stesso turno: avatar e nome compaiono una sola
+  // volta, finché non risponde l'altro.
+  const last = chat.lastElementChild;
+  if (last?.classList.contains('turn') && last.classList.contains(role)) {
+    const m = role === 'user' ? null : (model ?? state.turnModel ?? state.model);
+    const sig = role === 'user' ? 'user' : `${m?.provider ?? ''}/${m?.id ?? m?.model ?? ''}`;
+    if (last.dataset.sig === sig) return last.querySelector('.body');
+  }
+  const t = document.createElement('div');
+  t.className = 'turn ' + role;
+  if (role === 'user') {
+    t.dataset.sig = 'user';
+    t.innerHTML = `<div class="avatar">TU</div>
+      <div class="body"><div class="who">Tu</div></div>`;
+  } else {
+    // the assistant turn is labeled with the model that produced it (it can
+    // change mid-chat): provider logo as avatar + model name instead of "pi"
+    const m = model ?? state.turnModel ?? state.model;
+    const pid = m?.provider ?? '';
+    const mid = m ? (m.id ?? m.model ?? '') : '';
+    const pretty = m?.name || modelsCache.find((x) => x.provider === pid && x.id === mid)?.name || mid;
+    t.dataset.sig = `${pid}/${mid}`;
+    t.innerHTML = m
+      ? `<div class="avatar hasLogo" title="${esc(pid)}/${esc(mid)}">${logoHtml(pid, mid)}</div>
+         <div class="body"><div class="who">${esc(pretty)} <span class="mprov">${esc(pid)}</span></div></div>`
+      : `<div class="avatar">π</div>
+         <div class="body"><div class="who">pi</div></div>`;
+  }
+  chat.appendChild(t);
+  return t.querySelector('.body');
+}
+function bubble(cls, text = '', body = null) {
+  const stick = atBottom();
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  if (cls === 'assistant') { div.classList.add('md'); div.dataset.raw = text; renderMarkdown(div); }
+  else div.textContent = text;
+  (body ?? newTurn(cls === 'user' ? 'user' : 'pi')).appendChild(div);
+  if (stick) scrollDown();
+  return div;
+}
+function appendMd(div, delta) {
+  const stick = atBottom();
+  div.dataset.raw = (div.dataset.raw ?? '') + delta;
+  renderMarkdown(div);
+  if (stick) scrollDown();
+}
+// plain-text streaming (thinking): stessa regola di stickiness del markdown,
+// altrimenti durante il reasoning la view resta ferma e il testo scorre sotto
+function appendText(div, delta) {
+  const stick = atBottom();
+  div.textContent += delta;
+  if (stick) scrollDown();
+}
+/* ---- tool calls: expandable card showing exactly what the model is doing ---- */
+const toolCards = new Map(); // toolCallId -> element
+function renderTool(ev) {
+  if (!currentTurn) currentTurn = newTurn('pi');
+  let card = ev.id ? toolCards.get(ev.id) : null;
+  if (!card) {
+    const stick = atBottom();
+    card = document.createElement('div');
+    card.className = 'toolCard';
+    card.innerHTML = `<button type="button" class="toolHead">
+        <svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+        <span class="nm"></span><span class="sm"></span><span class="st">…</span>
+      </button>
+      <div class="toolBody">
+        <h6>Richiesta</h6><pre class="args">…</pre>
+        <h6>Output</h6><pre class="out">(in esecuzione…)</pre>
+      </div>`;
+    card.querySelector('.toolHead').addEventListener('click', () => card.classList.toggle('open'));
+    currentTurn.appendChild(card);
+    if (ev.id) toolCards.set(ev.id, card);
+    addCopyButtons(card);
+    if (stick) scrollDown();
+  }
+  const q = (s) => card.querySelector(s);
+  if (ev.status === 'start') {
+    q('.nm').textContent = ev.name;
+    q('.sm').textContent = ev.summary || '';
+    q('.sm').title = ev.summary || '';
+    q('.args').textContent = typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {}, null, 2);
+  } else if (ev.status === 'update') {
+    if (ev.output) q('.out').textContent = ev.output;
+  } else {
+    q('.st').textContent = ev.isError ? '✗ errore' : '✓';
+    q('.st').classList.toggle('err', !!ev.isError);
+    q('.out').textContent = ev.output || '(nessun output)';
+    if (ev.isError) card.classList.add('open');
+  }
+}
+
+const SUGG = [
+  { t: 'Esplora', c: '#2fe0c0', d: 'Dammi una panoramica di questo progetto', p: 'Fammi una panoramica della struttura di questo progetto e di cosa fa.' },
+  { t: 'Debug', c: '#f8a5a5', d: 'Trova e correggi un bug', p: 'Analizza il codice e segnalami possibili bug o problemi.' },
+  { t: 'Refactor', c: '#a5b4fc', d: 'Migliora il codice esistente', p: 'Proponi un refactoring dei file principali di questo progetto.' },
+];
+function showHero() {
+  if (chat.children.length) return;
+  const h = document.createElement('div');
+  h.id = 'hero';
+  h.innerHTML = `<h1>Ciao 👋<br><span class="dim">Cosa costruiamo oggi?</span></h1>
+    <p>Cartella di lavoro: <code>${esc(state.cwd || '…')}</code></p>
+    <div class="cards">${SUGG.map((s, i) => `
+      <button class="sugg" data-i="${i}">
+        <span class="tag" style="background:${s.c}22;color:${s.c}">${s.t}</span>
+        <div class="d">${esc(s.d)}</div>
+      </button>`).join('')}</div>`;
+  chat.appendChild(h);
+  h.querySelectorAll('.sugg').forEach((b) => b.addEventListener('click', () => {
+    $('input').value = SUGG[+b.dataset.i].p;
+    autoGrow(); $('input').focus();
+  }));
+}
+// Counter shows *this chat only*: fresh tokens per turn (prompt + cache writes +
+// output). Cache reads are excluded because they re-count context already paid for.
+let lastByModel = {};   // provider/model -> {tokens,cost,requests,...} per questa chat
+let lastChat = null;    // ultimi totali chat noti, per risincronizzare senza un evento 'usage'
+function renderStats(chat, context, byModel) {
+  const c = chat ?? lastChat ?? { tokens: 0, cost: 0, requests: 0 };
+  lastChat = c;
+  if (byModel) lastByModel = byModel;
+  $('stats').textContent = `${fmt(c.tokens)} token · $${(c.cost ?? 0).toFixed(4)}`;
+  $('stats').title =
+    `token di questa chat: ${fmt(c.tokens)}\n` +
+    `  input: ${fmt(c.input)} · output: ${fmt(c.output)} · cache write: ${fmt(c.cacheWrite)}\n` +
+    `  (cache read esclusa: ${fmt(c.cacheRead)}, è contesto già conteggiato)\n` +
+    `richieste: ${c.requests} · costo stimato: $${(c.cost ?? 0).toFixed(4)}\n` +
+    `clicca per il dettaglio per modello`;
+  renderStatsMenu(c);
+  if (context?.window > 0) {
+    const pct = Math.min(100, 100 * context.used / context.window);
+    $('ctxFill').style.width = pct + '%';
+    $('ctxFill').className = pct > 85 ? 'crit' : pct > 60 ? 'warn' : '';
+    $('ctxBar').title = `contesto: ${fmt(context.used)} / ${fmt(context.window)} token (${pct.toFixed(1)}%)`;
+    $('composerCtx').textContent = `${state.model ? state.model.id : 'pi'} · contesto ${pct.toFixed(0)}%`;
+  }
+}
+// popover del contatore: una riga per ogni LLM usato in questa chat
+// (cambiare modello a metà chat non mescola più i conteggi)
+function renderStatsMenu(c) {
+  const money = (n) => '$' + (n ?? 0).toFixed(4);
+  const rows = Object.entries(lastByModel ?? {}).sort((a, b) => b[1].cost - a[1].cost);
+  let html = '<div class="dd-group">Token e costo di questa chat, per modello</div>';
+  if (!rows.length) html += '<div class="sys" style="padding:.4rem .55rem">ancora nessuna risposta</div>';
+  for (const [key, m] of rows) {
+    const slash = key.indexOf('/');
+    const p = slash > 0 ? key.slice(0, slash) : '';
+    const id = slash > 0 ? key.slice(slash + 1) : key;
+    html += `<div class="statsRow">${logoHtml(p, id)}<span class="nm" title="${esc(key)}">${esc(id)}</span>
+      <span class="vals">${fmt(m.tokens)} tok · <b>${money(m.cost)}</b> · ${m.requests} req</span></div>`;
+  }
+  if (rows.length > 1) {
+    html += `<div class="statsRow total"><span class="nm">Totale chat</span>
+      <span class="vals">${fmt(c.tokens)} tok · <b>${money(c.cost)}</b> · ${c.requests} req</span></div>`;
+  }
+  $('statsMenu').innerHTML = html;
+}
+function setRunning(on) {
+  state.streaming = on;
+  $('runState').classList.toggle('on', on);
+  if (!on) { currentAssistant = currentThinking = currentTurn = null; }
+}
+
+/* ---------------- account usage widget (real limits, dynamic on active provider) ---------------- */
+function fmtCountdown(iso) {
+  if (!iso) return '';
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!isFinite(ms) || ms <= 0) return 'reset a breve';
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  const d = Math.floor(h / 24);
+  if (d > 0) return `reset tra ${d}g ${h % 24}h`;
+  return h > 0 ? `reset tra ${h}h ${m}m` : `reset tra ${m}m`;
+}
+function setUsageBar(pct, severityOrWarnCrit, barId) {
+  const bar = $(barId ?? 'usageWidgetBar');
+  const i = bar.querySelector('i');
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  i.style.width = p + '%';
+  bar.classList.remove('warn', 'crit');
+  if (severityOrWarnCrit === 'critical' || p > 90) bar.classList.add('crit');
+  else if (severityOrWarnCrit === 'warning' || p > 70) bar.classList.add('warn');
+}
+// seconda barra del widget: consumo della finestra lunga (settimanale/periodo),
+// nascosta quando il provider non la espone
+function setUsageBar2(pct, severityOrWarnCrit, text) {
+  $('usageWidgetBar2').classList.remove('hide');
+  $('usageWidgetTxt2').classList.remove('hide');
+  setUsageBar(pct, severityOrWarnCrit, 'usageWidgetBar2');
+  $('usageWidgetTxt2').textContent = text;
+}
+function hideUsageBar2() {
+  $('usageWidgetBar2').classList.add('hide');
+  $('usageWidgetTxt2').classList.add('hide');
+}
+let usageCache = null;
+async function refreshUsage(force) {
+  usageCache = await api('/api/usage' + (force ? '?force=1' : ''));
+  renderUsageWidget();
+}
+function renderUsageWidget() {
+  const w = $('usageWidget'), label = $('usageWidgetLabel'), txt = $('usageWidgetTxt');
+  const u = usageCache;
+  const provider = state.model?.provider;
+  if (!u || u.error || !provider) { w.classList.remove('show'); return; }
+
+  if (provider === 'anthropic' && u.anthropic?.configured) {
+    w.classList.add('show');
+    label.textContent = 'Claude';
+    txt.classList.remove('err');
+    if (u.anthropic.error) {
+      txt.textContent = u.anthropic.error; txt.classList.add('err'); setUsageBar(0);
+      hideUsageBar2();
+      w.title = u.anthropic.error;
+    } else {
+      const fh = u.anthropic.fiveHour;
+      const sd = u.anthropic.sevenDay;
+      const sev = u.anthropic.limits?.[0]?.severity;
+      setUsageBar(fh?.percent, sev);
+      txt.textContent = fh ? `${Math.round(fh.percent)}%` : 'n/d';
+      // consumo settimanale residuo: claude.ai lo chiama "seven_day", non mostrato
+      // da nessun'altra parte nella UI ufficiale
+      if (sd && typeof sd.percent === 'number') {
+        const sevSev = u.anthropic.limits?.find((l) => l.kind === 'seven_day')?.severity;
+        setUsageBar2(sd.percent, sevSev, `sett ${Math.round(sd.percent)}%`);
+      } else {
+        hideUsageBar2();
+      }
+      w.title = [
+        fh ? `Claude — 5h: ${Math.round(fh.percent)}% · ${fmtCountdown(fh.resetsAt)}` : 'Claude — dati 5h non disponibili',
+        sd && typeof sd.percent === 'number' ? `settimana: ${Math.round(sd.percent)}% · ${fmtCountdown(sd.resetsAt)}` : null,
+      ].filter(Boolean).join('\n');
+    }
+    return;
+  }
+
+  if (provider === 'kimi-coding' && u.kimi?.configured) {
+    w.classList.add('show');
+    label.textContent = 'Kimi';
+    txt.classList.remove('err');
+    if (u.kimi.error) {
+      txt.textContent = u.kimi.error; txt.classList.add('err'); setUsageBar(0);
+      hideUsageBar2();
+      w.title = u.kimi.error;
+    } else {
+      const coding = u.kimi.usages?.find((x) => x.scope === 'FEATURE_CODING') ?? u.kimi.usages?.[0];
+      const win5h = coding?.windows?.find((x) => x.durationMinutes === 300) ?? coding?.windows?.[0];
+      const period = coding?.period;
+      const periodPct = period?.limit ? 100 * period.used / period.limit : null;
+      if (period && Number.isFinite(periodPct)) {
+        setUsageBar2(periodPct, null, `sett ${Math.round(periodPct)}%`);
+      } else {
+        hideUsageBar2();
+      }
+      if (win5h) {
+        const pct = win5h.limit ? 100 * win5h.used / win5h.limit : 0;
+        setUsageBar(pct);
+        txt.textContent = `${Math.round(pct)}%`;
+        const periodTxt = period ? ` · periodo: ${period.used}/${period.limit} (${fmtCountdown(period.resetsAt)})` : '';
+        w.title = `Kimi — finestra 5h: ${win5h.used}/${win5h.limit} · ${fmtCountdown(win5h.resetsAt)}${periodTxt}`;
+      } else if (period) {
+        const pct = periodPct ?? 0;
+        setUsageBar(pct);
+        txt.textContent = `${period.used}/${period.limit}`;
+        w.title = `Kimi — ${period.used}/${period.limit} · ${fmtCountdown(period.resetsAt)}`;
+        hideUsageBar2();
+      } else {
+        txt.textContent = 'n/d'; setUsageBar(0); hideUsageBar2(); w.title = 'Kimi — dati non disponibili';
+      }
+    }
+    return;
+  }
+
+  w.classList.remove('show');
+}
+
+/* ---------------- SSE (with reconnect + refresh fallback) ---------------- */
+let es = null;
+function connect() {
+  if (es) { try { es.close(); } catch {} }
+  es = new EventSource(withKey('/api/events'));
+  es.onopen = () => { $('conn').classList.remove('off'); $('connTxt').textContent = 'connesso'; };
+  es.onerror = () => { $('conn').classList.add('off'); $('connTxt').textContent = 'riconnessione…'; };
+  es.onmessage = (e) => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    try { handleEvent(ev); } catch (err) { console.error(err); toast('UI: ' + err.message); }
+  };
+}
+function handleEvent(ev) {
+  // eventi globali: riguardano le ALTRE chat aperte, non questa
+  if (ev.scope === 'global') {
+    if (ev.kind === 'running') {
+      if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
+      if (ev.key !== sessionKey) {
+        renderSessions();
+        if (!ev.running) {
+          const s = allSessions.find((x) => x.path === ev.key);
+          toast('Chat completata: ' + (s?.name || s?.firstMessage || 'in background'), true);
+        }
+      }
+    } else if (ev.kind === 'sessions') {
+      loadSessions();
+    }
+    return;
+  }
+  switch (ev.kind) {
+    case 'attached':
+      setSessionKey(ev.key, { reconnect: false });
+      setRunning(!!ev.running);
+      if (ev.running && !agentTask) setAgentTask(true, state.turnModel);
+      break;
+    case 'text':
+      // a new text segment after thinking/tool must be appended AFTER them, in order: drop the
+      // stale thinking reference so the next 'thinking' event (if any) starts a fresh bubble below
+      currentThinking = null;
+      if (!currentAssistant) { if (!currentTurn) currentTurn = newTurn('pi'); currentAssistant = bubble('assistant', '', currentTurn); }
+      appendMd(currentAssistant, ev.delta); break;
+    case 'thinking':
+      // a new thinking segment after text/tool must create a fresh bubble in DOM order, not
+      // reuse (and jump back to) an earlier one
+      currentAssistant = null;
+      if (!currentTurn) currentTurn = newTurn('pi');
+      if (!currentThinking) currentThinking = bubble('thinking', '', currentTurn);
+      appendText(currentThinking, ev.delta); break;
+    case 'tool':
+      // tool calls always happen between other segments: whatever comes next (thinking/text)
+      // must render as a new element after the tool card, never append into a stale one
+      currentThinking = null; currentAssistant = null;
+      renderTool(ev); taskFromTool(ev); break;
+    case 'usage': renderStats(ev.chat, ev.context, ev.chatByModel); break;
+    case 'status':
+      if (ev.status === 'running') {
+        setChatStarted(true);  // sta girando ⇒ la chat è nata
+        if (ev.model) state.turnModel = ev.model;  // modello che sta rispondendo (può cambiare a metà chat)
+        setAgentTask(true, ev.model);
+      } else {
+        state.turnModel = null;
+        setAgentTask(false);
+        refreshGit();  // l'agente può aver toccato file / branch
+      }
+      setRunning(ev.status === 'running'); break;
+    case 'cwd':
+      state.cwd = ev.path; setCwdLabel(ev.path);
+      activeFile = null; refreshAll(); break;
+    case 'file': loadFiles(); break;
+    case 'error': bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message); toast(ev.message); break;
+  }
+}
+
+/* ---------------- models + dynamic effort ---------------- */
+let modelsCache = [];
+async function loadModels() {
+  const res = await api('/api/models');
+  if (res.error) return;
+  modelsCache = res.models ?? [];
+  state.model = res.current;
+  state.thinking = res.thinkingLevel ?? 'off';
+  state.thinkingLevels = res.thinkingLevels?.length ? res.thinkingLevels : ['off'];
+  renderModelBtn(); renderModelMenu(); renderThinking();
+}
+const modelMeta = () => state.model ? modelsCache.find((m) => m.provider === state.model.provider && m.id === state.model.id) : null;
+function renderModelBtn() {
+  const m = state.model;
+  $('modelLogo').outerHTML = m
+    ? logoHtml(m.provider, m.id).replace('class="logo ', 'id="modelLogo" class="logo ')
+    : '<span class="logo" id="modelLogo"></span>';
+  $('modelName').textContent = m ? (modelMeta()?.name || m.id) : 'nessun modello';
+  $('modelBtn').title = m ? `${m.provider}/${m.id}` : 'nessun modello autenticato';
+}
+async function selectModel(provider, id) {
+  const r = await post('/api/model', { provider, id });
+  if (r.error) return;
+  state.model = { provider, id };
+  state.thinking = r.thinkingLevel ?? state.thinking;
+  state.thinkingLevels = r.thinkingLevels?.length ? r.thinkingLevels : ['off'];
+  renderModelBtn(); renderModelMenu(); renderThinking(); renderUsageWidget();
+  // il context window dipende dal modello: risincronizza subito la barra/composer
+  // invece di aspettare il prossimo messaggio (che è quando si aggiornava prima)
+  if (r.context) renderStats(lastChat, r.context, lastByModel);
+  if (!$('settingsView').classList.contains('hide')) renderSettings();
+  toast(`Modello: ${id}`, true);
+}
+// Shift+M: cicla tra i modelli disponibili/autenticati
+async function cycleModel() {
+  if (!modelsCache.length) { toast('Nessun modello disponibile'); return; }
+  let idx = modelsCache.findIndex((m) => state.model && m.provider === state.model.provider && m.id === state.model.id);
+  idx = (idx + 1) % modelsCache.length;
+  const m = modelsCache[idx];
+  await selectModel(m.provider, m.id);
+}
+// Menu a due livelli: prima i provider, i modelli compaiono in un flyout
+// laterale al passaggio del mouse (o al click/tastiera, per accessibilità).
+function renderModelMenu() {
+  const menu = $('modelMenu');
+  menu.innerHTML = '';
+  document.querySelectorAll('body > .dd-flyout').forEach((f) => f.remove());  // flyout della resa precedente
+  if (!modelsCache.length) { menu.innerHTML = '<div class="dd-group">nessun modello attivo</div>'; return; }
+  const byProv = {};
+  for (const m of modelsCache) (byProv[m.provider] ??= []).push(m);
+  let closeTimer = null;
+  // I flyout vivono nel <body>, non dentro l'header: l'header ha backdrop-filter
+  // e diventerebbe il blocco contenitore dei figli position:fixed, sballando le
+  // coordinate. Nel body le coordinate sono davvero quelle della finestra.
+  const closeAllSubs = () => {
+    menu.querySelectorAll('.dd-sub.open').forEach((s) => s.classList.remove('open'));
+    document.querySelectorAll('.dd-flyout.on').forEach((f) => f.classList.remove('on'));
+  };
+  const openSub = (sub) => {
+    clearTimeout(closeTimer);
+    closeAllSubs();
+    sub.classList.add('open');
+    const fly = sub._fly;
+    fly.classList.add('on');
+    const menuBox = menu.getBoundingClientRect();
+    const headBox = sub.getBoundingClientRect();
+    fly.style.left = '0px'; fly.style.top = '0px';       // misura a posizione nota
+    const w = fly.offsetWidth, h = fly.offsetHeight;
+    // attaccato al bordo del menu provider (i due bordi si sovrappongono di 1px)
+    const flip = menuBox.right - 1 + w > window.innerWidth - 8;
+    fly.classList.toggle('flip', flip);
+    fly.style.left = (flip ? Math.max(8, menuBox.left + 1 - w) : menuBox.right - 1) + 'px';
+    fly.style.top = Math.max(8, Math.min(headBox.top - 5, window.innerHeight - 8 - h)) + 'px';
+  };
+  const closeSub = (sub) => { sub.classList.remove('open'); sub._fly.classList.remove('on'); };
+  for (const [prov, list] of Object.entries(byProv)) {
+    const hasSel = state.model && state.model.provider === prov;
+    const sub = document.createElement('div');
+    sub.className = 'dd-sub';
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'dd-item' + (hasSel ? ' hasSel' : '');
+    head.innerHTML = `${logoHtml(prov, hasSel ? state.model.id : list[0]?.id ?? '')}<span class="col">
+      <span>${esc(prov)}</span>
+      <span class="desc">${list.length} model${list.length === 1 ? 'lo' : 'li'}${hasSel ? ' · in uso' : ''}</span></span>
+      <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>`;
+    const fly = document.createElement('div');
+    fly.className = 'dd-flyout';
+    for (const m of list) {
+      const sel = state.model && state.model.provider === m.provider && state.model.id === m.id;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dd-item' + (sel ? ' sel' : '');
+      b.innerHTML = `${logoHtml(m.provider, m.id)}<span class="col">
+        <span>${esc(m.name || m.id)}</span>
+        <span class="desc">${esc(m.id)}${m.reasoning ? ' · reasoning' : ''}</span></span>
+        ${m.contextWindow ? `<span class="sub">${fmt(m.contextWindow)}</span>` : ''}`;
+      b.addEventListener('click', () => { closeFlyouts(); modelDd.classList.remove('open'); selectModel(m.provider, m.id); });
+      fly.appendChild(b);
+    }
+    sub.appendChild(head);
+    document.body.appendChild(fly);
+    sub._fly = fly;
+    const later = () => { closeTimer = setTimeout(() => closeSub(sub), 200); };
+    sub.addEventListener('mouseenter', () => openSub(sub));
+    sub.addEventListener('mouseleave', later);
+    fly.addEventListener('mouseenter', () => clearTimeout(closeTimer));
+    fly.addEventListener('mouseleave', later);
+    fly.addEventListener('click', (e) => e.stopPropagation());
+    head.addEventListener('click', (e) => { e.stopPropagation(); sub.classList.contains('open') ? closeSub(sub) : openSub(sub); });
+    head.addEventListener('focus', () => openSub(sub));
+    menu.appendChild(sub);
+  }
+}
+const THINK_DESC = { off: 'Nessun ragionamento esteso', low: 'Ragionamento breve', medium: 'Ragionamento intermedio', high: 'Ragionamento approfondito', xhigh: 'Ragionamento molto approfondito', max: 'Massimo budget di ragionamento' };
+function renderThinking() {
+  const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
+  if (!levels.includes(state.thinking)) state.thinking = levels[0];
+  const only = levels.length === 1;
+  $('thinkName').textContent = only && levels[0] === 'off' ? 'no reasoning' : state.thinking;
+  $('thinkBtn').style.opacity = only ? '.55' : '1';
+  const menu = $('thinkMenu');
+  menu.innerHTML = `<div class="dd-group">Effort disponibili per ${esc(state.model?.id ?? 'questo modello')}</div>`;
+  for (const lv of levels) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dd-item' + (lv === state.thinking ? ' sel' : '');
+    b.innerHTML = `<span class="col"><span>${lv}</span><span class="desc">${THINK_DESC[lv] ?? ''}</span></span>`;
+    b.addEventListener('click', async () => {
+      thinkDd.classList.remove('open');
+      const r = await post('/api/thinking', { level: lv });
+      state.thinking = r.thinkingLevel ?? lv;
+      renderThinking();
+    });
+    menu.appendChild(b);
+  }
+}
+// Shift+T: cicla tra gli effort di reasoning disponibili per il modello corrente
+async function cycleThinking() {
+  const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
+  if (levels.length <= 1) { toast('Nessun altro effort disponibile per questo modello'); return; }
+  let idx = levels.indexOf(state.thinking);
+  idx = (idx + 1) % levels.length;
+  const lv = levels[idx];
+  const r = await post('/api/thinking', { level: lv });
+  state.thinking = r.thinkingLevel ?? lv;
+  renderThinking();
+  toast(`Effort: ${state.thinking}`, true);
+}
+
+/* ---------------- working directory ---------------- */
+function setCwdLabel(p) {
+  const parts = (p || '').split(/[\\/]/).filter(Boolean);
+  $('cwdLabel').textContent = parts.slice(-2).join('/') || p || '—';
+  $('cwdChip').title = 'Cartella di lavoro: ' + p;
+  $('cwdInput').value = p;
+}
+/* Una chat "vuota" non esiste: è solo la home, la chat nasce col primo prompt.
+   Finché siamo lì la cartella si sceglie liberamente; appena la chat parte il
+   percorso ne fa parte e il selettore diventa in sola lettura. */
+let chatStarted = false;
+function setChatStarted(v) {
+  v = !!v;
+  if (v === chatStarted) return;
+  chatStarted = v;
+  $('cwdInput').readOnly = v;
+  $('cwdEditRow').style.display = v ? 'none' : '';
+  $('cwdHint').textContent = v
+    ? 'Chat già avviata: la cartella non si può più cambiare. Per lavorare altrove apri una nuova chat.'
+    : "Cartella di lavoro: l'agente legge e modifica i file al suo interno. La scegli qui prima di iniziare la chat.";
+}
+async function changeCwd(p) {
+  if (chatStarted) { toast('La chat è già avviata: la cartella non si può cambiare.'); return; }
+  p = (p ?? $('cwdInput').value).trim().replace(/^["']|["']$/g, '');
+  if (!p) return;
+  $('cwdMsg').textContent = 'imposto…';
+  const r = await post('/api/cwd', { path: p });
+  $('cwdMsg').textContent = '';
+  if (r.error) return; // toast already shown, chat untouched
+  cwdDd.classList.remove('open');
+  state.cwd = r.cwd ?? p;
+  setCwdLabel(state.cwd);
+  await refreshAll();               // reload sessions and projects for the new folder
+  loadRecentCwds();
+  toast('Cartella impostata: la chat partirà in ' + state.cwd, true);
+}
+$('cwdApply').addEventListener('click', () => changeCwd());
+$('cwdInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); changeCwd(); } });
+$('browseBtn').addEventListener('click', async () => {
+  $('browseBtn').disabled = true;
+  try {
+    const d = await api('/api/pick-folder', { method: 'POST' });
+    if (d.cancelled || d.error) return;
+    if (d.path) await changeCwd(d.path);
+  } finally { $('browseBtn').disabled = false; }
+});
+// apre la cartella di lavoro in Esplora risorse (non cambia né chat né cartella)
+$('explorerBtn').addEventListener('click', async () => {
+  const r = await post('/api/open-explorer');
+  if (!r.error) cwdDd.classList.remove('open');
+});
+// apre PowerShell nella cartella di lavoro; se la chat non ha ancora messaggi lancia "pi"
+$('terminalBtn').addEventListener('click', async () => {
+  const r = await post('/api/open-terminal');
+  if (!r.error) toast('PowerShell aperto: avvio pi…', true);
+});
+
+/* ---- cartelle recenti: sezione espandibile dentro il menu della cartella ---- */
+let recentCwds = [];
+async function loadRecentCwds() {
+  const r = await api('/api/recent-cwds');
+  if (r.error) return;
+  recentCwds = r.recent ?? [];
+  renderRecentCwds();
+}
+function renderRecentCwds() {
+  const list = $('recentList');
+  $('recentCount').textContent = recentCwds.length || '';
+  list.innerHTML = '';
+  if (!recentCwds.length) { list.innerHTML = '<div class="sys" style="padding:.35rem .4rem">Nessuna cartella recente</div>'; return; }
+  for (const p of recentCwds) {
+    const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
+    const cur = state.cwd && p.toLowerCase() === state.cwd.toLowerCase();
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'recentItem' + (cur ? ' cur' : '');
+    b.title = p;
+    b.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span class="nm">${esc(name)}</span><span class="pth">${esc(p)}</span>`;
+    const del = document.createElement('span');
+    del.className = 'del'; del.textContent = '×'; del.title = 'Dimentica questa cartella';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const r = await api('/api/recent-cwds?path=' + encodeURIComponent(p), { method: 'DELETE' });
+      recentCwds = r.recent ?? recentCwds.filter((x) => x !== p);
+      renderRecentCwds();
+    });
+    b.appendChild(del);
+    b.addEventListener('click', () => { if (!cur) changeCwd(p); });
+    list.appendChild(b);
+  }
+}
+$('recentHead').addEventListener('click', () => {
+  const box = $('recentBox');
+  box.classList.toggle('open');
+  localStorage.setItem('piRecentOpen', box.classList.contains('open') ? '1' : '0');
+});
+if (localStorage.getItem('piRecentOpen') !== '0') $('recentBox').classList.add('open');
+
+/* ---- logo π: apre sempre una nuova chat ---- */
+$('homeBtn').addEventListener('click', () => {
+  showChat();
+  if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
+  newChat();
+});
+
+/* ---- barra laterale ridimensionabile col mouse (larghezza persistente) ---- */
+const SB_MIN = 190, SB_MAX = 460;
+function setSidebarWidth(px) {
+  const w = Math.max(SB_MIN, Math.min(SB_MAX, Math.round(px)));
+  document.documentElement.style.setProperty('--sbw', w + 'px');
+  localStorage.setItem('piSidebarW', String(w));
+}
+setSidebarWidth(Number(localStorage.getItem('piSidebarW')) || 230);
+$('sidebarResize').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const startX = e.clientX, startW = $('sidebar').getBoundingClientRect().width;
+  document.body.classList.add('sb-resizing');
+  const move = (ev) => setSidebarWidth(startW + (ev.clientX - startX));
+  const up = () => {
+    document.body.classList.remove('sb-resizing');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+});
+// doppio click sulla maniglia: torna alla larghezza di default
+$('sidebarResize').addEventListener('dblclick', () => setSidebarWidth(230));
+
+/* ---------------- sessions ---------------- */
+let allSessions = [], currentSessionPath = null;
+const runningKeys = new Set();   // chat che stanno lavorando (anche in altre schede)
+let openKeys = [];               // chat vive sul server (contesti agente in background)
+function fmtDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+}
+async function loadSessions() {
+  // niente più filtro per progetto: la sidebar mostra sempre tutte le chat,
+  // "Per progetto" nel raggruppamento e la ricerca bastano a orientarsi
+  const res = await api('/api/sessions?scope=all');
+  if (res.error) return;
+  allSessions = res.sessions ?? [];
+  currentSessionPath = sessionKey ?? res.current;
+  runningKeys.clear();
+  for (const k of res.running ?? []) runningKeys.add(k);
+  openKeys = res.open ?? [];
+  renderSessions();
+}
+// stato+periodo scelti nel popover a icona; 'all'/'all' = nessun filtro attivo
+function passesSessionFilter(s) {
+  const { status, period } = sessionFilter;
+  if (status === 'active' && s.status === 'done') return false;
+  if (status === 'done' && s.status !== 'done') return false;
+  if (status === 'favorite' && !s.favorite) return false;
+  if (period !== 'all') {
+    const d = new Date(s.modified);
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (period === 'today' && d < startOfDay) return false;
+    if (period === 'week') {
+      const startOfWeek = new Date(startOfDay);
+      startOfWeek.setDate(startOfDay.getDate() - ((startOfDay.getDay() + 6) % 7)); // lunedì
+      if (d < startOfWeek) return false;
+    }
+    if (period === 'month' && (d.getMonth() !== now.getMonth() || d.getFullYear() !== now.getFullYear())) return false;
+  }
+  return true;
+}
+function renderSessions() {
+  const q = $('sessionSearch').value.trim().toLowerCase();
+  const list = allSessions.filter((s) => passesSessionFilter(s) && (!q || `${s.name || ''} ${s.firstMessage || ''} ${s.cwd || ''}`.toLowerCase().includes(q)));
+  const sort = $('sortFilter').value;
+  const groupBy = $('groupFilter').value;
+  // i preferiti stanno sempre in cima e tra loro sono ordinati per data (recenti
+  // prima), qualunque vista/ordinamento sia selezionato; il resto segue il sort
+  // le concluse stanno sempre sotto le attive, anche se più recenti
+  const isDone = (s) => s.status === 'done';
+  list.sort((a, b) => {
+    const da = isDone(a) ? 1 : 0, db = isDone(b) ? 1 : 0;
+    if (da !== db) return da - db;
+    const fa = a.favorite ? 1 : 0, fb = b.favorite ? 1 : 0;
+    if (fa !== fb) return fb - fa;
+    if (fa) return new Date(b.modified) - new Date(a.modified);
+    return sort === 'msgs' ? b.messageCount - a.messageCount
+      : sort === 'old' ? new Date(a.modified) - new Date(b.modified)
+      : new Date(b.modified) - new Date(a.modified);
+  });
+  $('sessionCount').textContent = list.length;
+  const el = $('sessionList');
+  el.innerHTML = '';
+  if (!list.length) { el.innerHTML = '<div class="sys" style="padding:.8rem">Nessuna chat</div>'; return; }
+  // raggruppamento (indipendente dall'ordinamento): giorno / progetto / modello.
+  // Per giorno l'ordine per data basta già; negli altri casi serve una passata
+  // stabile che renda contigui i gruppi senza toccare l'ordine interno.
+  if (groupBy === 'project' || groupBy === 'model') {
+    list.sort((a, b) => (isDone(a) ? 1 : 0) - (isDone(b) ? 1 : 0)
+      || (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)
+      || groupOf(a, groupBy).localeCompare(groupOf(b, groupBy)));
+  }
+  let lastGroup = null;
+  for (const s of list) {
+    if (groupBy !== 'none') {
+      const g = isDone(s) ? 'Concluse' : s.favorite ? 'Preferiti' : groupOf(s, groupBy);
+      if (g !== lastGroup) {
+        lastGroup = g;
+        const h = document.createElement('div');
+        h.className = 'sessGroup';
+        h.textContent = g;
+        el.appendChild(h);
+      }
+    }
+    const div = document.createElement('div');
+    const done = isDone(s);
+    div.className = 'sessionItem' + (s.path === currentSessionPath ? ' active' : '') + (done ? ' done' : '');
+    const label = s.name || s.firstMessage || '(vuota)';
+    const proj = (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    const running = runningKeys.has(s.path);
+    div.innerHTML = `<div class="acts">
+      <button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Riporta tra le attive' : 'Segna come conclusa'}">${done ? '↺' : '✓'}</button>
+      <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Togli dai preferiti' : 'Aggiungi ai preferiti'}">${s.favorite ? '♥' : '♡'}</button>
+      </div><div class="title">${running ? '<span class="runDot"></span>' : done ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span>
+      ${s.status === 'reopened' ? '<span class="reopened">riaperta</span>' : ''}
+      ${s.favorite ? '<span class="favMark">♥</span>' : ''}</div><div class="meta">
+      ${s.model || s.provider ? `<span title="${esc((s.provider || '') + '/' + (s.model || ''))}">${logoHtml(s.provider || '', s.model || '')}</span>` : ''}
+      ${proj ? `<span class="proj" title="${esc(s.cwd)}">${esc(proj)}</span><span>·</span>` : ''}
+      <span>${s.messageCount} msg</span><span>·</span><span>${fmtDate(s.modified)}</span>
+      ${running ? '<span>·</span><span style="color:var(--teal)">in esecuzione</span>' : ''}</div>`;
+    div.querySelector('.lbl').textContent = label;
+    div.title = label;
+    // preferito: il click sul cuore non deve aprire la chat
+    div.querySelector('.fav').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
+      if (r.error) return;
+      s.favorite = !s.favorite;
+      renderSessions();
+    });
+    // concludi / riapri: anche qui il click non deve aprire la chat
+    div.querySelector('.doneBtn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const next = done ? 'active' : 'done';
+      const r = await post('/api/status', { path: s.path, status: next });
+      if (r.error) return;
+      s.status = r.status ?? next;
+      renderSessions();
+    });
+    // rotellina o Ctrl+click = apri la chat in una nuova scheda (ogni scheda ha la sua chat)
+    const openInNewTab = () => window.open(
+      location.origin + location.pathname + '#s=' + encodeURIComponent(s.path), '_blank');
+    div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // niente autoscroll
+    div.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openInNewTab(); } });
+    div.addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); openInNewTab(); return; }
+      openSession(s);
+    });
+    el.appendChild(div);
+  }
+}
+// etichetta del gruppo di una chat nella sidebar
+function groupOf(s, mode) {
+  if (mode === 'project') return (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || 'senza progetto';
+  if (mode === 'model') return s.model || 'modello sconosciuto';
+  // giorno, in cesti leggibili
+  const d = new Date(s.modified);
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((today - day) / 86400000);
+  if (diff <= 0) return 'Oggi';
+  if (diff === 1) return 'Ieri';
+  if (diff < 7) return 'Ultimi 7 giorni';
+  if (diff < 30) return 'Ultimi 30 giorni';
+  return day.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+}
+
+// Cambiare chat non interrompe niente: la chat lasciata continua a lavorare sul
+// server e la ritrovi (risultato incluso) quando ci torni.
+async function openSession(s) {
+  showChat();
+  const r = await post('/api/session', { action: 'open', path: s.path, cwd: s.cwd || undefined });
+  if (r.error) return;
+  setSessionKey(r.key ?? s.path);   // riaggancia l'SSE alla nuova chat
+  await refreshAll();               // never rely on the SSE event alone
+}
+async function newChat() {
+  showChat();
+  const r = await post('/api/session', { action: 'new' });
+  if (r.error) return;
+  setSessionKey(r.key);
+  await refreshAll();
+  $('input').focus();
+}
+$('newSessionBtn').addEventListener('click', newChat);
+$('sessionSearch').addEventListener('input', renderSessions);
+$('sortFilter').addEventListener('change', renderSessions);
+$('groupFilter').addEventListener('change', () => {
+  localStorage.setItem('piGroupBy', $('groupFilter').value);
+  renderSessions();
+});
+$('groupFilter').value = localStorage.getItem('piGroupBy') || 'none';
+// Shift+P: cicla tra i progetti aprendo l'ultima chat di quel progetto
+async function cycleProject() {
+  const opts = [...new Set(allSessions.map((s) => s.cwd).filter(Boolean))].sort();
+  if (opts.length < 2) { toast('Nessun altro progetto disponibile'); return; }
+  let idx = opts.indexOf(state.cwd);
+  idx = (idx + 1) % opts.length;
+  const proj = opts[idx];
+  const sessions = allSessions.filter((s) => s.cwd === proj).sort((a, b) => new Date(b.modified) - new Date(a.modified));
+  if (sessions.length) await openSession(sessions[0]);
+  else toast('Nessuna chat per il progetto: ' + proj);
+}
+function setSidebarCollapsed(v) {
+  $('sidebar').classList.toggle('collapsed', v);
+  // a barra chiusa il testo della chat si allarga ancora (vedi body.sb-closed)
+  document.body.classList.toggle('sb-closed', v);
+}
+$('sidebarToggle').addEventListener('click', () => setSidebarCollapsed(true));
+$('sidebarShow').addEventListener('click', () => setSidebarCollapsed(!$('sidebar').classList.contains('collapsed')));
+$('sidebarBackdrop').addEventListener('click', () => setSidebarCollapsed(true));
+// on phones the sidebar starts closed (it behaves as a slide-over drawer)
+if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
+// auto-close the drawer after picking a session on mobile
+if (window.matchMedia('(max-width: 768px)').matches) {
+  $('sessionList').addEventListener('click', (e) => {
+    if (e.target.closest('.sessionItem')) setSidebarCollapsed(true);
+  });
+  $('newSessionBtn').addEventListener('click', () => setSidebarCollapsed(true));
+}
+
+/* ---------------- refresh helpers ---------------- */
+async function refreshChat() {
+  chat.innerHTML = '';
+  toolCards.clear();
+  currentAssistant = currentThinking = currentTurn = null;
+  await loadHistory();
+}
+let refreshing = false;
+async function refreshAll() {
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    await loadState();
+    await Promise.all([loadModels(), loadFiles(), loadCommands()]);
+    await loadSessions();
+    await refreshChat();
+  } finally { refreshing = false; }
+}
+
+/* ---------------- history ---------------- */
+async function loadHistory() {
+  const res = await api('/api/history');
+  if (res.error) return;
+  for (const m of res.messages ?? []) {
+    const blocks = Array.isArray(m.blocks) && m.blocks.length
+      ? m.blocks
+      : (m.text ? [{ type: 'text', text: m.text }] : []);
+    if (!blocks.length && !m.errorMessage) continue;
+    const body = newTurn(m.role === 'user' ? 'user' : 'pi',
+      m.role === 'assistant' && (m.provider || m.model) ? { provider: m.provider, id: m.model } : null);
+    // le tool card vanno nel turno che si sta ricostruendo, non in quello live
+    const prevTurn = currentTurn;
+    currentTurn = body;
+    let lastText = null;
+    for (const b of blocks) {
+      if (b.type === 'text') {
+        lastText = bubble(m.role === 'user' ? 'user' : 'assistant', b.text ?? '', body);
+      } else if (b.type === 'thinking') {
+        bubble('thinking', b.text ?? '', body);
+      } else if (b.type === 'tool') {
+        renderTool({ ...b, status: 'start' });
+        if (b.status === 'end') renderTool({ ...b, status: 'end' });
+      }
+    }
+    // turno finito male (errore provider / interruzione): senza questo la
+    // cronologia mostrerebbe solo un turno vuoto, senza spiegazione
+    if (m.errorMessage) bubble('sys err', (m.stopReason === 'aborted' ? '⏹ ' : '⚠ ') + m.errorMessage, body);
+    currentTurn = prevTurn;
+    if (lastText) addMsgActions(body, lastText, { entryId: m.entryId });
+  }
+  // turno ancora in corso (la chat stava lavorando mentre eri altrove):
+  // lo si ricostruisce dal buffer del server e lo streaming prosegue live
+  if (res.turnModel) state.turnModel = res.turnModel;
+  currentTurn = currentAssistant = currentThinking = null;
+  for (const seg of res.live ?? []) {
+    if (!currentTurn) currentTurn = newTurn('pi');
+    if (seg.type === 'text') {
+      currentThinking = null;
+      currentAssistant = bubble('assistant', seg.text ?? '', currentTurn);
+    } else if (seg.type === 'thinking') {
+      currentAssistant = null;
+      currentThinking = bubble('thinking', seg.text ?? '', currentTurn);
+    } else if (seg.type === 'tool' && seg.tool) {
+      currentAssistant = currentThinking = null;
+      renderTool({ ...seg.tool, status: 'start' });
+      taskFromTool({ ...seg.tool, status: 'start' });
+      if (seg.tool.status === 'end') { renderTool({ ...seg.tool, status: 'end' }); taskFromTool({ ...seg.tool, status: 'end' }); }
+      else if (seg.tool.output) renderTool({ ...seg.tool, status: 'update' });
+    }
+  }
+  // la cartella si può ancora scegliere solo se la chat non è mai partita
+  setChatStarted((res.messages ?? []).length > 0 || (res.live ?? []).length > 0);
+  setRunning(!!res.streaming);
+  if (res.streaming && !agentTask) setAgentTask(true, res.turnModel);
+  else if (!res.streaming && agentTask && !agentTask.t1) setAgentTask(false);
+  if (!chat.children.length) showHero();
+  scrollDown();
+}
+
+/* ---------------- diff panel ---------------- */
+let activeFile = null;
+const dlines = (cls, t) => t.split('\n').map((l) => `<div class="diffline ${cls}">${esc(l) || ' '}</div>`).join('');
+async function loadFiles() {
+  const r = await api('/api/files');
+  const files = r.files ?? [];
+  $('diffCount').textContent = files.length;
+  $('diffCount').classList.toggle('hide', !files.length);
+  const list = $('fileList');
+  list.innerHTML = '';
+  for (const f of files) {
+    const div = document.createElement('div');
+    div.className = 'fileItem' + (f.path === activeFile ? ' active' : '');
+    div.innerHTML = `<span title="${esc(f.path)}">${esc(f.path.split(/[\\/]/).pop())}</span><span class="b">${f.changes}</span>`;
+    div.addEventListener('click', () => showDiff(f.path));
+    list.appendChild(div);
+  }
+}
+async function showDiff(p) {
+  activeFile = p;
+  await loadFiles();
+  const d = await api('/api/files/diff?path=' + encodeURIComponent(p));
+  if (d.error) return;
+  let html = '';
+  if (d.write) html += '<div class="hunk">' + dlines('add', d.write.content) + '</div>';
+  for (const h of d.hunks) html += '<div class="hunk">' + dlines('del', h.oldText) + dlines('add', h.newText) + '</div>';
+  $('diffBody').innerHTML = html || '<div class="sys" style="padding:.5rem">(nessuna modifica)</div>';
+}
+$('navDiff').addEventListener('click', () => {
+  const open = $('diffPanel').classList.toggle('open');
+  $('navDiff').classList.toggle('on', open);
+  document.body.classList.toggle('diff-open', open);
+  if (open) loadFiles();
+});
+$('diffClose').addEventListener('click', () => {
+  $('diffPanel').classList.remove('open');
+  $('navDiff').classList.remove('on');
+  document.body.classList.remove('diff-open');
+});
+
+/* ---------------- tasks panel: processi in background DI QUESTA chat --------
+   Una voce per il turno dell'agente (se sta girando) e una per ogni tool a
+   lunga durata (bash, task/agent, web) partito in questa chat. La lista è
+   legata alla chat corrente: cambiare chat la azzera e la ricostruisce dagli
+   eventi/replay del server. */
+const tasks = new Map();          // toolCallId → { name, summary, t0, t1, error }
+const TASK_TOOLS = /^(bash|shell|task|agent|subagent|dispatch_agent|web_search|web_fetch|fetch)$/i;
+let agentTask = null;             // il turno dell'agente in corso su questa chat
+
+function resetTasks() { tasks.clear(); agentTask = null; syncTasks(); }
+function taskFromTool(ev) {
+  if (!TASK_TOOLS.test(ev.name || '')) return;
+  if (ev.status === 'start') {
+    tasks.set(ev.id, { name: ev.name, summary: ev.summary || '', t0: Date.now(), t1: null, error: false });
+  } else if (ev.status === 'end') {
+    const t = tasks.get(ev.id);
+    if (t) { t.t1 = Date.now(); t.error = !!ev.isError; }
+  }
+  syncTasks();
+}
+function setAgentTask(on, model) {
+  if (on) agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
+  else if (agentTask) agentTask.t1 = Date.now();
+  syncTasks();
+}
+function taskList() {
+  const all = [...tasks.values()];
+  if (agentTask) all.push(agentTask);
+  return all.sort((a, b) => (a.t1 ? 1 : 0) - (b.t1 ? 1 : 0) || b.t0 - a.t0);
+}
+function fmtDur(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+}
+function syncTasks() {
+  const list = taskList();
+  const live = list.filter((t) => !t.t1).length;
+  const b = $('tasksCount');
+  b.textContent = live;
+  b.classList.toggle('hide', live === 0);
+  $('navTasks').classList.toggle('busy', live > 0);
+  if ($('tasksPanel').classList.contains('open')) renderTasks(list);
+}
+function renderTasks(list = taskList()) {
+  const el = $('tasksBody');
+  el.innerHTML = '';
+  if (!list.length) {
+    el.innerHTML = '<div class="sys" style="padding:.6rem">Nessun processo in background in questa chat</div>';
+    return;
+  }
+  for (const t of list) {
+    const running = !t.t1;
+    const div = document.createElement('div');
+    div.className = 'taskItem';
+    div.innerHTML = `<div class="t">${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span></div>
+      <div class="m"><span>${esc(t.name)}</span><span>·</span>
+      <span class="${t.error ? 'err' : running ? 'st' : 'idle'}">${t.error ? 'Errore' : running ? 'In esecuzione' : 'Completato'}</span>
+      <span>·</span><span>${fmtDur((t.t1 ?? Date.now()) - t.t0)}</span></div>`;
+    div.querySelector('.lbl').textContent = t.summary || t.name;
+    div.title = t.summary || t.name;
+    el.appendChild(div);
+  }
+}
+// i tempi dei task in corso scorrono da soli, ma solo a pannello aperto
+setInterval(() => {
+  if ($('tasksPanel').classList.contains('open') && taskList().some((t) => !t.t1)) renderTasks();
+}, 1000);
+$('navTasks').addEventListener('click', () => {
+  const open = $('tasksPanel').classList.toggle('open');
+  $('navTasks').classList.toggle('on', open);
+  if (open) renderTasks();
+});
+$('tasksRefresh').addEventListener('click', () => {
+  // "Pulisci": via i task già finiti, restano solo quelli in corso
+  for (const [id, t] of tasks) if (t.t1) tasks.delete(id);
+  if (agentTask?.t1) agentTask = null;
+  syncTasks(); renderTasks();
+});
+$('tasksClose').addEventListener('click', () => {
+  $('tasksPanel').classList.remove('open');
+  $('navTasks').classList.remove('on');
+});
+
+/* ---------------- web UI themes ---------------- */
+const THEMES = [
+  { id: 'noir', name: 'Teal Noir', cols: ['#05070a', '#0e131b', '#2fe0c0'] },
+  { id: 'violet', name: 'Violet Dusk', cols: ['#07050d', '#120e22', '#a78bfa'] },
+  { id: 'ember', name: 'Ember', cols: ['#0a0705', '#17100b', '#fb923c'] },
+  { id: 'nord', name: 'Nord Ice', cols: ['#090e15', '#131e2b', '#7dd3fc'] },
+  { id: 'rose', name: 'Rosé', cols: ['#0c060f', '#1b1121', '#f472b6'] },
+  { id: 'daylight', name: 'Daylight (chiaro)', cols: ['#f6f7f9', '#e3e7ee', '#0d9488'] },
+];
+function applyTheme(id) {
+  document.documentElement.dataset.theme = THEMES.some((t) => t.id === id) ? id : 'noir';
+  localStorage.setItem('piTheme', document.documentElement.dataset.theme);
+  document.querySelectorAll('.themeCard[data-t]').forEach((c) => c.classList.toggle('sel', c.dataset.t === document.documentElement.dataset.theme));
+}
+applyTheme(localStorage.getItem('piTheme') || 'noir');
+
+/* ---------------- views ---------------- */
+// sezioni della pagina impostazioni mostrate nella sidebar (al posto delle chat)
+const SETTINGS_SECTIONS = [
+  ['analytics', 'Analisi costi'],
+  ['sec-pi', 'Impostazioni di pi'],
+  ['sec-theme', 'Tema'],
+  ['sec-usage', 'Limiti account'],
+  ['sec-session', 'Sessione'],
+  ['sec-models', 'Modelli'],
+  ['sec-auth', 'Provider'],
+  ['sec-tools', 'Tool'],
+  ['sec-paths', 'Percorsi'],
+  ['sec-raw', 'Config raw'],
+];
+function buildSettingsNav() {
+  const nav = $('settingsNav');
+  nav.innerHTML = '<div class="snav-label">Impostazioni</div>';
+  for (const [id, label] of SETTINGS_SECTIONS) {
+    const b = document.createElement('button');
+    b.className = 'snavItem';
+    b.dataset.target = id;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      $(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      nav.querySelectorAll('.snavItem').forEach((x) => x.classList.toggle('on', x === b));
+      if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
+    });
+    nav.appendChild(b);
+  }
+}
+// evidenzia nella sidebar la sezione che stai guardando
+$('settingsView').addEventListener('scroll', () => {
+  const top = $('settingsView').getBoundingClientRect().top;
+  let current = null;
+  for (const [id] of SETTINGS_SECTIONS) {
+    const el = $(id);
+    if (el && el.getBoundingClientRect().top - top < 140) current = id;
+  }
+  $('settingsNav').querySelectorAll('.snavItem').forEach((x) =>
+    x.classList.toggle('on', x.dataset.target === current));
+});
+function showChat() {
+  $('chatView').classList.remove('hide');
+  $('settingsView').classList.add('hide');
+  $('navChat').classList.add('on');
+  $('navSettings').classList.remove('on');
+  $('navDiff').classList.remove('hide');
+  $('navTasks').classList.remove('hide');
+  $('sidebar').classList.remove('mode-settings');   // la sidebar torna alle chat
+}
+function showSettings() {
+  $('chatView').classList.add('hide');
+  $('settingsView').classList.remove('hide');
+  $('navChat').classList.remove('on');
+  $('navSettings').classList.add('on');
+  // in impostazioni i pannelli diff/attività non hanno senso: chiudili e nascondi i tasti
+  $('diffClose').click();
+  $('tasksClose').click();
+  $('navDiff').classList.add('hide');
+  $('navTasks').classList.add('hide');
+  $('sidebar').classList.add('mode-settings');      // la sidebar mostra le sezioni
+  buildSettingsNav();
+  renderSettings();
+  loadAnalytics();
+}
+
+/* ---------------- cost analytics dashboard ---------------- */
+const AN_COLORS = ['#2fe0c0', '#a78bfa', '#fb923c', '#f472b6', '#60a5fa', '#facc15', '#4ade80', '#f87171', '#38bdf8', '#c084fc'];
+let anData = null;
+const anState = { range: '30', model: '__all', project: '__all', gran: 'day', sort: 'cost' };
+
+async function loadAnalytics(force) {
+  const box = $('analytics');
+  if (!anData || force) {
+    box.innerHTML = '<div class="sys">Caricamento analisi costi…</div>';
+    anData = await api('/api/analytics');
+  }
+  if (!anData || anData.error) {
+    box.innerHTML = '<div class="sys">Impossibile leggere lo storico delle sessioni</div>';
+    return;
+  }
+  renderAnalytics();
+}
+
+// Bucket key for the chosen granularity (buckets are stored per day).
+function anPeriod(day) {
+  if (anState.gran === 'month') return day.slice(0, 7);
+  if (anState.gran === 'week') {
+    const d = new Date(day + 'T00:00:00Z');
+    if (isNaN(d)) return day;
+    const dow = (d.getUTCDay() + 6) % 7; // monday = 0
+    d.setUTCDate(d.getUTCDate() - dow);
+    return d.toISOString().slice(0, 10);
+  }
+  return day;
+}
+
+function anFiltered() {
+  let min = null;
+  if (anState.range !== 'all') {
+    const d = new Date();
+    d.setDate(d.getDate() - Number(anState.range));
+    min = d.toISOString().slice(0, 10);
+  }
+  return anData.buckets.filter((b) =>
+    b.day !== '?' &&
+    (!min || b.day >= min) &&
+    (anState.model === '__all' || b.model === anState.model) &&
+    (anState.project === '__all' || b.project === anState.project));
+}
+
+function renderAnalytics() {
+  const rows = anFiltered();
+  const money = (n) => '$' + (n < 1 ? n.toFixed(4) : n.toFixed(2));
+
+  // totals per model + per period
+  const byModel = new Map(), byPeriod = new Map();
+  let tot = { cost: 0, tokens: 0, requests: 0, sessions: 0 };
+  for (const b of rows) {
+    const m = byModel.get(b.model) ?? { model: b.model, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0, sessions: 0 };
+    for (const k of ['cost', 'tokens', 'input', 'output', 'cacheRead', 'cacheWrite', 'requests', 'sessions']) m[k] += b[k];
+    byModel.set(b.model, m);
+    const p = anPeriod(b.day);
+    const per = byPeriod.get(p) ?? { period: p, cost: 0, models: new Map() };
+    per.cost += b.cost;
+    per.models.set(b.model, (per.models.get(b.model) ?? 0) + b.cost);
+    byPeriod.set(p, per);
+    tot.cost += b.cost; tot.tokens += b.tokens; tot.requests += b.requests; tot.sessions += b.sessions;
+  }
+  const models = [...byModel.values()].sort((a, b) => b[anState.sort] - a[anState.sort]);
+  const colorOf = new Map([...byModel.keys()].sort().map((m, i) => [m, AN_COLORS[i % AN_COLORS.length]]));
+  const periods = [...byPeriod.values()].sort((a, b) => (a.period < b.period ? -1 : 1));
+  const top = models[0];
+
+  const opt = (v, label, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+  const kpi = (k, v) => `<div class="an-kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+
+  $('analytics').innerHTML = `
+    <h3>Analisi costi</h3>
+    <p class="note">Stima calcolata da pi sui prezzi API al momento di ogni richiesta, letta dallo storico
+      delle sessioni (${anData.files} file). Con un piano ad abbonamento non corrisponde a una spesa reale.</p>
+    <div class="an-filters">
+      <select id="anRange">
+        ${opt('7', 'Ultimi 7 giorni', anState.range)}${opt('30', 'Ultimi 30 giorni', anState.range)}
+        ${opt('90', 'Ultimi 90 giorni', anState.range)}${opt('365', 'Ultimo anno', anState.range)}
+        ${opt('all', 'Tutto lo storico', anState.range)}
+      </select>
+      <select id="anGran">
+        ${opt('day', 'per giorno', anState.gran)}${opt('week', 'per settimana', anState.gran)}${opt('month', 'per mese', anState.gran)}
+      </select>
+      <select id="anModel">
+        ${opt('__all', 'Tutti i modelli', anState.model)}
+        ${anData.models.map((m) => opt(m, m, anState.model)).join('')}
+      </select>
+      <select id="anProject">
+        ${opt('__all', 'Tutti i progetti', anState.project)}
+        ${anData.projects.map((p) => opt(p, p.split(/[\\/]/).pop() || p, anState.project)).join('')}
+      </select>
+      <span style="flex:1"></span>
+      <button class="btn outline" id="anReload">Aggiorna</button>
+    </div>
+    <div class="an-kpis">
+      ${kpi('Costo totale', money(tot.cost))}
+      ${kpi('Token totali', fmt(tot.tokens))}
+      ${kpi('Richieste', fmt(tot.requests))}
+      ${kpi('Sessioni', fmt(tot.sessions))}
+      ${kpi('Costo / sessione', tot.sessions ? money(tot.cost / tot.sessions) : '—')}
+      ${kpi('Modello top', top ? top.model.split('/').pop() : '—')}
+    </div>
+    ${anChart(periods, colorOf)}
+    <div class="an-legend">${[...colorOf].map(([m, c]) => `<span><i style="background:${c}"></i>${esc(m)}</span>`).join('')}</div>
+    <table class="an-table">
+      <thead><tr>
+        <th data-s="model">Modello</th><th data-s="input">Input</th><th data-s="output">Output</th>
+        <th data-s="cacheWrite">Cache W</th><th data-s="cacheRead">Cache R</th>
+        <th data-s="requests">Req</th><th data-s="cost">Costo</th><th>%</th>
+      </tr></thead>
+      <tbody>
+        ${models.map((m) => `<tr>
+          <td><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf.get(m.model)};margin-right:.4rem"></i>${esc(m.model)}</td>
+          <td>${fmt(m.input)}</td><td>${fmt(m.output)}</td><td>${fmt(m.cacheWrite)}</td><td>${fmt(m.cacheRead)}</td>
+          <td>${m.requests}</td><td>${money(m.cost)}</td><td>${tot.cost ? (100 * m.cost / tot.cost).toFixed(1) : '0.0'}%</td>
+        </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--faint)">Nessun dato per questi filtri</td></tr>'}
+        ${models.length ? `<tr><td>Totale</td><td>${fmt(models.reduce((s, m) => s + m.input, 0))}</td>
+          <td>${fmt(models.reduce((s, m) => s + m.output, 0))}</td><td>${fmt(models.reduce((s, m) => s + m.cacheWrite, 0))}</td>
+          <td>${fmt(models.reduce((s, m) => s + m.cacheRead, 0))}</td><td>${tot.requests}</td><td>${money(tot.cost)}</td><td>100%</td></tr>` : ''}
+      </tbody>
+    </table>`;
+
+  for (const [id, key] of [['anRange', 'range'], ['anGran', 'gran'], ['anModel', 'model'], ['anProject', 'project']]) {
+    $(id).addEventListener('change', (e) => { anState[key] = e.target.value; renderAnalytics(); });
+  }
+  $('anReload').addEventListener('click', () => loadAnalytics(true));
+  document.querySelectorAll('.an-table th[data-s]').forEach((th) => {
+    th.addEventListener('click', () => { anState.sort = th.dataset.s; renderAnalytics(); });
+  });
+}
+
+// Stacked bar chart, plain SVG (no chart library in this project on purpose).
+function anChart(periods, colorOf) {
+  if (!periods.length) return '<div class="sys" style="padding:1.5rem 0;text-align:center">Nessun dato nel periodo selezionato</div>';
+  const W = 900, H = 190, padL = 46, padB = 22, padT = 8;
+  const max = Math.max(...periods.map((p) => p.cost)) || 1;
+  const bw = Math.max(2, Math.min(38, (W - padL - 8) / periods.length - 3));
+  const step = (W - padL - 8) / periods.length;
+  const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+
+  let bars = '';
+  periods.forEach((p, i) => {
+    const x = padL + i * step + (step - bw) / 2;
+    let acc = 0;
+    for (const [m, c] of [...p.models].sort()) {
+      const h = (H - padT - padB) * (c / max);
+      acc += h;
+      bars += `<rect x="${x.toFixed(1)}" y="${(H - padB - acc).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}"
+        fill="${colorOf.get(m)}" rx="1"><title>${esc(p.period)} — ${esc(m)}: $${c.toFixed(4)}</title></rect>`;
+    }
+  });
+
+  const ticks = [0, .5, 1].map((f) => {
+    const v = max * f;
+    return `<line class="grid" x1="${padL}" x2="${W - 4}" y1="${y(v)}" y2="${y(v)}"/>
+      <text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end">$${v < 1 ? v.toFixed(3) : v.toFixed(1)}</text>`;
+  }).join('');
+
+  const every = Math.ceil(periods.length / 12);
+  const labels = periods.map((p, i) => i % every === 0
+    ? `<text x="${(padL + i * step + step / 2).toFixed(1)}" y="${H - 7}" text-anchor="middle">${esc(p.period.slice(5))}</text>`
+    : '').join('');
+
+  return `<svg class="an-chart" viewBox="0 0 ${W} ${H}">${ticks}${bars}${labels}</svg>`;
+}
+
+$('navChat').addEventListener('click', showChat);
+$('navSettings').addEventListener('click', showSettings);
+
+async function renderSettings() {
+  const body = $('settingsBody');
+  body.innerHTML = '<div class="sys">Caricamento…</div>';
+  const [st, c, usageCfg] = await Promise.all([api('/api/settings'), api('/api/config'), api('/api/usage/config')]);
+  if (st.error || c.error) { body.innerHTML = '<div class="sys">Impossibile caricare la configurazione</div>'; return; }
+  $('agentDir').textContent = st.agentDir ?? c.paths.agentDir;
+
+  /* ---- 1. pi settings, editable where possible ---- */
+  const secHtml = st.sections.map((s) => `
+    <div class="card" style="padding:.3rem 1rem;margin-bottom:.7rem">
+      <h4 style="margin:.7rem 0 .2rem;font-size:.82rem;color:var(--teal);letter-spacing:.04em">${esc(s.name)}</h4>
+      ${s.items.map((it) => {
+        const id = 'set_' + it.key.replace(/\W/g, '_');
+        const val = it.value;
+        let ctl;
+        if (!it.editable) {
+          ctl = `<span class="v" style="font-size:.78rem;color:var(--faint)">${val === null ? 'non impostato' : esc(JSON.stringify(val))}</span>`;
+        } else if (it.type === 'boolean') {
+          ctl = `<span class="sw ${val ? 'on' : ''}" id="${id}" data-key="${esc(it.key)}" data-type="boolean" role="switch" tabindex="0"></span>`;
+        } else if (it.options && it.options.length > 1) {
+          ctl = `<select id="${id}" data-key="${esc(it.key)}" data-type="string">
+              <option value="">(default${it.default && it.default !== '-' ? ': ' + esc(it.default) : ''})</option>
+              ${it.options.map((o) => `<option ${String(val) === String(o) ? 'selected' : ''} value="${esc(o)}">${esc(o)}</option>`).join('')}
+            </select>`;
+        } else if (it.type === 'number') {
+          ctl = `<input type="number" id="${id}" data-key="${esc(it.key)}" data-type="number" value="${val ?? ''}" placeholder="${esc(it.default)}">`;
+        } else {
+          ctl = `<input type="text" id="${id}" data-key="${esc(it.key)}" data-type="string" value="${val === null ? '' : esc(val)}" placeholder="${esc(it.default)}">`;
+        }
+        return `<div class="setRow ${it.editable ? '' : 'ro'}">
+          <div>
+            <div class="k">${esc(it.key)} <span class="badge">${esc(it.type)}</span>${it.set ? '<span class="badge ok">impostato</span>' : ''}</div>
+            <div class="d">${esc(it.description)}</div>
+            ${it.default && it.default !== '-' ? `<div class="def">default: <code>${esc(it.default)}</code></div>` : ''}
+          </div>
+          <div class="ctl">${ctl}<span class="saved" id="${id}_ok">salvato</span></div>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+
+  body.innerHTML = `
+    <div class="sec" id="sec-pi">
+      <h3>Impostazioni di pi — <span style="color:var(--txt-dim);text-transform:none;letter-spacing:0">${esc(st.path)}</span></h3>
+      <p class="lead" style="margin:-.3rem 0 .8rem">Le modifiche vengono salvate subito nel file. La maggior parte viene letta da pi all'avvio: riavvia il server (⏻) o la CLI per applicarle.</p>
+      ${secHtml}
+      ${st.extras?.length ? `<div class="sys">Chiavi presenti nel file ma non documentate: ${st.extras.map(esc).join(', ')}</div>` : ''}
+    </div>
+
+    <div class="sec" id="sec-theme">
+      <h3>Tema della web UI</h3>
+      <div class="themeGrid">${THEMES.map((t) => `
+        <button class="themeCard" data-t="${t.id}">
+          <span class="sw-row">${t.cols.map((c2) => `<i style="background:${c2}"></i>`).join('')}</span>
+          <span class="nm">${esc(t.name)}</span>
+        </button>`).join('')}</div>
+
+      <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Loghi dei modelli</h4>
+      <div class="themeGrid">${LOGO_STYLES.map((s) => `
+        <button class="themeCard logoStyleCard" data-l="${s.id}">
+          <span class="prev">${['anthropic', 'openai', 'google', 'kimi'].map((p) => logoHtml(p, '', 'lg fixed')).join('')}</span>
+          <span class="nm">${esc(s.name)}</span>
+        </button>`).join('')}</div>
+    </div>
+
+    <div class="sec" id="sec-usage">
+      <h3>Limiti reali dell'account (claude.ai / kimi.com)</h3>
+      <p class="lead" style="margin:-.3rem 0 .8rem">Non è un'API pubblica: replica quello che il browser vede sulle pagine di utilizzo dei due account. Serve la sessione del browser — <b>resta solo su questo PC</b>, in <code>~/.pi/agent/web-usage.json</code>, mai committata. Va rinnovata quando scade.<br><b>Non serve capire niente:</b> copia la richiesta con <b>Copy as cURL</b> e incollala qui sotto, il resto lo ricavo io.</p>
+      <div class="card" style="padding:.9rem 1rem;margin-bottom:.7rem">
+        <h4 style="margin:0 0 .5rem;font-size:.82rem;color:var(--teal)">Claude (claude.ai)
+          <span class="badge ${usageCfg.anthropic?.configured ? 'ok' : ''}" id="claudeCfgBadge">${usageCfg.anthropic?.configured ? 'configurato' : 'non configurato'}</span>
+        </h4>
+        <ol class="d" style="margin:0 0 .5rem;padding-left:1.2rem;line-height:1.6">
+          <li>Apri <code>claude.ai</code> e premi <b>F12</b> → scheda <b>Network</b> (lasciala aperta)</li>
+          <li><b>Ora</b> vai su <b>Impostazioni → Utilizzo (Usage)</b>: la richiesta parte solo quando apri quella pagina, prima nel Network non c'è</li>
+          <li>Scrivi <code>usage</code> nel filtro e cerca la riga il cui URL è tipo:<br><code style="word-break:break-all">https://claude.ai/api/organizations/e44d8396-f752-4390-a998-eea4232dad75/usage</code></li>
+          <li>Tasto destro su quella riga → <b>Copy</b> → <b>Copy as cURL</b> (qualsiasi variante: POSIX, bash o Windows)</li>
+          <li>Incolla <b>tutto</b> il comando qui sotto — non solo l'URL — e premi <b>Salva e prova</b></li>
+        </ol>
+        <textarea id="claudeCookie" placeholder="curl 'https://claude.ai/api/organizations/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/usage' \&#10;  -H 'Cookie: sessionKey=...; cf_clearance=...' \&#10;  -H 'Accept: */*' ..." rows="5" style="width:100%;resize:vertical;font:12px var(--font-mono);background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;color:var(--txt);padding:.5rem"></textarea>
+        <details style="margin-top:.4rem"><summary class="sys" style="cursor:pointer">…oppure incollo il cookie a mano</summary>
+          <div class="sys" style="margin:.4rem 0">Va bene anche l'header <code>Cookie</code> in una riga (<code>sessionKey=…; cf_clearance=…</code>) o la tabella DevTools → Application → Cookies. Attenzione: se copi dal pannello a schermo i valori lunghi sono <b>troncati</b> con <code>…</code> e non funzionano. In questo caso l'org id va scritto a mano:</div>
+          <input id="claudeOrgId" placeholder="org id, es. e44d8396-f752-4390-a998-eea4232dad75" value="${esc(usageCfg.anthropic?.orgId ?? '')}">
+        </details>
+        <div class="row" style="margin-top:.5rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <button class="btn teal" id="claudeCfgSave">Salva e prova</button>
+          <button class="btn outline" id="claudeCfgTest">Riprova</button>
+          <button class="btn outline" id="claudeCfgClear">Rimuovi</button>
+          <span class="sys" id="claudeCfgMsg" style="flex:1 0 100%"></span>
+        </div>
+      </div>
+      <div class="card" style="padding:.9rem 1rem">
+        <h4 style="margin:0 0 .5rem;font-size:.82rem;color:var(--teal)">Kimi (kimi.com)
+          <span class="badge ${usageCfg.kimi?.configured ? 'ok' : ''}" id="kimiCfgBadge">${usageCfg.kimi?.configured ? 'configurato' : 'non configurato'}</span>
+        </h4>
+        <ol class="d" style="margin:0 0 .5rem;padding-left:1.2rem;line-height:1.6">
+          <li>Apri <code>kimi.com/code/console</code> e premi <b>F12</b> → scheda <b>Network</b> (lasciala aperta)</li>
+          <li><b>Ora</b> ricarica la pagina o apri il pannello dei consumi: la richiesta parte solo lì</li>
+          <li>Scrivi <code>GetUsages</code> nel filtro e cerca la riga il cui URL è:<br><code style="word-break:break-all">https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages</code></li>
+          <li>Tasto destro su quella riga → <b>Copy</b> → <b>Copy as cURL</b> (qualsiasi variante)</li>
+          <li>Incolla <b>tutto</b> il comando qui sotto e premi <b>Salva e prova</b></li>
+        </ol>
+        <textarea id="kimiBearer" placeholder="curl 'https://www.kimi.com/apiv2/.../GetUsages' -H 'Authorization: Bearer eyJ...' ..." rows="4" style="width:100%;resize:vertical;font:12px var(--font-mono);background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;color:var(--txt);padding:.5rem"></textarea>
+        <div class="sys" style="margin-top:.3rem">Va bene anche il solo token JWT (il valore dopo <code>Bearer </code>, tre parti separate da punti).</div>
+        <div class="row" style="margin-top:.5rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <button class="btn teal" id="kimiCfgSave">Salva e prova</button>
+          <button class="btn outline" id="kimiCfgTest">Riprova</button>
+          <button class="btn outline" id="kimiCfgClear">Rimuovi</button>
+          <span class="sys" id="kimiCfgMsg" style="flex:1 0 100%"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec" id="sec-session">
+      <h3>Sessione corrente</h3>
+      <div class="card" style="padding:.9rem 1rem"><div class="kv">
+        <div class="k">modello</div><div class="v">${c.current ? esc(c.current.provider + '/' + c.current.id) : '—'}</div>
+        <div class="k">reasoning</div><div class="v">${esc(c.thinkingLevel)} (disponibili: ${c.thinkingLevels.join(', ')})</div>
+        <div class="k">cartella di lavoro</div><div class="v">${esc(c.cwd)}</div>
+        <div class="k">file di sessione</div><div class="v">${esc(c.sessionFile ?? '—')}</div>
+        <div class="k">node</div><div class="v">${esc(c.node)}</div>
+      </div></div>
+    </div>
+
+    <div class="sec" id="sec-models">
+      <h3>Modelli — clicca una card per attivare il modello</h3>
+      <div style="display:flex;gap:.5rem;margin-bottom:.7rem;align-items:center;flex-wrap:wrap">
+        <div class="search" style="flex:1;min-width:200px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+          <input id="modelSearch" placeholder="Cerca modello o provider…">
+        </div>
+        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyAuth" checked> solo autenticati</label>
+        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyReason"> solo con reasoning</label>
+        <span class="sys" id="modelCount"></span>
+      </div>
+      <div class="modelGrid" id="modelGrid"></div>
+    </div>
+
+    <div class="sec" id="sec-auth">
+      <h3>Provider &amp; autenticazione</h3>
+      <div class="card" style="padding:.9rem 1rem"><div class="kv">${c.providers.filter((p) => p.configured || p.models > 0).map((p) => `
+        <div class="k">${esc(p.id)}</div>
+        <div class="v">${p.configured ? '<span class="badge ok">autenticato</span>' : '<span class="badge no">non configurato</span>'}
+          ${p.oauth ? '<span class="badge">oauth</span>' : ''}
+          <span class="badge">${p.models} modelli</span> ${esc(p.detail || '')}</div>`).join('')}</div>
+      </div>
+    </div>
+
+    <div class="sec" id="sec-tools">
+      <h3>Tool attivi (${(c.tools ?? []).filter((t) => t.active).length}/${(c.tools ?? []).length})</h3>
+      <div class="card" style="padding:.5rem 1rem">
+        ${(c.tools ?? []).map((t) => `<div class="toolItem"><span class="n">${esc(t.name)}</span>
+          <span class="d">${esc(t.description)}</span><span style="flex:1"></span>
+          <span class="badge ${t.active ? 'ok' : ''}">${t.active ? 'attivo' : 'off'}</span></div>`).join('') || '<div class="sys">—</div>'}
+      </div>
+    </div>
+
+    <div class="sec" id="sec-paths">
+      <h3>Percorsi</h3>
+      <div class="card" style="padding:.9rem 1rem"><div class="kv">
+        ${Object.entries(c.paths).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join('')}
+      </div></div>
+    </div>
+
+    <div class="sec" id="sec-raw">
+      <h3>settings.json (raw)</h3>
+      <pre class="raw">${esc(JSON.stringify(st.raw ?? {}, null, 2))}</pre>
+    </div>
+
+    <div class="sec">
+      <h3>models.json (raw)</h3>
+      <pre class="raw">${esc(JSON.stringify(c.rawModels ?? {}, null, 2))}</pre>
+    </div>`;
+
+  /* ---- usage credentials handlers ---- */
+  function cfgMsg(id, text, kind) {
+    const el = $(id);
+    el.textContent = text;
+    el.style.color = kind === 'ok' ? 'var(--teal)' : kind === 'err' ? 'var(--red, #e5534b)' : '';
+  }
+  async function testUsage(provider, msgId) {
+    cfgMsg(msgId, 'verifico…', '');
+    const r = await post('/api/usage/test', { provider });
+    if (r.error || !r.ok) { cfgMsg(msgId, '✗ ' + (r.reason || r.error || 'non funziona'), 'err'); return false; }
+    cfgMsg(msgId, '✓ funziona — dati ricevuti da ' + (provider === 'anthropic' ? 'claude.ai' : 'kimi.com'), 'ok');
+    return true;
+  }
+  $('claudeCfgSave').addEventListener('click', async () => {
+    const orgId = $('claudeOrgId').value.trim();
+    const paste = $('claudeCookie').value.trim();
+    if (!paste && !orgId) { cfgMsg('claudeCfgMsg', 'incolla il comando cURL copiato da DevTools', 'err'); return; }
+    const r = await post('/api/usage/config', { provider: 'anthropic', paste, ...(orgId ? { orgId } : {}) });
+    if (r.error) { cfgMsg('claudeCfgMsg', '✗ ' + r.error, 'err'); return; }
+    $('claudeCfgBadge').textContent = 'configurato'; $('claudeCfgBadge').classList.add('ok');
+    $('claudeOrgId').value = r.status?.anthropic?.orgId ?? orgId;
+    $('claudeCookie').value = '';
+    await testUsage('anthropic', 'claudeCfgMsg');
+    refreshUsage();
+  });
+  $('claudeCfgTest').addEventListener('click', () => testUsage('anthropic', 'claudeCfgMsg'));
+  $('kimiCfgTest').addEventListener('click', () => testUsage('kimi', 'kimiCfgMsg'));
+  $('claudeCfgClear').addEventListener('click', async () => {
+    await api('/api/usage/config', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'anthropic' }) });
+    $('claudeCfgBadge').textContent = 'non configurato'; $('claudeCfgBadge').classList.remove('ok');
+    $('claudeOrgId').value = ''; $('claudeCookie').value = ''; cfgMsg('claudeCfgMsg', '', '');
+    refreshUsage();
+  });
+  $('kimiCfgSave').addEventListener('click', async () => {
+    const paste = $('kimiBearer').value.trim();
+    if (!paste) { cfgMsg('kimiCfgMsg', 'incolla il comando cURL copiato da DevTools', 'err'); return; }
+    const r = await post('/api/usage/config', { provider: 'kimi', paste });
+    if (r.error) { cfgMsg('kimiCfgMsg', '✗ ' + r.error, 'err'); return; }
+    $('kimiCfgBadge').textContent = 'configurato'; $('kimiCfgBadge').classList.add('ok');
+    $('kimiBearer').value = '';
+    await testUsage('kimi', 'kimiCfgMsg');
+    refreshUsage();
+  });
+  $('kimiCfgClear').addEventListener('click', async () => {
+    await api('/api/usage/config', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'kimi' }) });
+    $('kimiCfgBadge').textContent = 'non configurato'; $('kimiCfgBadge').classList.remove('ok');
+    $('kimiBearer').value = ''; cfgMsg('kimiCfgMsg', '', '');
+    refreshUsage();
+  });
+
+  /* ---- save handlers ---- */
+  async function saveSetting(key, value, okEl) {
+    const r = await post('/api/settings', { key, value });
+    if (r.error) return false;
+    if (okEl) { okEl.textContent = r.restart ? 'salvato · riavvia' : 'salvato'; okEl.classList.add('show'); setTimeout(() => okEl.classList.remove('show'), 2500); }
+    return true;
+  }
+  body.querySelectorAll('.sw[data-key]').forEach((sw) => {
+    const toggle = async () => {
+      const next = !sw.classList.contains('on');
+      if (await saveSetting(sw.dataset.key, next, $(sw.id + '_ok'))) sw.classList.toggle('on', next);
+    };
+    sw.addEventListener('click', toggle);
+    sw.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  body.querySelectorAll('select[data-key]').forEach((sel) => {
+    sel.addEventListener('change', () => saveSetting(sel.dataset.key, sel.value === '' ? null : sel.value, $(sel.id + '_ok')));
+  });
+  body.querySelectorAll('input[data-key]').forEach((inp) => {
+    const save = () => saveSetting(inp.dataset.key,
+      inp.value === '' ? null : (inp.dataset.type === 'number' ? Number(inp.value) : inp.value),
+      $(inp.id + '_ok'));
+    inp.addEventListener('change', save);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  });
+
+  /* ---- themes ---- */
+  body.querySelectorAll('.themeCard[data-t]').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.t)));
+  body.querySelectorAll('.logoStyleCard').forEach((b) => b.addEventListener('click', () => applyLogoStyle(b.dataset.l)));
+  applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
+  applyTheme(document.documentElement.dataset.theme);
+
+  /* ---- model grid with filters (1000+ models registered) ---- */
+  const grid = $('modelGrid');
+  function drawGrid() {
+    const q = $('modelSearch').value.trim().toLowerCase();
+    const list = c.models
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => (!$('onlyAuth').checked || m.authed)
+        && (!$('onlyReason').checked || m.reasoning)
+        && (!q || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q)))
+      .slice(0, 180);
+    $('modelCount').textContent = `${list.length} mostrati su ${c.models.length}`;
+    grid.innerHTML = list.map(({ m, i }) => `
+      <button class="modelCard ${c.current && m.provider === c.current.provider && m.id === c.current.id ? 'sel' : ''} ${m.authed ? '' : 'off'}" data-i="${i}" ${m.authed ? '' : 'disabled title="provider non autenticato"'}>
+        <div class="h">${logoHtml(m.provider, m.id, 'lg')}
+          <div style="min-width:0"><div class="nm">${esc(m.name || m.id)}</div><div class="pv">${esc(m.provider)}/${esc(m.id)}</div></div>
+        </div>
+        <div class="row">
+          ${m.contextWindow ? `<span class="badge">ctx ${fmt(m.contextWindow)}</span>` : ''}
+          ${m.reasoning ? `<span class="badge ok">effort: ${m.thinkingLevels.filter((l) => l !== 'off').join(' · ') || 'sì'}</span>` : '<span class="badge">no reasoning</span>'}
+          ${m.input != null ? `<span class="badge">${m.input}/M in</span>` : ''}
+          ${m.output != null ? `<span class="badge">${m.output}/M out</span>` : ''}
+          ${m.authed ? '' : '<span class="badge no">no auth</span>'}
+        </div>
+      </button>`).join('') || '<div class="sys">Nessun modello corrisponde ai filtri</div>';
+    grid.querySelectorAll('.modelCard[data-i]').forEach((b) => b.addEventListener('click', () => {
+      const m = c.models[+b.dataset.i];
+      if (m.authed) selectModel(m.provider, m.id);
+    }));
+  }
+  $('modelSearch').addEventListener('input', drawGrid);
+  $('onlyAuth').addEventListener('change', drawGrid);
+  $('onlyReason').addEventListener('change', drawGrid);
+  drawGrid();
+}
+
+
+/* ---------------- attachments (picker + paste + drag&drop) ---------------- */
+let pending = [];
+const TEXT_EXT = /\.(txt|md|markdown|json|ya?ml|toml|ini|cfg|conf|csv|tsv|log|html?|css|scss|jsx?|tsx?|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|php|sh|bat|ps1|sql|xml|svg|vue|svelte|env|gitignore|dockerfile)$/i;
+function renderAttachments() {
+  const el = $('attachments');
+  el.innerHTML = '';
+  pending.forEach((a, i) => {
+    const t = document.createElement('div');
+    t.className = 'thumb';
+    t.innerHTML = a.kind === 'image'
+      ? `<img src="${a.url}" alt="${esc(a.name)}">`
+      : `<div class="file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm" title="${esc(a.name)}">${esc(a.name)}</span></div>`;
+    const x = document.createElement('button');
+    x.type = 'button'; x.className = 'x'; x.textContent = '×'; x.title = 'Rimuovi';
+    x.addEventListener('click', () => { pending.splice(i, 1); renderAttachments(); });
+    t.appendChild(x);
+    el.appendChild(t);
+  });
+}
+function addFiles(files) {
+  for (const file of files) {
+    if (!file) continue;
+    if (file.type.startsWith('image/')) {
+      const r = new FileReader();
+      r.onload = () => {
+        const url = String(r.result);
+        pending.push({ kind: 'image', name: file.name || 'immagine', url, data: url.split(',')[1], mimeType: file.type });
+        renderAttachments();
+      };
+      r.readAsDataURL(file);
+    } else if (file.type.startsWith('text/') || TEXT_EXT.test(file.name) || !file.type) {
+      if (file.size > 512 * 1024) { toast(`${file.name}: troppo grande (max 512 KB)`); continue; }
+      const r = new FileReader();
+      r.onload = () => { pending.push({ kind: 'file', name: file.name, text: String(r.result) }); renderAttachments(); };
+      r.readAsText(file);
+    } else toast(`${file.name}: tipo non supportato`);
+  }
+}
+$('attachBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', (e) => { addFiles([...e.target.files]); e.target.value = ''; });
+$('input').addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData?.items ?? [])].filter((it) => it.kind === 'file').map((it) => it.getAsFile());
+  if (files.length) { e.preventDefault(); addFiles(files); }
+});
+// window-wide drag & drop; overlay can never get stuck and block clicks
+let dragDepth = 0;
+const dropOff = () => { dragDepth = 0; $('drop').classList.remove('on'); };
+const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+window.addEventListener('dragenter', (e) => { if (hasFiles(e)) { dragDepth++; $('drop').classList.add('on'); } });
+window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) dropOff(); });
+window.addEventListener('dragend', dropOff);
+window.addEventListener('blur', dropOff);
+window.addEventListener('drop', (e) => {
+  dropOff();
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  showChat();
+  addFiles([...e.dataTransfer.files]);
+  $('input').focus();
+});
+
+/* ---------------- "/" slash commands: extension commands, prompt templates, skills ---------------- */
+let commandsCache = [];
+async function loadCommands() {
+  const r = await api('/api/commands');
+  commandsCache = r.commands ?? [];
+}
+const CMD_SOURCE_LABEL = { extension: 'estensione', prompt: 'prompt', skill: 'skill' };
+let cmdMenuOpen = false, cmdMenuItems = [], cmdMenuIndex = 0, cmdMenuRange = null;
+// only triggers for a "/" at the start of the current line, with no space typed
+// yet after it — exactly like a console command
+function slashToken() {
+  const v = $('input').value, pos = $('input').selectionStart;
+  if (pos !== $('input').selectionEnd) return null;
+  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  const line = v.slice(lineStart, pos);
+  const m = /^\/([a-zA-Z0-9_:.\-]*)$/.exec(line);
+  if (!m) return null;
+  return { query: m[1].toLowerCase(), start: lineStart, end: pos };
+}
+function updateCmdMenu() {
+  const tok = slashToken();
+  if (!tok || !commandsCache.length) { closeCmdMenu(); return; }
+  cmdMenuRange = tok;
+  cmdMenuItems = commandsCache
+    .filter((c) => c.name.toLowerCase().includes(tok.query))
+    .sort((a, b) => a.name.toLowerCase().indexOf(tok.query) - b.name.toLowerCase().indexOf(tok.query))
+    .slice(0, 30);
+  if (!cmdMenuItems.length) { closeCmdMenu(); return; }
+  cmdMenuIndex = 0;
+  renderCmdMenu();
+  openCmdMenu();
+}
+function renderCmdMenu() {
+  const el = $('cmdMenu');
+  el.innerHTML = cmdMenuItems.map((c, i) => `
+    <button type="button" class="dd-item cmdItem${i === cmdMenuIndex ? ' sel' : ''}" data-i="${i}">
+      <span class="col">
+        <span>/${esc(c.name)}${c.argumentHint ? ' <span class="sub">' + esc(c.argumentHint) + '</span>' : ''}</span>
+        ${c.description ? `<span class="desc">${esc(c.description)}</span>` : ''}
+      </span>
+      <span class="sub">${esc(CMD_SOURCE_LABEL[c.source] ?? c.source)}</span>
+    </button>`).join('');
+  el.querySelectorAll('.cmdItem').forEach((b) => {
+    // mousedown (not click): fires before the textarea blur that a click would cause
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); pickCmd(+b.dataset.i); });
+  });
+}
+function openCmdMenu() { $('cmdMenu').classList.add('show'); cmdMenuOpen = true; }
+function closeCmdMenu() { $('cmdMenu').classList.remove('show'); cmdMenuOpen = false; cmdMenuItems = []; }
+function pickCmd(i) {
+  const c = cmdMenuItems[i];
+  if (!c || !cmdMenuRange) return;
+  const { start, end } = cmdMenuRange;
+  const insert = '/' + c.name + ' ';
+  const v = input.value;
+  input.value = v.slice(0, start) + insert + v.slice(end);
+  input.selectionStart = input.selectionEnd = start + insert.length;
+  closeCmdMenu();
+  autoGrow();
+  input.focus();
+}
+
+/* ---------------- composer (Invio = a capo, Ctrl+Invio = invia) ---------------- */
+const input = $('input');
+function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
+input.addEventListener('input', () => { autoGrow(); updateCmdMenu(); });
+input.addEventListener('click', updateCmdMenu);
+input.addEventListener('blur', () => setTimeout(closeCmdMenu, 150));
+$('composer').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  closeCmdMenu();
+  const text = input.value.trim();
+  if (!text && !pending.length) return;
+  const images = pending.filter((a) => a.kind === 'image').map((a) => ({ data: a.data, mimeType: a.mimeType }));
+  let payload = text;
+  for (const d of pending.filter((a) => a.kind === 'file')) {
+    payload += `\n\n--- file allegato: ${d.name} ---\n\`\`\`\n${d.text}\n\`\`\``;
+  }
+  const body = newTurn('user');
+  // allegati PRIMA del testo: le immagini stanno in cima al messaggio, in
+  // miniatura, e il testo scritto resta sotto
+  if (pending.length) {
+    const media = document.createElement('div');
+    media.className = 'media';
+    for (const a of pending) {
+      if (a.kind === 'image') {
+        const img = document.createElement('img');
+        img.src = a.url; img.alt = a.name; img.title = a.name + ' — clicca per ingrandire';
+        media.appendChild(img);
+      } else { const c = document.createElement('span'); c.className = 'filechip'; c.textContent = '📄 ' + a.name; media.appendChild(c); }
+    }
+    body.appendChild(media);
+  }
+  if (text) bubble('user', text, body);
+  input.value = ''; autoGrow();
+  pending = []; renderAttachments();
+  scrollDown();
+  const r = await post('/api/prompt', { text: payload, images });
+  if (!r.error) { setChatStarted(true); setRunning(true); }
+});
+input.addEventListener('keydown', (e) => {
+  if (cmdMenuOpen) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); cmdMenuIndex = (cmdMenuIndex + 1) % cmdMenuItems.length; renderCmdMenu(); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); cmdMenuIndex = (cmdMenuIndex - 1 + cmdMenuItems.length) % cmdMenuItems.length; renderCmdMenu(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickCmd(cmdMenuIndex); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closeCmdMenu(); return; }
+  }
+  if (e.key === 'Enter' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); e.target.form.requestSubmit(); return; }
+  // "* " all'inizio di una riga diventa un vero bullet point "• "
+  if (e.key === ' ') {
+    const { value, selectionStart, selectionEnd } = input;
+    if (selectionStart === selectionEnd) {
+      const before = value.slice(0, selectionStart);
+      const lineStart = before.lastIndexOf('\n') + 1;
+      const line = before.slice(lineStart);
+      if (/^\s*\*$/.test(line)) {
+        e.preventDefault();
+        const rep = line.slice(0, -1) + '• ';
+        input.value = value.slice(0, lineStart) + rep + value.slice(selectionStart);
+        input.selectionStart = input.selectionEnd = lineStart + rep.length;
+        autoGrow();
+      }
+    }
+    return;
+  }
+  // Invio dentro una lista: prosegue la lista (bullet o numero incrementato);
+  // Invio su una voce vuota: esce dalla lista
+  if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && continueList()) e.preventDefault();
+});
+function continueList() {
+  const { value, selectionStart, selectionEnd } = input;
+  if (selectionStart !== selectionEnd) return false;
+  const before = value.slice(0, selectionStart);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  const line = before.slice(lineStart);
+  const m = line.match(/^(\s*)(•|[-+*]|(\d+)([.)]))(\s+)(.*)$/);
+  if (!m) return false;
+  const [, indent, marker, num, punc, ws, content] = m;
+  const rest = value.slice(selectionStart);
+  if (!content.trim()) {
+    // voce vuota: rimuovi il marcatore e resta su una riga pulita
+    input.value = value.slice(0, lineStart) + rest;
+    input.selectionStart = input.selectionEnd = lineStart;
+    autoGrow();
+    return true;
+  }
+  const next = num ? String(Number(num) + 1) + (punc || '.') : marker;
+  const insert = '\n' + indent + next + ws;
+  input.value = before + insert + rest;
+  input.selectionStart = input.selectionEnd = before.length + insert.length;
+  autoGrow();
+  return true;
+}
+
+/* ---------------- lightbox immagini ----------------
+   Le immagini in chat sono miniature: un click le apre a schermo intero, la ✕
+   (o Esc / click sullo sfondo) le chiude. */
+function openLightbox(src, alt = '') {
+  $('lightboxImg').src = src;
+  $('lightboxImg').alt = alt;
+  $('lightbox').classList.add('on');
+}
+function closeLightbox() {
+  $('lightbox').classList.remove('on');
+  $('lightboxImg').src = '';
+}
+chat.addEventListener('click', (e) => {
+  const img = e.target.closest('.media img, .msg img');
+  if (img) openLightbox(img.src, img.alt);
+});
+$('lightboxClose').addEventListener('click', closeLightbox);
+$('lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
+
+/* ---------------- pannello scorciatoie (Shift tenuto premuto 2s) ---------------- */
+const SHORTCUTS = [
+  [['Ctrl', 'Invio'], 'Invia il messaggio'],
+  [['Invio'], 'A capo nel messaggio'],
+  [['Shift', 'M'], 'Cambia modello (ciclo)'],
+  [['Shift', 'T'], 'Cambia livello di reasoning'],
+  [['Shift', 'P'], 'Cambia progetto / cartella'],
+  [['Shift', 'N'], 'Nuova chat'],
+  [['Shift', 'S'], 'Apri impostazioni'],
+  [['/'], 'Palette dei comandi nel composer'],
+  [['Ctrl', 'click'], 'Apri una chat in una nuova scheda'],
+  [['Esc'], 'Chiudi menu, immagine o pannello'],
+  [['Shift', '(1,3s)'], 'Mostra questo pannello'],
+  [['doppio click'], 'Bordo sidebar: larghezza di default'],
+];
+$('shortcutsGrid').innerHTML = SHORTCUTS.map(([keys, d]) =>
+  `<div class="sc"><span class="keys">${keys.map((k) => `<span class="kbd">${esc(k)}</span>`).join('')}</span><span class="d">${esc(d)}</span></div>`).join('');
+let shiftTimer = null;
+const showShortcuts = (on) => $('shortcuts').classList.toggle('on', on);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') {
+    if (e.repeat || shiftTimer) return;
+    shiftTimer = setTimeout(() => showShortcuts(true), 1300);
+    return;
+  }
+  // premuto un altro tasto (= stai usando una scorciatoia): il pannello si
+  // toglie di mezzo subito, così vedi l'effetto di quello che hai lanciato
+  clearShift();
+}, true);
+const clearShift = () => { clearTimeout(shiftTimer); shiftTimer = null; showShortcuts(false); };
+document.addEventListener('keyup', (e) => { if (e.key === 'Shift') clearShift(); });
+window.addEventListener('blur', clearShift);
+// Esc chiude, nell'ordine, il pannello scorciatoie, la lightbox e i dropdown
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if ($('shortcuts').classList.contains('on')) { clearShift(); return; }
+  if ($('lightbox').classList.contains('on')) { closeLightbox(); return; }
+  closeFlyouts();
+  document.querySelectorAll('.dd.open').forEach((d) => d.classList.remove('open'));
+});
+
+/* ---------------- global keyboard shortcuts ---------------- */
+document.addEventListener('keydown', (e) => {
+  // Ctrl+Invio: invia il messaggio da qualunque punto della pagina
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'Enter') {
+    if (input.value.trim() || pending.length) { e.preventDefault(); $('composer').requestSubmit(); }
+    return;
+  }
+  if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  const tag = (e.target.tagName || '').toLowerCase();
+  const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+  if (typing) return; // non rubare Shift+lettera mentre si sta scrivendo
+  switch (e.key.toLowerCase()) {
+    case 'm': e.preventDefault(); cycleModel(); break;      // Shift+M: cicla modelli
+    case 't': e.preventDefault(); cycleThinking(); break;   // Shift+T: cicla effort
+    case 'p': e.preventDefault(); cycleProject(); break;    // Shift+P: cicla progetti
+    case 's': e.preventDefault(); showSettings(); break;    // Shift+S: impostazioni
+    case 'n': e.preventDefault(); newChat(); break;         // Shift+N: nuova chat
+  }
+});
+$('abort').addEventListener('click', () => post('/api/abort'));
+$('quit').addEventListener('click', async () => {
+  if (!confirm('Spegnere il server pi-web-ui?\nLa pagina smetterà di funzionare finché non lo riavvii dallo shortcut sul Desktop.')) return;
+  try { await fetch('/api/shutdown', { method: 'POST' }); } catch {}
+  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Server pi-web-ui arrestato.<br><br>Riavvialo dallo shortcut sul Desktop.</div>';
+});
+$('restartBtn').addEventListener('click', async () => {
+  if (!confirm('Riavviare il server pi-web-ui?\nLa chat resta salvata; la pagina si ricarica da sola appena il server è di nuovo pronto.')) return;
+  try { await fetch('/api/restart', { method: 'POST' }); } catch {}
+  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Riavvio di pi-web-ui in corso…<br><br>La pagina si ricarica da sola.</div>';
+  // poll finché il nuovo processo risponde, poi ricarica — stesso check usato da run.vbs
+  const wait = setInterval(async () => {
+    try {
+      const r = await fetch('/api/state');
+      if (r.ok) { clearInterval(wait); location.reload(); }
+    } catch { /* server ancora giù: continua a provare */ }
+  }, 700);
+  setTimeout(() => clearInterval(wait), 30000);
+});
+
+/* ---------------- git status (branch + modifiche in canna) ---------------- */
+let gitInfo = null;
+async function refreshGit() {
+  const g = await api('/api/git');
+  if (g.error) return;
+  gitInfo = g;
+  renderGit();
+}
+function renderGit() {
+  const chip = $('gitChip');
+  if (!gitInfo?.repo) { chip.classList.add('hide'); return; }
+  chip.classList.remove('hide');
+  $('gitBranch').textContent = gitInfo.branch;
+  const n = gitInfo.changed ?? 0;
+  $('gitCount').textContent = n;
+  $('gitCount').classList.toggle('hide', !n);
+  $('gitCount').classList.toggle('warn', (gitInfo.staged ?? 0) > 0);
+  const sync = [];
+  if (gitInfo.ahead) sync.push(`↑ ${gitInfo.ahead} commit da pushare`);
+  if (gitInfo.behind) sync.push(`↓ ${gitInfo.behind} commit da scaricare`);
+  chip.title = `branch: ${gitInfo.branch}\n` +
+    `modifiche in canna: ${n} (staged ${gitInfo.staged} · non staged ${gitInfo.unstaged} · nuovi ${gitInfo.untracked})\n` +
+    (sync.length ? sync.join(' · ') : 'sincronizzato col remoto');
+}
+
+/* ---------------- boot ---------------- */
+async function loadState() {
+  const s = await api('/api/state');
+  if (s.error) return;
+  state.cwd = s.cwd;
+  state.model = s.current ?? state.model;
+  setCwdLabel(s.cwd);
+  renderStats(s.chat, s.context, s.chatByModel);
+  setRunning(!!s.streaming);
+  renderUsageWidget();
+  refreshGit();
+}
+(async () => {
+  connect();
+  await loadState();
+  await Promise.all([loadModels(), loadFiles(), loadCommands(), loadRecentCwds()]);
+  await loadSessions();
+  await refreshChat();
+  await refreshUsage();
+})();
+// safety net: if SSE dies the sidebar must never go stale
+setInterval(() => { if (!document.hidden && es?.readyState === 2) { es.close(); connect(); } }, 5000);
+// real account usage limits (claude.ai / kimi.com) — poll, don't hammer
+setInterval(() => { if (!document.hidden) refreshUsage(); }, 30000);
+// git branch / modifiche in canna — poll leggero (il server ha cache 5s)
+setInterval(() => { if (!document.hidden) refreshGit(); }, 20000);
+</script>
+</body>
+</html>
