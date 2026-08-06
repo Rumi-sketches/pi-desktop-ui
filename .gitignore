@@ -1,0 +1,6 @@
+node_modules/
+server.log
+backup/
+
+# ssLayer security middleware (local only)
+.sslayer/
