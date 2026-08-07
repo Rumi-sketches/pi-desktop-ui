@@ -1,16 +1,36 @@
 {
   "name": "pi-web-ui",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "description": "A local web UI for the pi coding agent: chat, sessions, diffs and usage analytics in the browser.",
+  "license": "MIT",
+  "author": "Rumi-sketches <rumi.sketches@outlook.com>",
   "type": "module",
+  "private": true,
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "pi",
+    "coding-agent",
+    "web-ui",
+    "llm"
+  ],
+  "scripts": {
+    "start": "node bin/pi-web-ui.mjs",
+    "shortcut": "node scripts/create-shortcut.mjs",
+    "lint": "eslint .",
+    "verify": "node scripts/verify.mjs",
+    "test": "npm run verify"
+  },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.82.0"
+    "@earendil-works/pi-coding-agent": "^0.84.0",
+    "dompurify": "^3.4.13",
+    "highlight.js": "^11.11.1",
+    "marked": "^18.0.9"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5"
   }
 }

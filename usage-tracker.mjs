@@ -10,7 +10,7 @@
  * Credentials are stored locally in ~/.pi/agent/web-usage.json (never
  * committed, never sent anywhere except the provider's own endpoint).
  */
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, chmod } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
@@ -18,9 +18,14 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 
-const AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
+// Overridable so tests (and sandboxed runs) never touch the real ~/.pi/agent.
+const AGENT_DIR = process.env.PI_WEB_UI_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 const CONFIG_PATH = path.join(AGENT_DIR, "web-usage.json");
 const TTL_MS = 45_000; // don't hammer the providers; UI polls faster than this
+// The config holds live session credentials: keep it readable by its owner only.
+// `mode` is a no-op on Windows, which is fine — there it is not a group/other ACL.
+const DIR_MODE = 0o700;
+const SECRET_FILE_MODE = 0o600;
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
@@ -35,8 +40,10 @@ async function readConfig() {
 }
 
 async function writeConfig(cfg) {
-  await mkdir(AGENT_DIR, { recursive: true });
-  await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2), "utf8");
+  await mkdir(AGENT_DIR, { recursive: true, mode: DIR_MODE });
+  await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: SECRET_FILE_MODE });
+  // `mode` on writeFile only applies when the file is created: tighten pre-existing ones.
+  await chmod(CONFIG_PATH, SECRET_FILE_MODE).catch(() => {});
 }
 
 /** Status without leaking secrets, for the settings page. */
@@ -53,7 +60,9 @@ export async function usageConfigStatus() {
   };
 }
 
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+// Anchored: the org id is interpolated into a claude.ai URL, so anything around
+// the UUID (`/`, `..`, query separators) must be rejected, not merely tolerated.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // DevTools shortens long values *in the display* with a horizontal ellipsis; people
 // copy the shortened text and end up with two cookies welded together. Catch it.
 const ELLIPSIS_RE = /[\u2026]|\.\.\.(?=[A-Za-z0-9])/;
@@ -118,23 +127,23 @@ function cookieNames(cookie) {
   return new Set(cookie.split(";").map((c) => c.split("=")[0].trim()));
 }
 
-/** Throws a user-facing (Italian) message when the paste can't possibly work. */
+/** Throws a user-facing message when the pasted text can't possibly work. */
 function validate(provider, values) {
   if (provider === "anthropic") {
     const { cookie, orgId } = values;
     if (!cookie) throw new Error(values.orgId
-      ? "Ho trovato l'org id ma nessun cookie: hai incollato solo l'URL. Serve l'intero comando: tasto destro sulla richiesta → Copy → Copy as cURL."
-      : "Non ho trovato nessun cookie nel testo incollato. Usa DevTools → Network → tasto destro sulla richiesta 'usage' → Copy → Copy as cURL.");
-    if (ELLIPSIS_RE.test(cookie)) throw new Error("Il cookie è troncato (contiene '…'): è il testo abbreviato che DevTools mostra a schermo, non il valore vero. Usa Copy as cURL (bash).");
-    if (!cookieNames(cookie).has("sessionKey")) throw new Error("Manca il cookie 'sessionKey', che è quello che autentica: senza, claude.ai risponde vuoto. Copia la richiesta con Copy as cURL (bash).");
-    if (!orgId) throw new Error("Manca l'org id. Se incolli il comando cURL viene ricavato da solo dall'URL; altrimenti scrivilo a mano.");
-    if (!UUID_RE.test(orgId)) throw new Error(`L'org id '${orgId}' non è un UUID valido (formato: 8-4-4-4-12 caratteri esadecimali).`);
+      ? "Found the org id but no cookie: you only pasted the URL. The whole command is needed: right-click the request → Copy → Copy as cURL."
+      : "No cookie found in the pasted text. Use DevTools → Network → right-click the 'usage' request → Copy → Copy as cURL.");
+    if (ELLIPSIS_RE.test(cookie)) throw new Error("The cookie is truncated (it contains '…'): that is the shortened text DevTools shows on screen, not the real value. Use Copy as cURL (bash).");
+    if (!cookieNames(cookie).has("sessionKey")) throw new Error("The 'sessionKey' cookie is missing, and that is the one that authenticates: without it claude.ai answers empty. Copy the request with Copy as cURL (bash).");
+    if (!orgId) throw new Error("The org id is missing. If you paste the cURL command it is derived from the URL; otherwise type it in by hand.");
+    if (!UUID_RE.test(orgId)) throw new Error(`The org id '${orgId}' is not a valid UUID (format: 8-4-4-4-12 hex characters).`);
   }
   if (provider === "kimi") {
     const { bearer } = values;
-    if (!bearer) throw new Error("Non ho trovato nessun token. Usa DevTools → Network → tasto destro sulla richiesta 'GetUsages' → Copy → Copy as cURL (bash).");
-    if (ELLIPSIS_RE.test(bearer)) throw new Error("Il token è troncato (contiene '…'). Usa Copy as cURL (bash).");
-    if (bearer.split(".").length !== 3) throw new Error("Il token non ha la forma di un JWT (tre parti separate da '.'). Copia solo il valore dopo 'Bearer '.");
+    if (!bearer) throw new Error("No token found. Use DevTools → Network → right-click the 'GetUsages' request → Copy → Copy as cURL (bash).");
+    if (ELLIPSIS_RE.test(bearer)) throw new Error("The token is truncated (it contains '…'). Use Copy as cURL (bash).");
+    if (bearer.split(".").length !== 3) throw new Error("The token is not shaped like a JWT (three parts separated by '.'). Copy only the value after 'Bearer '.");
   }
 }
 
@@ -170,6 +179,16 @@ export async function clearUsageConfig(provider) {
   cache[provider] = null;
 }
 
+/**
+ * Build a curl config file (see `man curl`, "--config") sending the request
+ * headers, so credentials are passed over stdin instead of argv, where any
+ * local process could read them from the process list.
+ */
+function curlHeaderConfig(headers) {
+  const quote = (v) => `"${String(v).replace(/[\r\n]/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return headers.map((h) => `header = ${quote(h)}\n`).join("");
+}
+
 function fresh(entry) {
   return entry && Date.now() - entry.at < TTL_MS;
 }
@@ -190,24 +209,31 @@ export async function fetchAnthropicUsage({ force = false } = {}) {
     // TLS/HTTP2 handshake: Node's built-in fetch (undici) gets blocked (403)
     // even with a fully valid cookie, while curl's handshake passes through
     // fine. So we shell out to the system curl for this one request.
-    const { stdout } = await execFileP(
+    // Headers go through a curl config on stdin (`--config -`) so the cookie
+    // never appears in the child process's argv.
+    const pending = execFileP(
       "curl",
       [
         "-s",
         "--max-time", "10",
-        "-H", `Cookie: ${cookie}`,
-        "-H", "Accept: application/json",
-        "-H", `User-Agent: ${UA}`,
-        `https://claude.ai/api/organizations/${orgId}/usage`,
+        "--config", "-",
+        `https://claude.ai/api/organizations/${encodeURIComponent(orgId)}/usage`,
       ],
       // windowsHide: this runs on a 30s poll — without it every call flashes a
       // console window on screen.
       { maxBuffer: 2 * 1024 * 1024, windowsHide: true },
     );
+    // `--config -` reads stdin until EOF: end() is mandatory or curl hangs.
+    pending.child.stdin.end(curlHeaderConfig([
+      `Cookie: ${cookie}`,
+      "Accept: application/json",
+      `User-Agent: ${UA}`,
+    ]));
+    const { stdout } = await pending;
     if (stdout.trim().startsWith("<")) {
-      data = { configured: true, error: "Cloudflare ha bloccato la richiesta (challenge) — riprova tra poco o aggiorna il cookie" };
+      data = { configured: true, error: "Cloudflare blocked the request (challenge) — try again shortly or refresh the cookie" };
     } else if (!stdout.trim()) {
-      data = { configured: true, error: "risposta vuota — sessione probabilmente scaduta, aggiorna il cookie" };
+      data = { configured: true, error: "empty response — the session has probably expired, refresh the cookie" };
     } else {
       const j = JSON.parse(stdout);
       const fiveHour = j.five_hour ?? null;
@@ -259,7 +285,7 @@ export async function fetchKimiUsage({ force = false } = {}) {
       body: body && body.trim() ? body : JSON.stringify({ scope: ["FEATURE_CODING"] }),
     });
     if (!res.ok) {
-      data = { configured: true, error: `HTTP ${res.status}${res.status === 401 ? " — token scaduto, aggiornalo" : ""}` };
+      data = { configured: true, error: `HTTP ${res.status}${res.status === 401 ? " — token expired, refresh it" : ""}` };
     } else {
       const j = await res.json();
       // usages[].detail = longer-window quota (resets in ~days, effectively "weekly");

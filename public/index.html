@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="it" data-theme="noir">
+<html lang="en" data-theme="noir">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -8,22 +8,27 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>pi web ui</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<!-- Libraries are served locally (see /vendor in server.mjs): the UI must work
+     offline and must not leak traffic to a CDN. Fonts use the system stack. -->
+<link rel="stylesheet" href="/vendor/highlight.js/styles/github-dark.min.css">
+<script src="/vendor/marked/lib/marked.umd.js"></script>
+<script src="/vendor/dompurify/dist/purify.min.js"></script>
+<script type="module">
+  // highlight.js ships only as ES modules; syntax highlighting kicks in as soon
+  // as this module runs, and every call site already guards on window.hljs.
+  import hljs from "/vendor/highlight.js/es/common.js";
+  window.hljs = hljs;
+</script>
 <style>
   /* ===== themes =====
-     Scala di superfici per zona. Regola: la CHAT e' la superficie piu' scura
-     (piu' chiara nel tema light), sidebar/rail/header/composer salgono di
-     luminanza e hanno una sfumatura verticale propria + un bordo superiore
-     chiaro (--hair) che simula il lato sollevato. */
+     Per-zone surface scale. Rule: the CHAT is the darkest surface (the lightest
+     one in the light theme); sidebar/rail/header/composer step up in luminance
+     and get their own vertical gradient plus a light top border (--hair) that
+     fakes a raised edge. */
   :root, [data-theme="noir"] {
     color-scheme: dark;
-    --bg: #0b0d11;        /* chat: la piu' scura */
-    --bg-2: #07090c;      /* campi incassati */
+    --bg: #0b0d11;        /* chat: the darkest one */
+    --bg-2: #07090c;      /* sunken fields */
     --panel: #14171d;     /* rail / sidebar / diff */
     --panel-2: #1a1e26;   /* card, dropdown */
     --panel-3: #232833;   /* hover */
@@ -102,7 +107,7 @@
   }
   [data-theme="daylight"] {
     color-scheme: light;
-    /* nel tema chiaro la logica si inverte: la chat e' la superficie piu' chiara */
+    /* in the light theme the logic flips: the chat is the lightest surface */
     --bg: #ffffff; --bg-2: #f1f3f7; --panel: #f7f8fa; --panel-2: #ffffff; --panel-3: #eaedf3;
     --line: #e6e9ee; --line-2: #d3d9e2; --hair: #ffffff;
     --txt: #14181f; --txt-dim: #4a5361; --txt-faint: #8b94a2; --faint: #8b94a2;
@@ -114,23 +119,40 @@
     --composer-bg: linear-gradient(180deg, #ffffff, #fbfcfd);
     --card-bg: #ffffff;
   }
-  /* elevazione condivisa da tutti i temi */
+  /* elevation shared by every theme */
   :root {
     --elev-1: 0 1px 2px #00000038;
     --elev-2: 0 4px 14px -4px #00000055, 0 1px 2px #00000040;
     --elev-3: 0 20px 50px -14px #00000070, 0 2px 6px #00000045;
-    --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-display: "Inter Tight", "Inter", ui-sans-serif, system-ui, sans-serif;
-    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+    --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+    /* colours derived from the active theme palette: valid in all six themes,
+       because [data-theme] and :root are the same element (<html>) */
+    --accent-grad: linear-gradient(150deg, var(--teal), color-mix(in srgb, var(--teal) 72%, #000));
+    --accent-line: color-mix(in srgb, var(--teal) 36%, transparent);
+    --accent-glow: color-mix(in srgb, var(--teal) 20%, transparent);
+    --crit-line: color-mix(in srgb, var(--crit) 36%, transparent);
+    --warn-dim: color-mix(in srgb, var(--warn) 14%, transparent);
+    --danger-bg: color-mix(in srgb, var(--crit) 16%, var(--panel));
+    --danger-txt: color-mix(in srgb, var(--crit) 72%, var(--txt));
+    --diff-add-bg: color-mix(in srgb, var(--ok) 14%, var(--panel));
+    --diff-add-txt: color-mix(in srgb, var(--ok) 72%, var(--txt));
+    --sunken: color-mix(in srgb, var(--bg) 55%, transparent);
+    --scrim: color-mix(in srgb, var(--bg) 70%, transparent);
+    --scrim-strong: color-mix(in srgb, var(--bg) 88%, transparent);
+    --fav: #e2557b;
+    --fav-glow: color-mix(in srgb, var(--fav) 50%, transparent);
+    --tool-nm: #9d8bff;
   }
   [data-theme="daylight"] {
     --elev-1: 0 1px 2px #0b132414;
     --elev-2: 0 2px 8px -2px #0b13241f, 0 1px 2px #0b132414;
     --elev-3: 0 18px 50px -18px #0b132433, 0 2px 8px -2px #0b132414;
+    --tool-nm: #6d28d9;
   }
   [data-theme="daylight"] .msg.md :not(pre) > code,
   [data-theme="daylight"] .filechip { background: var(--bg-2); }
-  [data-theme="daylight"] .toast { background: #fff; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
@@ -164,7 +186,7 @@
   .btn.outline:hover { border-color: var(--line-2); transform: translateY(-1px); box-shadow: var(--elev-2), inset 0 1px 0 var(--hair); }
   .btn.teal { background: var(--teal); color: var(--on-accent); font-weight: 600; }
   .btn.teal:hover { background: color-mix(in srgb, var(--teal) 82%, #fff); }
-  .btn.danger:hover { background: #2a1418; color: #ff9b93; }
+  .btn.danger:hover { background: var(--danger-bg); color: var(--danger-txt); }
   .btn.icon { padding: .45rem; }
   .btn[disabled] { opacity: .4; cursor: default; }
   .chip {
@@ -175,8 +197,8 @@
   .kbd { font: 400 11px var(--font-mono); color: var(--faint); border: 1px solid var(--line); border-radius: 5px; padding: 0 .32rem; }
   .card { background: var(--card-bg); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); }
   .badge { font-size: .68rem; padding: .1rem .4rem; border-radius: 999px; border: 1px solid var(--line-2); color: var(--txt-dim); }
-  .badge.ok { color: var(--teal); border-color: #2fe0c055; background: var(--teal-dim); }
-  .badge.no { color: var(--crit); border-color: #f8717155; }
+  .badge.ok { color: var(--teal); border-color: var(--accent-line); background: var(--teal-dim); }
+  .badge.no { color: var(--crit); border-color: var(--crit-line); }
 
   /* ---------- icon rail ---------- */
   #rail {
@@ -185,10 +207,10 @@
   }
   #rail .logo-tile {
     width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; margin-bottom: .8rem;
-    background: linear-gradient(150deg, var(--teal), #12a894); color: #03211c; font-weight: 800; font-size: 17px;
+    background: var(--accent-grad); color: var(--on-accent); font-weight: 800; font-size: 17px;
     transition: transform .12s, box-shadow .12s;
   }
-  #rail .logo-tile:hover { transform: translateY(-1px); box-shadow: 0 6px 18px #2fe0c033; }
+  #rail .logo-tile:hover { transform: translateY(-1px); box-shadow: 0 6px 18px var(--accent-glow); }
   .rail-btn {
     width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--faint);
     position: relative; transition: .15s;
@@ -197,7 +219,7 @@
   .rail-btn.on { background: var(--teal-dim); color: var(--teal); }
   .rail-btn .count {
     position: absolute; top: 2px; right: 2px; min-width: 15px; height: 15px; border-radius: 8px;
-    background: var(--teal); color: #04211c; font: 700 10px/15px ui-sans-serif; text-align: center;
+    background: var(--teal); color: var(--on-accent); font: 700 10px/15px ui-sans-serif; text-align: center;
   }
 
   /* ---------- sidebar ---------- */
@@ -206,7 +228,7 @@
     display: flex; flex-direction: column; overflow: hidden; transition: width .18s; position: relative;
   }
   #sidebar.collapsed { width: 0; border-right: none; }
-  /* maniglia di ridimensionamento: trascina il bordo destro (min 190 / max 460) */
+  /* resize handle: drag the right edge (min 190 / max 460) */
   #sidebarResize {
     position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 20;
   }
@@ -231,10 +253,10 @@
   }
   .filters #filterDd { flex: 0 0 auto; }
   #filterBtn { position: relative; background: var(--bg-2); border: 1px solid var(--line); border-radius: 9px; }
-  #filterBtn.on { color: var(--teal); border-color: #2fe0c055; background: var(--teal-dim); }
+  #filterBtn.on { color: var(--teal); border-color: var(--accent-line); background: var(--teal-dim); }
   #filterBtn .count {
     position: absolute; top: -5px; right: -5px; min-width: 14px; height: 14px; border-radius: 8px;
-    background: var(--teal); color: #04211c; font: 700 9px/14px ui-sans-serif; text-align: center; padding: 0 2px;
+    background: var(--teal); color: var(--on-accent); font: 700 9px/14px ui-sans-serif; text-align: center; padding: 0 2px;
   }
   #filterMenu { min-width: 190px; }
   #filterMenu .dd-item.sel { background: var(--teal-dim); color: var(--teal); }
@@ -245,7 +267,7 @@
   #sessionList { flex: 1; overflow-y: auto; padding: 0 .5rem .6rem; }
   .sessionItem { position: relative; padding: .5rem .6rem; border-radius: 10px; cursor: pointer; margin-bottom: 2px; transition: filter .15s, opacity .15s; }
   .sessionItem:hover { background: var(--panel-2); }
-  /* hover: vetro sfocato sulla riga + i due tasti (concludi / preferito) */
+  /* hover: frosted glass over the row + the two buttons (done / favorite) */
   .sessionItem .acts {
     position: absolute; inset: 0; display: none; align-items: center; justify-content: flex-end;
     gap: .25rem; padding: 0 .5rem; border-radius: 10px; z-index: 2;
@@ -259,15 +281,15 @@
     padding: .25rem .4rem; transition: color .12s, border-color .12s, background .12s;
   }
   .sessionItem .acts button:hover { background: var(--panel); color: var(--fg); }
-  .sessionItem .acts .fav.on, .sessionItem .acts .fav:hover { color: #e2557b; }
+  .sessionItem .acts .fav.on, .sessionItem .acts .fav:hover { color: var(--fav); }
   .sessionItem .acts .doneBtn.on, .sessionItem .acts .doneBtn:hover { color: var(--teal); }
-  /* chat conclusa: spenta, testo scuro, in fondo alla lista */
+  /* done chat: dimmed, muted text, at the bottom of the list */
   .sessionItem.done { opacity: .55; }
   .sessionItem.done .lbl, .sessionItem.done .title { color: var(--faint); }
   .sessionItem.done .meta, .sessionItem.done .proj { color: var(--faint); opacity: .6; }
   .sessionItem.done .meta .logo { filter: grayscale(1); opacity: .6; }
   .sessionItem.done:hover { opacity: .85; }
-  /* chat attiva (non conclusa): pallino verde discreto prima del titolo */
+  /* active (not done) chat: discreet green dot before the title */
   .sessionItem .liveDot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); opacity: .75; }
   .sessionItem .reopened { flex: none; font-size: .6rem; text-transform: uppercase; letter-spacing: .06em;
     color: var(--teal); border: 1px solid var(--hair); border-radius: 6px; padding: 0 .25rem; }
@@ -277,7 +299,7 @@
   .sessionItem .meta { display: flex; gap: .35rem; align-items: center; margin-top: .15rem; font-size: .7rem; color: var(--faint); }
   .sessionItem .meta .logo { width: 13px; height: 13px; border-radius: 4px; }
   .sessionItem .meta .logo svg { width: 13px; height: 13px; }
-  /* intestazioni dei gruppi nella lista chat (giorno / progetto / modello) */
+  /* group headers in the chat list (day / project / model) */
   .sessGroup {
     display: flex; align-items: center; gap: .4rem; padding: .55rem .6rem .25rem;
     font-size: .67rem; text-transform: uppercase; letter-spacing: .09em; color: var(--faint);
@@ -285,14 +307,14 @@
   .sessGroup::after { content: ''; flex: 1; height: 1px; background: var(--line); }
   .sessionItem .proj { color: var(--teal); opacity: .8; max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sessionItem .title { display: flex; align-items: center; gap: .4rem; }
-  /* in elaborazione: punto rosso che appare e scompare */
-  .sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #e2557b;
-    box-shadow: 0 0 6px #e2557b80; animation: pulse 1.4s ease-in-out infinite; }
+  /* running: red dot fading in and out */
+  .sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--fav);
+    box-shadow: 0 0 6px var(--fav-glow); animation: pulse 1.4s ease-in-out infinite; }
   .sessionItem .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* cuoricino sempre visibile quando è un preferito (fuori dal pannello hover) */
-  .sessionItem .favMark { margin-left: auto; flex: none; font-size: .8rem; color: #e2557b; }
+  /* heart always visible on a favorite (outside the hover panel) */
+  .sessionItem .favMark { margin-left: auto; flex: none; font-size: .8rem; color: var(--fav); }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
-  .side-foot { border-top: 1px solid var(--line); background: linear-gradient(180deg, transparent, #00000026); padding: .5rem .6rem; display: flex; align-items: center; gap: .3rem; font-size: .78rem; }
+  .side-foot { border-top: 1px solid var(--line); background: linear-gradient(180deg, transparent, var(--sunken)); padding: .5rem .6rem; display: flex; align-items: center; gap: .3rem; font-size: .78rem; }
   #conn { font-size: .7rem; color: var(--faint); display: flex; align-items: center; gap: .35rem; }
   #conn .d { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
   #conn.off .d { background: var(--crit); }
@@ -301,7 +323,7 @@
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
   header {
     display: flex; align-items: center; gap: .45rem; padding: .5rem .8rem;
-    border-bottom: 1px solid var(--line); background: var(--head-bg); box-shadow: 0 1px 0 #00000026, inset 0 1px 0 var(--hair); backdrop-filter: blur(10px); z-index: 5;
+    border-bottom: 1px solid var(--line); background: var(--head-bg); box-shadow: 0 1px 0 var(--sunken), inset 0 1px 0 var(--hair); backdrop-filter: blur(10px); z-index: 5;
     min-width: 0;
   }
   /* NB: no `overflow:hidden` here — it would clip the .dd-menu dropdowns, which
@@ -332,7 +354,7 @@
     min-width: 17px; height: 17px; border-radius: 9px; display: grid; place-items: center;
     background: var(--teal-dim); color: var(--teal); font: 700 10.5px/1 ui-sans-serif; padding: 0 .3rem;
   }
-  #gitChip .count.warn { background: #fbbf2422; color: var(--warn); }
+  #gitChip .count.warn { background: var(--warn-dim); color: var(--warn); }
   /* settings nav: replaces the chat list inside the sidebar */
   #settingsNav { display: none; flex: 1; overflow-y: auto; padding: .6rem .5rem; flex-direction: column; gap: 2px; }
   #sidebar.mode-settings #settingsNav { display: flex; }
@@ -381,17 +403,18 @@
   .logo { width: 17px; height: 17px; border-radius: 5px; flex-shrink: 0; display: grid; place-items: center; overflow: hidden; }
   .logo svg { width: 17px; height: 17px; }
   .logo.lg, .logo.lg svg { width: 23px; height: 23px; border-radius: 7px; }
-  /* tema loghi monocromatico: stesso glifo, niente colori di brand */
-  /* .logo.fixed = anteprime nelle card di scelta: restano com'erano, servono a
-     mostrare la differenza fra le due opzioni e non seguono il tema attivo */
+  /* monochrome logo theme: same glyph, no brand colours */
+  /* .logo.fixed = previews inside the picker cards: they stay as they are, they
+     exist to show the difference between the two options and do not follow the
+     active theme */
   [data-logo="mono"] .logo:not(.fixed) { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
   .logoStyleCard[data-l="mono"] .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
 
-  /* sotto-menu dei modelli: provider a sinistra, modelli in un flyout laterale */
+  /* model submenu: providers on the left, models in a side flyout */
   .dd-sub { position: relative; }
   .dd-sub > .dd-item .caret { margin-left: auto; opacity: .6; }
-  /* fixed, non absolute: il menu padre ha overflow:auto e ritaglierebbe il flyout.
-     Resta attaccato al bordo del menu provider, come una sua estensione. */
+  /* fixed, not absolute: the parent menu has overflow:auto and would clip the
+     flyout. It stays glued to the provider menu edge, like an extension of it. */
   .dd-flyout {
     position: fixed; z-index: 200; min-width: 300px; max-height: 60vh; overflow-y: auto; padding: .35rem;
     background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 0 14px 14px 0;
@@ -400,9 +423,9 @@
   .dd-flyout.flip { border-radius: 14px 0 0 14px; box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); }
   .dd-flyout.on { display: block; }
   .dd-sub.open > .dd-item { background: var(--panel-3); }
-  .dd-sub > .dd-item.hasSel { box-shadow: inset 0 0 0 1px #2fe0c044; }
+  .dd-sub > .dd-item.hasSel { box-shadow: inset 0 0 0 1px var(--accent-line); }
 
-  /* cartelle recenti nel menu della cartella di lavoro */
+  /* recent folders inside the working-folder menu */
   .recentBox { margin-top: .55rem; border-top: 1px solid var(--line); padding-top: .45rem; }
   .recentHead {
     display: flex; align-items: center; gap: .4rem; width: 100%; padding: .3rem .2rem;
@@ -441,7 +464,7 @@
     background: var(--chat-bg);
   }
   #chat { max-width: 960px; margin: 0 auto; padding: 1.6rem 1.2rem 2rem; display: flex; flex-direction: column; gap: 1.5rem; position: relative; transition: max-width .18s; }
-  /* a sidebar chiusa il testo prende ancora più spazio */
+  /* with the sidebar closed the text gets even more room */
   body.sb-closed #chat { max-width: 1150px; }
   /* every turn is left-aligned: chat feel without boxes */
   .turn { display: grid; grid-template-columns: 30px 1fr; gap: .7rem; }
@@ -450,7 +473,7 @@
     font-size: 12px; font-weight: 700; margin-top: .1rem;
   }
   .turn.user .avatar { background: var(--panel-3); color: var(--txt-dim); border: 1px solid var(--line-2); box-shadow: inset 0 1px 0 var(--hair); }
-  .turn.pi .avatar { background: linear-gradient(150deg, var(--teal), #12a894); color: #03211c; }
+  .turn.pi .avatar { background: var(--accent-grad); color: var(--on-accent); }
   /* assistant turn with a real provider logo instead of the π tile */
   .turn.pi .avatar.hasLogo { background: none; border: 1px solid var(--line-2); padding: 0; }
   .turn.pi .avatar .logo { width: 20px; height: 20px; }
@@ -474,7 +497,7 @@
   .msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
   .msg.md a { color: var(--teal); }
   .msg img { max-width: 240px; border-radius: 10px; display: block; margin: .4rem 0; border: 1px solid var(--line); }
-  /* immagini allegate: miniature compatte SOPRA il testo del messaggio */
+  /* attached images: compact thumbnails ABOVE the message text */
   .media { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .45rem; }
   .media img {
     height: 96px; width: auto; max-width: 160px; object-fit: cover; margin: 0;
@@ -499,11 +522,11 @@
   }
   .codeBox:hover .codeCopyBtn { opacity: 1; }
   .codeCopyBtn:hover { color: var(--txt); border-color: var(--teal); }
-  .codeCopyBtn.copied { color: var(--teal); border-color: #2fe0c055; }
+  .codeCopyBtn.copied { color: var(--teal); border-color: var(--accent-line); }
   .thinking { color: var(--faint); font-style: italic; font-size: .85rem; white-space: pre-wrap; }
-  .tool { display: inline-flex; align-items: center; gap: .4rem; font: 11.5px ui-monospace, monospace; color: #9d8bff; }
+  .tool { display: inline-flex; align-items: center; gap: .4rem; font: 11.5px ui-monospace, monospace; color: var(--tool-nm); }
   .sys { font-size: .78rem; color: var(--faint); }
-  /* errori: mai confondibili con un messaggio di sistema qualunque */
+  /* errors: never mistakable for a plain system message */
   .msg.sys.err { color: var(--crit); font-weight: 600; }
   .filechip {
     display: inline-flex; align-items: center; gap: .35rem; font: 11.5px ui-monospace, monospace;
@@ -516,8 +539,8 @@
   #hero p { color: var(--txt-dim); margin: 0 0 1.4rem; font-size: .9rem; }
   #hero p code { background: var(--panel-2); padding: .1rem .4rem; border-radius: 6px; font-size: .85em; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; }
-  .sugg { text-align: left; padding: .75rem .85rem; border-radius: 13px; border: 1px solid var(--line); background: linear-gradient(160deg, #0d141b, #0a0f15); transition: .15s; }
-  .sugg:hover { border-color: #2fe0c055; transform: translateY(-1px); }
+  .sugg { text-align: left; padding: .75rem .85rem; border-radius: 13px; border: 1px solid var(--line); background: var(--card-bg); transition: .15s; }
+  .sugg:hover { border-color: var(--accent-line); transform: translateY(-1px); }
   .sugg .tag { display: inline-block; font-size: .72rem; padding: .1rem .45rem; border-radius: 6px; margin-bottom: .35rem; }
   .sugg .d { font-size: .78rem; color: var(--faint); }
 
@@ -552,7 +575,7 @@
   .thumb .file { display: flex; align-items: center; gap: .4rem; height: 54px; padding: 0 .6rem; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 9px; font-size: .76rem; max-width: 190px; }
   .thumb .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .thumb .x { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel-3); border: 1px solid var(--line-2); font-size: 11px; line-height: 1; display: grid; place-items: center; }
-  .thumb .x:hover { background: #3a1e21; }
+  .thumb .x:hover { background: var(--danger-bg); }
 
   /* ---------- settings view ---------- */
   #settingsView { flex: 1; overflow-y: auto; }
@@ -629,7 +652,7 @@
   .themeCard .sw-row { display: flex; gap: .25rem; margin-bottom: .45rem; }
   .themeCard .sw-row i { width: 100%; height: 22px; border-radius: 6px; display: block; }
   .themeCard .nm { font-size: .82rem; }
-  /* anteprima dei loghi dei provider nelle due varianti */
+  /* preview of the provider logos in both variants */
   .logoStyleCard .prev { display: flex; gap: .3rem; margin-bottom: .45rem; }
   .logoStyleCard[data-l="mono"] .prev .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
 
@@ -640,8 +663,7 @@
     padding: .4rem .6rem; font: 400 12px var(--font-mono); color: var(--txt-dim);
   }
   .toolHead:hover { background: var(--panel-3); }
-  .toolHead .nm { color: #9d8bff; font-weight: 600; }
-  [data-theme="daylight"] .toolHead .nm { color: #6d28d9; }
+  .toolHead .nm { color: var(--tool-nm); font-weight: 600; }
   .toolHead .sm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
   .toolHead .st { font-size: 11px; }
   .toolHead .st.err { color: var(--crit); }
@@ -658,10 +680,10 @@
   /* ---------- lightbox immagini ---------- */
   #lightbox {
     position: fixed; inset: 0; z-index: 400; display: none; place-items: center;
-    background: #000000d8; backdrop-filter: blur(6px); padding: 3rem;
+    background: var(--scrim-strong); backdrop-filter: blur(6px); padding: 3rem;
   }
   #lightbox.on { display: grid; }
-  #lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: 0 30px 90px #000; }
+  #lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: var(--elev-3); }
   #lightboxClose {
     position: absolute; top: 1rem; right: 1.2rem; width: 40px; height: 40px; border-radius: 50%;
     display: grid; place-items: center; font-size: 1.2rem; color: var(--txt);
@@ -669,19 +691,19 @@
   }
   #lightboxClose:hover { border-color: var(--crit); color: var(--crit); }
 
-  /* ---------- pannello scorciatoie (tieni premuto Shift) ---------- */
-  /* è lo SFONDO a essere sfocato; il pannello mostra tutte le scorciatoie in una
-     schermata sola, senza barre di scorrimento */
+  /* ---------- shortcuts panel (hold Shift) ---------- */
+  /* it is the BACKDROP that gets blurred; the panel shows every shortcut on a
+     single screen, with no scrollbars */
   #shortcuts {
     position: fixed; inset: 0; z-index: 380; display: none; place-items: center;
-    background: #04070a4d; backdrop-filter: blur(5px); animation: scFade .14s ease-out;
+    background: var(--scrim); backdrop-filter: blur(5px); animation: scFade .14s ease-out;
   }
   #shortcuts.on { display: grid; }
   @keyframes scFade { from { opacity: 0 } to { opacity: 1 } }
   #shortcuts .panel {
     width: min(760px, 92vw); max-height: 92vh; padding: 1.4rem 1.6rem; border-radius: 22px; overflow: hidden;
-    background: linear-gradient(165deg, #0e1620f2, #0a0e14f2);
-    border: 1px solid #ffffff1a; box-shadow: 0 30px 90px #000c, inset 0 1px 0 #ffffff12;
+    background: var(--card-bg);
+    border: 1px solid var(--line-2); box-shadow: var(--elev-3), inset 0 1px 0 var(--hair);
     animation: scIn .16s ease-out;
   }
   @keyframes scIn { from { opacity: 0; transform: scale(.97) } to { opacity: 1; transform: none } }
@@ -699,10 +721,10 @@
   #drop .box { border: 2px dashed var(--teal); border-radius: 20px; padding: 2.4rem 3.4rem; text-align: center; background: var(--panel-2); }
   #drop .box b { display: block; font-size: 1.1rem; margin-bottom: .3rem; }
   #toasts { position: fixed; bottom: 1rem; right: 1rem; z-index: 300; display: flex; flex-direction: column; gap: .5rem; }
-  .toast { background: var(--panel-2); border: 1px solid var(--line-2); border-left: 3px solid var(--crit); border-radius: 10px; padding: .55rem .8rem; font-size: .82rem; max-width: 380px; box-shadow: 0 10px 30px #0008; }
+  .toast { background: var(--panel-2); border: 1px solid var(--line-2); border-left: 3px solid var(--crit); border-radius: 10px; padding: .55rem .8rem; font-size: .82rem; max-width: 380px; box-shadow: var(--elev-2); }
   .toast.ok { border-left-color: var(--teal); }
 
-  /* ---------- tasks panel (chat/agenti in background) ---------- */
+  /* ---------- tasks panel (background chats/agents) ---------- */
   #tasksPanel { width: 0; flex-shrink: 0; overflow: hidden; background: var(--side-bg); border-left: 1px solid var(--line); transition: width .18s; display: flex; flex-direction: column; }
   #tasksPanel.open { width: 32%; min-width: 300px; }
   #tasksHead { padding: .6rem .8rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
@@ -726,12 +748,12 @@
   #fileList { overflow-y: auto; max-height: 32%; border-bottom: 1px solid var(--line); padding: .3rem; }
   .fileItem { padding: .35rem .5rem; border-radius: 8px; font: 400 12px var(--font-mono); cursor: pointer; display: flex; justify-content: space-between; gap: .5rem; }
   .fileItem:hover, .fileItem.active { background: var(--panel-3); }
-  .fileItem .b { color: #9d8bff; }
+  .fileItem .b { color: var(--tool-nm); }
   #diffBody { flex: 1; overflow: auto; padding: .6rem; font: 400 12px var(--font-mono); }
   .hunk { margin-bottom: .8rem; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   .diffline { white-space: pre-wrap; padding: 0 .5rem; }
-  .diffline.del { background: #2a1418; color: #ff9b93; }
-  .diffline.add { background: #0f2a1d; color: #7ee7a5; }
+  .diffline.del { background: var(--danger-bg); color: var(--danger-txt); }
+  .diffline.add { background: var(--diff-add-bg); color: var(--diff-add-txt); }
 
   /* ================= MOBILE OPTIMIZATIONS ================= */
   #sidebarBackdrop { display: none; }
@@ -746,11 +768,11 @@
     /* sidebar becomes a slide-over drawer above content */
     #sidebar {
       position: fixed; top: 0; left: 50px; height: 100dvh; z-index: 150;
-      width: min(84vw, 300px); box-shadow: 10px 0 40px #000b; transition: transform .2s, width 0s;
+      width: min(84vw, 300px); box-shadow: var(--elev-3); transition: transform .2s, width 0s;
     }
     #sidebar.collapsed { width: min(84vw, 300px); transform: translateX(-110%); border-right: 1px solid var(--line); }
     #sidebarBackdrop {
-      position: fixed; inset: 0; left: 50px; background: #000a; z-index: 140; display: none;
+      position: fixed; inset: 0; left: 50px; background: var(--scrim); z-index: 140; display: none;
     }
     #sidebar:not(.collapsed) ~ #sidebarBackdrop { display: block; }
 
@@ -813,26 +835,26 @@
 
 <!-- ============ ICON RAIL ============ -->
 <nav id="rail">
-  <button class="logo-tile" id="homeBtn" title="Torna alla schermata iniziale (nuova chat)">π</button>
+  <button class="logo-tile" id="homeBtn" title="Back to the home screen (new chat)">π</button>
   <button class="rail-btn on" id="navChat" title="Chat">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
   </button>
-  <button class="rail-btn" id="navSettings" title="Modelli e opzioni di pi">
+  <button class="rail-btn" id="navSettings" title="pi models and options">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" transform="translate(1.5 1.5) scale(.88)"/></svg>
   </button>
-  <button class="rail-btn" id="navDiff" title="File modificati">
+  <button class="rail-btn" id="navDiff" title="Changed files">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
     <span class="count hide" id="diffCount">0</span>
   </button>
-  <button class="rail-btn" id="navTasks" title="Attività in background (chat e agenti aperti)">
+  <button class="rail-btn" id="navTasks" title="Background activity (open chats and agents)">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
     <span class="count hide" id="tasksCount">0</span>
   </button>
   <span style="flex:1"></span>
-  <button class="rail-btn" id="restartBtn" title="Riavvia il server locale pi-web-ui">
+  <button class="rail-btn" id="restartBtn" title="Restart the local pi-web-ui server">
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
   </button>
-  <button class="rail-btn" id="quit" title="Spegni il server locale pi-web-ui">
+  <button class="rail-btn" id="quit" title="Shut down the local pi-web-ui server">
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v9"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
   </button>
 </nav>
@@ -842,43 +864,43 @@
   <div class="side-pad">
     <button class="btn outline" id="newSessionBtn" style="justify-content:center">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      Nuova chat
+      New chat
     </button>
     <div class="search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
-      <input id="sessionSearch" placeholder="Cerca nelle chat…">
+      <input id="sessionSearch" placeholder="Search chats…">
     </div>
     <div class="filters">
       <div class="dd" id="filterDd">
-        <button class="btn icon" id="filterBtn" title="Filtra le chat">
+        <button class="btn icon" id="filterBtn" title="Filter chats">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
           <span class="count hide" id="filterCount">0</span>
         </button>
         <div class="dd-menu" id="filterMenu">
-          <div class="dd-group">Stato</div>
-          <button type="button" class="dd-item" data-filter="status" data-val="all">Tutte</button>
-          <button type="button" class="dd-item" data-filter="status" data-val="active">Attive</button>
-          <button type="button" class="dd-item" data-filter="status" data-val="done">Concluse</button>
-          <button type="button" class="dd-item" data-filter="status" data-val="favorite">Preferiti</button>
-          <div class="dd-group">Periodo</div>
-          <button type="button" class="dd-item" data-filter="period" data-val="all">Tutte</button>
-          <button type="button" class="dd-item" data-filter="period" data-val="today">Oggi</button>
-          <button type="button" class="dd-item" data-filter="period" data-val="week">Questa settimana</button>
-          <button type="button" class="dd-item" data-filter="period" data-val="month">Questo mese</button>
+          <div class="dd-group">Status</div>
+          <button type="button" class="dd-item" data-filter="status" data-val="all">All</button>
+          <button type="button" class="dd-item archiveOnly" data-filter="status" data-val="active">Active</button>
+          <button type="button" class="dd-item archiveOnly" data-filter="status" data-val="done">Done</button>
+          <button type="button" class="dd-item" data-filter="status" data-val="favorite">Favorites</button>
+          <div class="dd-group">Period</div>
+          <button type="button" class="dd-item" data-filter="period" data-val="all">All</button>
+          <button type="button" class="dd-item" data-filter="period" data-val="today">Today</button>
+          <button type="button" class="dd-item" data-filter="period" data-val="week">This week</button>
+          <button type="button" class="dd-item" data-filter="period" data-val="month">This month</button>
         </div>
       </div>
-      <select id="sortFilter" title="Ordina">
-        <option value="recent">Recenti</option>
-        <option value="old">Vecchie</option>
-        <option value="msgs">Più messaggi</option>
+      <select id="sortFilter" title="Sort">
+        <option value="recent">Newest</option>
+        <option value="old">Oldest</option>
+        <option value="msgs">Most messages</option>
       </select>
     </div>
     <div class="filters">
-      <select id="groupFilter" title="Raggruppa le chat">
-        <option value="none">Nessun raggruppamento</option>
-        <option value="day">Per giorno</option>
-        <option value="project">Per progetto</option>
-        <option value="model">Per modello</option>
+      <select id="groupFilter" title="Group chats">
+        <option value="none">No grouping</option>
+        <option value="day">By day</option>
+        <option value="project">By project</option>
+        <option value="model">By model</option>
       </select>
     </div>
   </div>
@@ -886,34 +908,34 @@
   <div id="sessionList"></div>
   <div id="settingsNav"></div>
   <div class="side-foot">
-    <span id="conn"><span class="d"></span><span id="connTxt">connesso</span></span>
+    <span id="conn"><span class="d"></span><span id="connTxt">connected</span></span>
     <span style="flex:1"></span>
-    <button class="btn icon" id="sidebarToggle" title="Nascondi barra laterale">
+    <button class="btn icon" id="sidebarToggle" title="Hide sidebar">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>
     </button>
   </div>
-  <div id="sidebarResize" title="Trascina per ridimensionare la barra laterale"></div>
+  <div id="sidebarResize" title="Drag to resize the sidebar"></div>
 </aside>
 <div id="sidebarBackdrop"></div>
 
 <!-- ============ MAIN ============ -->
 <div id="main">
   <header>
-    <button class="btn icon" id="sidebarShow" title="Mostra barra laterale">
+    <button class="btn icon" id="sidebarShow" title="Show sidebar">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
     </button>
 
     <div class="dd" id="modelDd">
       <button class="chip" id="modelBtn">
         <span class="logo" id="modelLogo"></span>
-        <span id="modelName">modello…</span>
+        <span id="modelName">model…</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
       </button>
       <div class="dd-menu" id="modelMenu"></div>
     </div>
 
     <div class="dd" id="thinkDd">
-      <button class="chip" id="thinkBtn" title="Livello di reasoning (solo quelli supportati dal modello)">
+      <button class="chip" id="thinkBtn" title="Reasoning level (only the ones the model supports)">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3a6 6 0 0 0-3.5 10.9c.5.4.8 1 .8 1.6v.5h5.4v-.5c0-.6.3-1.2.8-1.6A6 6 0 0 0 12 3z"/><path d="M10 20h4"/></svg>
         <span id="thinkName">reasoning</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
@@ -922,27 +944,27 @@
     </div>
 
     <div class="dd" id="cwdDd">
-      <button class="chip" id="cwdChip" title="Cartella di lavoro dell'agente">
+      <button class="chip" id="cwdChip" title="Agent working folder">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         <span id="cwdLabel">…</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
       </button>
       <div class="dd-menu" id="cwdMenu">
-        <div class="hint" id="cwdHint">Cartella di lavoro: l'agente legge e modifica i file al suo interno. La scegli qui prima di iniziare la chat.</div>
-        <input id="cwdInput" spellcheck="false" placeholder="C:\percorso\progetto">
+        <div class="hint" id="cwdHint">Working folder: the agent reads and edits the files inside it. You pick it here before starting the chat.</div>
+        <input id="cwdInput" spellcheck="false" placeholder="C:\path\to\project">
         <div class="row" id="cwdEditRow">
-          <button class="btn outline" id="browseBtn">Sfoglia…</button>
+          <button class="btn outline" id="browseBtn">Browse…</button>
           <span style="flex:1"></span>
           <span class="sys" id="cwdMsg"></span>
-          <button class="btn teal" id="cwdApply">Imposta cartella</button>
+          <button class="btn teal" id="cwdApply">Set folder</button>
         </div>
         <div class="row">
-          <button class="btn outline" id="explorerBtn" title="Apri questa cartella in Esplora risorse">Apri in Explorer</button>
+          <button class="btn outline" id="explorerBtn" title="Open this folder in the system file manager">Open folder</button>
         </div>
         <div class="recentBox" id="recentBox">
           <button type="button" class="recentHead" id="recentHead">
             <svg class="arw" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>
-            <span>Cartelle recenti</span>
+            <span>Recent folders</span>
             <span style="flex:1"></span>
             <span class="sys" id="recentCount"></span>
           </button>
@@ -951,7 +973,7 @@
       </div>
     </div>
 
-    <button class="chip" id="terminalBtn" title="Apri PowerShell in questa cartella e avvia pi">
+    <button class="chip" id="terminalBtn" title="Open a terminal in this folder and run pi">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
     </button>
 
@@ -964,14 +986,14 @@
     <span class="spacer"></span>
     <div id="runState">
       <span class="pulse"></span>
-      <button class="btn outline" id="abort" title="Ferma la risposta in corso">
+      <button class="btn outline" id="abort" title="Stop the response in progress">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-        Interrompi risposta
+        Stop response
       </button>
     </div>
-    <div id="ctxBar" title="Utilizzo contesto"><div id="ctxFill"></div></div>
+    <div id="ctxBar" title="Context usage"><div id="ctxFill"></div></div>
     <div class="dd" id="statsDd">
-      <button id="stats" title="Token e costo di questa chat — clicca per il dettaglio per modello"></button>
+      <button id="stats" title="Tokens and cost of this chat — click for the per-model breakdown"></button>
       <div class="dd-menu" id="statsMenu"></div>
     </div>
   </header>
@@ -984,19 +1006,19 @@
         <div class="cmdMenu" id="cmdMenu"></div>
         <div class="composer-top">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6z"/><path d="M18.5 14l.8 2.7 2.7.8-2.7.8-.8 2.7-.8-2.7-2.7-.8 2.7-.8z" opacity=".7"/></svg>
-          <span id="composerCtx">pronto</span>
+          <span id="composerCtx">ready</span>
         </div>
         <div id="attachments"></div>
-        <textarea id="input" rows="1" placeholder="Chiedimi qualsiasi cosa…  (trascina qui file e immagini)"></textarea>
+        <textarea id="input" rows="1" placeholder="Ask me anything…  (drop files and images here)"></textarea>
         <div class="composer-bar">
           <input type="file" id="fileInput" multiple hidden>
           <button type="button" class="chip" id="attachBtn">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12.5 12.5 21a5 5 0 0 1-7-7l8-8a3.5 3.5 0 1 1 5 5l-8 8a2 2 0 1 1-3-3l7.5-7.5"/></svg>
-            Allega file
+            Attach file
           </button>
           <span class="composer-hint">
-            <span><span class="kbd">Ctrl</span>+<span class="kbd">Invio</span> invia</span>
-            <span><span class="kbd">Invio</span> a capo</span>
+            <span><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> to send</span>
+            <span><span class="kbd">Enter</span> for a new line</span>
           </span>
           <span id="usageWidget" title="">
             <b id="usageWidgetLabel"></b>
@@ -1005,7 +1027,7 @@
             <div class="bar hide" id="usageWidgetBar2"><i></i></div>
             <span class="txt hide" id="usageWidgetTxt2"></span>
           </span>
-          <button type="submit" class="btn teal" id="sendBtn" title="Invia (Ctrl+Invio)">
+          <button type="submit" class="btn teal" id="sendBtn" title="Send (Ctrl+Enter)">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
           </button>
         </div>
@@ -1016,10 +1038,10 @@
   <!-- settings view -->
   <div id="settingsView" class="hide grid-bg">
     <div class="settings-inner">
-      <h2>Modelli e opzioni di pi</h2>
-      <p class="lead">Configurazione letta da <code id="agentDir">~/.pi/agent</code> — condivisa con la CLI di pi.</p>
-      <div class="card" id="analytics"><div class="sys">Caricamento analisi costi…</div></div>
-      <div id="settingsBody"><div class="sys">Caricamento…</div></div>
+      <h2>pi models and options</h2>
+      <p class="lead">Configuration read from <code id="agentDir">~/.pi/agent</code> — shared with the pi CLI.</p>
+      <div class="card" id="analytics"><div class="sys">Loading cost analytics…</div></div>
+      <div id="settingsBody"><div class="sys">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -1027,39 +1049,39 @@
 <!-- ============ DIFF PANEL ============ -->
 <div id="diffPanel">
   <div id="diffHead">
-    <strong>File modificati</strong><span style="flex:1"></span>
+    <strong>Changed files</strong><span style="flex:1"></span>
     <button class="btn icon" id="diffClose">✕</button>
   </div>
   <div id="fileList"></div>
-  <div id="diffBody"><div class="sys" style="padding:.5rem">Seleziona un file</div></div>
+  <div id="diffBody"><div class="sys" style="padding:.5rem">Select a file</div></div>
 </div>
 
 <!-- ============ TASKS PANEL (background) ============ -->
 <div id="tasksPanel">
   <div id="tasksHead">
-    <strong>Processi in background</strong><span class="sm" style="color:var(--txt-dim)">(questa chat)</span><span style="flex:1"></span>
-    <button class="btn icon" id="tasksRefresh" title="Rimuovi i task completati">Pulisci</button>
+    <strong>Background processes</strong><span class="sm" style="color:var(--txt-dim)">(this chat)</span><span style="flex:1"></span>
+    <button class="btn icon" id="tasksRefresh" title="Remove completed tasks">Clear</button>
     <button class="btn icon" id="tasksClose">✕</button>
   </div>
-  <div id="tasksBody"><div class="sys" style="padding:.6rem">Caricamento…</div></div>
+  <div id="tasksBody"><div class="sys" style="padding:.6rem">Loading…</div></div>
 </div>
 
-<!-- ============ LIGHTBOX IMMAGINI ============ -->
+<!-- ============ IMAGE LIGHTBOX ============ -->
 <div id="lightbox">
-  <button id="lightboxClose" title="Chiudi (Esc)">✕</button>
+  <button id="lightboxClose" title="Close (Esc)">✕</button>
   <img id="lightboxImg" alt="">
 </div>
 
-<!-- ============ SCORCIATOIE (tieni premuto Shift) ============ -->
+<!-- ============ SHORTCUTS (hold Shift) ============ -->
 <div id="shortcuts">
   <div class="panel">
-    <h3>Scorciatoie da tastiera</h3>
-    <p class="lead">Tieni premuto <span class="kbd">Shift</span> per rivedere questo pannello · rilascia per chiuderlo</p>
+    <h3>Keyboard shortcuts</h3>
+    <p class="lead">Hold <span class="kbd">Shift</span> to bring this panel back · release to close it</p>
     <div class="grid" id="shortcutsGrid"></div>
   </div>
 </div>
 
-<div id="drop"><div class="box"><b>Rilascia qui</b><span style="color:var(--txt-dim)">immagini e file di testo verranno allegati al prompt</span></div></div>
+<div id="drop"><div class="box"><b>Drop here</b><span style="color:var(--txt-dim)">images and text files will be attached to the prompt</span></div></div>
 <div id="toasts"></div>
 
 <script>
@@ -1070,11 +1092,11 @@ let currentAssistant = null, currentThinking = null, currentTurn = null;
 const state = { cwd: '', model: null, thinking: 'off', thinkingLevels: ['off'], streaming: false, turnModel: null };
 
 /* ---------------- per-tab chat binding ----------------
-   Ogni scheda è legata a UNA chat (la sua "session key" = path del file di
-   sessione). Sta in sessionStorage (indipendente per scheda) e nell'hash
-   dell'URL, così una scheda si può duplicare/riaprire sulla stessa chat.
-   Il server tiene viva la chat anche quando nessuna scheda la guarda: uscire
-   da una chat non interrompe più niente. */
+   Every tab is bound to ONE chat (its "session key" = the session file path).
+   It lives in sessionStorage (per-tab) and in the URL hash, so a tab can be
+   duplicated/reopened on the same chat.
+   The server keeps the chat alive even when no tab is watching it: leaving a
+   chat no longer interrupts anything. */
 let sessionKey = null;
 try {
   const h = new URLSearchParams(location.hash.slice(1)).get('s');
@@ -1084,7 +1106,7 @@ function setSessionKey(k, { reconnect = true } = {}) {
   if (!k || k === sessionKey) { if (k) currentSessionPath = k; return; }
   sessionKey = k;
   currentSessionPath = k;
-  resetTasks();                    // i task in background sono per-chat
+  resetTasks();                    // background tasks are per-chat
   try { sessionStorage.setItem('piSessionKey', k); } catch {}
   history.replaceState(null, '', '#s=' + encodeURIComponent(k));
   if (reconnect) connect();
@@ -1093,15 +1115,18 @@ function setSessionKey(k, { reconnect = true } = {}) {
 if (window.marked) marked.setOptions({ breaks: true, gfm: true });
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const fmt = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(Math.round(n ?? 0));
+// amounts below $1 need 4 decimals to stay readable, above it 2 are enough
+const money = (n) => { const v = n ?? 0; return '$' + (v < 1 ? v.toFixed(4) : v.toFixed(2)); };
 const atBottom = () => chatWrap.scrollHeight - chatWrap.scrollTop - chatWrap.clientHeight < 90;
 const scrollDown = () => { chatWrap.scrollTop = chatWrap.scrollHeight; };
 
+const TOAST_LIFETIME_MS = 6000;
 function toast(msg, ok = false) {
   const t = document.createElement('div');
   t.className = 'toast' + (ok ? ' ok' : '');
   t.textContent = msg;
   $('toasts').appendChild(t);
-  setTimeout(() => t.remove(), 6000);
+  setTimeout(() => t.remove(), TOAST_LIFETIME_MS);
 }
 // every call goes through here: errors are always surfaced, never silent
 const withKey = (url) =>
@@ -1121,12 +1146,12 @@ async function api(url, opts) {
 const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
 
 /* ---------------- provider logos ----------------
-   Glifi minimali su una griglia 24x24, tutti con lo stesso peso ottico.
-   Il colore non è mai scritto nell'SVG (currentColor + background inline), così
-   il tema "mono" delle impostazioni può spegnere i colori di brand via CSS. */
+   Minimal glyphs on a 24x24 grid, all with the same optical weight.
+   The colour is never baked into the SVG (currentColor + inline background), so
+   the "mono" theme in settings can turn brand colours off via CSS. */
 const LOGOS = {
   anthropic: { bg: '#d97757', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.6 5h-3.2L5.2 19h2.9l1.1-3.1h5.6L15.9 19h2.9zM10.1 13.4 12 8.2l1.9 5.2z"/></svg>' },
-  // logo ufficiale OpenAI (nodo), path da Simple Icons
+  // official OpenAI logo (knot), path from Simple Icons
   openai:    { bg: '#0b0b0b', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>' },
   google:    { bg: '#f4f6fa', fg: '#4285f4', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2c.6 4.4 4.4 8.2 8.8 8.8-4.4.6-8.2 4.4-8.8 8.8-.6-4.4-4.4-8.2-8.8-8.8 4.4-.6 8.2-4.4 8.8-8.8z"/></svg>' },
   kimi:      { bg: '#0f0f0f', fg: '#00e5a0', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 5v14"/><path d="M17 5.5 8.6 12 17 18.5"/></svg>' },
@@ -1156,11 +1181,11 @@ const logoHtml = (p, id, cls = '') => {
   const l = logoFor(p, id);
   return `<span class="logo ${cls}" style="background:${l.bg};color:${l.fg}">${l.svg}</span>`;
 };
-// tema dei loghi: 'brand' (colori dei provider) o 'mono' (monocromatici) — il
-// CSS fa l'override, quindi cambiare tema non richiede di ridisegnare nulla
+// logo theme: 'brand' (provider colours) or 'mono' (monochrome) — the CSS does
+// the override, so switching theme never requires a repaint of the markup
 const LOGO_STYLES = [
-  { id: 'brand', name: 'Colori del provider' },
-  { id: 'mono', name: 'Monocromatici' },
+  { id: 'brand', name: 'Provider colours' },
+  { id: 'mono', name: 'Monochrome' },
 ];
 function applyLogoStyle(id) {
   const v = LOGO_STYLES.some((s) => s.id === id) ? id : 'brand';
@@ -1171,7 +1196,7 @@ function applyLogoStyle(id) {
 applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
 
 /* ---------------- dropdowns ---------------- */
-// i flyout dei modelli stanno nel <body>: vanno chiusi insieme al loro dropdown
+// model flyouts live in <body>: they must be closed along with their dropdown
 function closeFlyouts() {
   document.querySelectorAll('body > .dd-flyout.on').forEach((f) => f.classList.remove('on'));
   document.querySelectorAll('.dd-sub.open').forEach((s) => s.classList.remove('open'));
@@ -1188,10 +1213,13 @@ function setupDd(ddId, btnId) {
   dd.querySelector('.dd-menu').addEventListener('click', (e) => e.stopPropagation());
   return dd;
 }
-// filtri sidebar (stato + periodo), sostituiscono il vecchio filtro per progetto:
-// il progetto resta selezionabile via ricerca/raggruppamento "Per progetto"
-// (dichiarato qui, prima di ogni suo uso: setupDd/renderFilterMenu girano subito sotto)
+// sidebar filters (status + period), replacing the old per-project filter: the
+// project is still reachable through search or the "By project" grouping
+// (declared here, before any use: setupDd/renderFilterMenu run right below)
 let sessionFilter = { status: 'all', period: 'all' };
+// chat archiving: when off the sidebar is a flat list and the feature
+// disappears from the UI (saved statuses stay on the server)
+let chatArchiving = true;
 try { sessionFilter = { ...sessionFilter, ...JSON.parse(localStorage.getItem('piSessionFilter') || '{}') }; } catch {}
 const modelDd = setupDd('modelDd', 'modelBtn');
 const thinkDd = setupDd('thinkDd', 'thinkBtn');
@@ -1202,7 +1230,9 @@ function renderFilterMenu() {
   $('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
     b.classList.toggle('sel', sessionFilter[b.dataset.filter] === b.dataset.val);
   });
-  const active = (sessionFilter.status !== 'all' ? 1 : 0) + (sessionFilter.period !== 'all' ? 1 : 0);
+  const statusFilterOn = sessionFilter.status !== 'all'
+    && (chatArchiving || sessionFilter.status === 'favorite');
+  const active = (statusFilterOn ? 1 : 0) + (sessionFilter.period !== 'all' ? 1 : 0);
   $('filterBtn').classList.toggle('on', active > 0);
   $('filterCount').classList.toggle('hide', !active);
   $('filterCount').textContent = active;
@@ -1224,7 +1254,11 @@ document.addEventListener('click', () => {
 
 /* ---------------- chat rendering (everything left-aligned, no bubbles) ---------------- */
 function renderMarkdown(div) {
-  div.innerHTML = window.marked ? marked.parse(div.dataset.raw ?? '') : esc(div.dataset.raw ?? '');
+  // The model's markdown can carry attacker-influenced content (files, tool
+  // output, fetched pages): sanitize before it ever touches innerHTML.
+  div.innerHTML = window.marked && window.DOMPurify
+    ? DOMPurify.sanitize(marked.parse(div.dataset.raw ?? ''))
+    : esc(div.dataset.raw ?? '');
   if (window.hljs) div.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
   addCopyButtons(div);
 }
@@ -1238,7 +1272,7 @@ async function copyToClipboard(text, btn) {
     await navigator.clipboard.writeText(text ?? '');
     if (btn) flashCopied(btn);
   } catch {
-    toast('Copia non riuscita (permessi clipboard del browser)');
+    toast('Copy failed (browser clipboard permissions)');
   }
 }
 function flashCopied(btn) {
@@ -1263,7 +1297,7 @@ function addCopyButtons(container) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'codeCopyBtn';
-    btn.title = 'Copia';
+    btn.title = 'Copy';
     btn.innerHTML = ICON_COPY;
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1281,7 +1315,7 @@ function addMsgActions(body, div, { entryId } = {}) {
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
   copyBtn.className = 'msgActionBtn';
-  copyBtn.title = 'Copia messaggio';
+  copyBtn.title = 'Copy message';
   copyBtn.innerHTML = ICON_COPY;
   copyBtn.addEventListener('click', () => copyToClipboard(div.dataset.raw ?? div.textContent, copyBtn));
   bar.appendChild(copyBtn);
@@ -1289,7 +1323,7 @@ function addMsgActions(body, div, { entryId } = {}) {
     const forkBtn = document.createElement('button');
     forkBtn.type = 'button';
     forkBtn.className = 'msgActionBtn';
-    forkBtn.title = 'Nuova chat da qui';
+    forkBtn.title = 'New chat from here';
     forkBtn.innerHTML = ICON_FORK;
     forkBtn.addEventListener('click', () => forkFrom(entryId));
     bar.appendChild(forkBtn);
@@ -1301,13 +1335,13 @@ async function forkFrom(entryId) {
   if (r.error) return;
   setSessionKey(r.key);
   await refreshAll();
-  toast('Nuova chat creata da questo punto', true);
+  toast('New chat created from this point', true);
 }
 function newTurn(role, model = null) {
   $('hero')?.remove();
-  // Messaggi consecutivi dello stesso interlocutore (stesso modello, per
-  // l'assistente) restano nello stesso turno: avatar e nome compaiono una sola
-  // volta, finché non risponde l'altro.
+  // Consecutive messages from the same speaker (same model, for the assistant)
+  // stay in the same turn: avatar and name show up once, until the other side
+  // answers.
   const last = chat.lastElementChild;
   if (last?.classList.contains('turn') && last.classList.contains(role)) {
     const m = role === 'user' ? null : (model ?? state.turnModel ?? state.model);
@@ -1353,8 +1387,8 @@ function appendMd(div, delta) {
   renderMarkdown(div);
   if (stick) scrollDown();
 }
-// plain-text streaming (thinking): stessa regola di stickiness del markdown,
-// altrimenti durante il reasoning la view resta ferma e il testo scorre sotto
+// plain-text streaming (thinking): same stickiness rule as markdown, otherwise
+// during reasoning the view stays put and the text scrolls out of sight
 function appendText(div, delta) {
   const stick = atBottom();
   div.textContent += delta;
@@ -1374,8 +1408,8 @@ function renderTool(ev) {
         <span class="nm"></span><span class="sm"></span><span class="st">…</span>
       </button>
       <div class="toolBody">
-        <h6>Richiesta</h6><pre class="args">…</pre>
-        <h6>Output</h6><pre class="out">(in esecuzione…)</pre>
+        <h6>Request</h6><pre class="args">…</pre>
+        <h6>Output</h6><pre class="out">(running…)</pre>
       </div>`;
     card.querySelector('.toolHead').addEventListener('click', () => card.classList.toggle('open'));
     currentTurn.appendChild(card);
@@ -1392,24 +1426,24 @@ function renderTool(ev) {
   } else if (ev.status === 'update') {
     if (ev.output) q('.out').textContent = ev.output;
   } else {
-    q('.st').textContent = ev.isError ? '✗ errore' : '✓';
+    q('.st').textContent = ev.isError ? '✗ error' : '✓';
     q('.st').classList.toggle('err', !!ev.isError);
-    q('.out').textContent = ev.output || '(nessun output)';
+    q('.out').textContent = ev.output || '(no output)';
     if (ev.isError) card.classList.add('open');
   }
 }
 
 const SUGG = [
-  { t: 'Esplora', c: '#2fe0c0', d: 'Dammi una panoramica di questo progetto', p: 'Fammi una panoramica della struttura di questo progetto e di cosa fa.' },
-  { t: 'Debug', c: '#f8a5a5', d: 'Trova e correggi un bug', p: 'Analizza il codice e segnalami possibili bug o problemi.' },
-  { t: 'Refactor', c: '#a5b4fc', d: 'Migliora il codice esistente', p: 'Proponi un refactoring dei file principali di questo progetto.' },
+  { t: 'Explore', c: '#2fe0c0', d: 'Give me an overview of this project', p: 'Give me an overview of this project structure and of what it does.' },
+  { t: 'Debug', c: '#f8a5a5', d: 'Find and fix a bug', p: 'Analyse the code and point out possible bugs or problems.' },
+  { t: 'Refactor', c: '#a5b4fc', d: 'Improve the existing code', p: 'Suggest a refactoring of the main files of this project.' },
 ];
 function showHero() {
   if (chat.children.length) return;
   const h = document.createElement('div');
   h.id = 'hero';
-  h.innerHTML = `<h1>Ciao 👋<br><span class="dim">Cosa costruiamo oggi?</span></h1>
-    <p>Cartella di lavoro: <code>${esc(state.cwd || '…')}</code></p>
+  h.innerHTML = `<h1>Hi 👋<br><span class="dim">What are we building today?</span></h1>
+    <p>Working folder: <code>${esc(state.cwd || '…')}</code></p>
     <div class="cards">${SUGG.map((s, i) => `
       <button class="sugg" data-i="${i}">
         <span class="tag" style="background:${s.c}22;color:${s.c}">${s.t}</span>
@@ -1423,35 +1457,34 @@ function showHero() {
 }
 // Counter shows *this chat only*: fresh tokens per turn (prompt + cache writes +
 // output). Cache reads are excluded because they re-count context already paid for.
-let lastByModel = {};   // provider/model -> {tokens,cost,requests,...} per questa chat
-let lastChat = null;    // ultimi totali chat noti, per risincronizzare senza un evento 'usage'
+let lastByModel = {};   // provider/model -> {tokens,cost,requests,...} for this chat
+let lastChat = null;    // last known chat totals, to resync without an 'usage' event
 function renderStats(chat, context, byModel) {
   const c = chat ?? lastChat ?? { tokens: 0, cost: 0, requests: 0 };
   lastChat = c;
   if (byModel) lastByModel = byModel;
   $('stats').textContent = `${fmt(c.tokens)} token · $${(c.cost ?? 0).toFixed(4)}`;
   $('stats').title =
-    `token di questa chat: ${fmt(c.tokens)}\n` +
+    `tokens in this chat: ${fmt(c.tokens)}\n` +
     `  input: ${fmt(c.input)} · output: ${fmt(c.output)} · cache write: ${fmt(c.cacheWrite)}\n` +
-    `  (cache read esclusa: ${fmt(c.cacheRead)}, è contesto già conteggiato)\n` +
-    `richieste: ${c.requests} · costo stimato: $${(c.cost ?? 0).toFixed(4)}\n` +
-    `clicca per il dettaglio per modello`;
+    `  (cache read excluded: ${fmt(c.cacheRead)}, it is context already counted)\n` +
+    `requests: ${c.requests} · estimated cost: $${(c.cost ?? 0).toFixed(4)}\n` +
+    `click for the per-model breakdown`;
   renderStatsMenu(c);
   if (context?.window > 0) {
     const pct = Math.min(100, 100 * context.used / context.window);
     $('ctxFill').style.width = pct + '%';
     $('ctxFill').className = pct > 85 ? 'crit' : pct > 60 ? 'warn' : '';
-    $('ctxBar').title = `contesto: ${fmt(context.used)} / ${fmt(context.window)} token (${pct.toFixed(1)}%)`;
-    $('composerCtx').textContent = `${state.model ? state.model.id : 'pi'} · contesto ${pct.toFixed(0)}%`;
+    $('ctxBar').title = `context: ${fmt(context.used)} / ${fmt(context.window)} tokens (${pct.toFixed(1)}%)`;
+    $('composerCtx').textContent = `${state.model ? state.model.id : 'pi'} · context ${pct.toFixed(0)}%`;
   }
 }
-// popover del contatore: una riga per ogni LLM usato in questa chat
-// (cambiare modello a metà chat non mescola più i conteggi)
+// counter popover: one row per LLM used in this chat
+// (switching model mid-chat no longer mixes the counts)
 function renderStatsMenu(c) {
-  const money = (n) => '$' + (n ?? 0).toFixed(4);
   const rows = Object.entries(lastByModel ?? {}).sort((a, b) => b[1].cost - a[1].cost);
-  let html = '<div class="dd-group">Token e costo di questa chat, per modello</div>';
-  if (!rows.length) html += '<div class="sys" style="padding:.4rem .55rem">ancora nessuna risposta</div>';
+  let html = '<div class="dd-group">Tokens and cost of this chat, per model</div>';
+  if (!rows.length) html += '<div class="sys" style="padding:.4rem .55rem">no answer yet</div>';
   for (const [key, m] of rows) {
     const slash = key.indexOf('/');
     const p = slash > 0 ? key.slice(0, slash) : '';
@@ -1460,7 +1493,7 @@ function renderStatsMenu(c) {
       <span class="vals">${fmt(m.tokens)} tok · <b>${money(m.cost)}</b> · ${m.requests} req</span></div>`;
   }
   if (rows.length > 1) {
-    html += `<div class="statsRow total"><span class="nm">Totale chat</span>
+    html += `<div class="statsRow total"><span class="nm">Chat total</span>
       <span class="vals">${fmt(c.tokens)} tok · <b>${money(c.cost)}</b> · ${c.requests} req</span></div>`;
   }
   $('statsMenu').innerHTML = html;
@@ -1475,11 +1508,11 @@ function setRunning(on) {
 function fmtCountdown(iso) {
   if (!iso) return '';
   const ms = new Date(iso).getTime() - Date.now();
-  if (!isFinite(ms) || ms <= 0) return 'reset a breve';
+  if (!isFinite(ms) || ms <= 0) return 'resets shortly';
   const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
   const d = Math.floor(h / 24);
-  if (d > 0) return `reset tra ${d}g ${h % 24}h`;
-  return h > 0 ? `reset tra ${h}h ${m}m` : `reset tra ${m}m`;
+  if (d > 0) return `resets in ${d}d ${h % 24}h`;
+  return h > 0 ? `resets in ${h}h ${m}m` : `resets in ${m}m`;
 }
 function setUsageBar(pct, severityOrWarnCrit, barId) {
   const bar = $(barId ?? 'usageWidgetBar');
@@ -1490,13 +1523,14 @@ function setUsageBar(pct, severityOrWarnCrit, barId) {
   if (severityOrWarnCrit === 'critical' || p > 90) bar.classList.add('crit');
   else if (severityOrWarnCrit === 'warning' || p > 70) bar.classList.add('warn');
 }
-// seconda barra del widget: consumo della finestra lunga (settimanale/periodo),
-// nascosta quando il provider non la espone
+// second widget bar: usage of the long window (weekly/period), hidden when the
+// provider does not expose it
 function setUsageBar2(pct, severityOrWarnCrit, text) {
+  const txt = $('usageWidgetTxt2');
   $('usageWidgetBar2').classList.remove('hide');
-  $('usageWidgetTxt2').classList.remove('hide');
+  txt.classList.remove('hide');
   setUsageBar(pct, severityOrWarnCrit, 'usageWidgetBar2');
-  $('usageWidgetTxt2').textContent = text;
+  txt.textContent = text;
 }
 function hideUsageBar2() {
   $('usageWidgetBar2').classList.add('hide');
@@ -1526,18 +1560,18 @@ function renderUsageWidget() {
       const sd = u.anthropic.sevenDay;
       const sev = u.anthropic.limits?.[0]?.severity;
       setUsageBar(fh?.percent, sev);
-      txt.textContent = fh ? `${Math.round(fh.percent)}%` : 'n/d';
-      // consumo settimanale residuo: claude.ai lo chiama "seven_day", non mostrato
-      // da nessun'altra parte nella UI ufficiale
+      txt.textContent = fh ? `${Math.round(fh.percent)}%` : 'n/a';
+      // remaining weekly allowance: claude.ai calls it "seven_day", shown nowhere
+      // else in the official UI
       if (sd && typeof sd.percent === 'number') {
         const sevSev = u.anthropic.limits?.find((l) => l.kind === 'seven_day')?.severity;
-        setUsageBar2(sd.percent, sevSev, `sett ${Math.round(sd.percent)}%`);
+        setUsageBar2(sd.percent, sevSev, `week ${Math.round(sd.percent)}%`);
       } else {
         hideUsageBar2();
       }
       w.title = [
-        fh ? `Claude — 5h: ${Math.round(fh.percent)}% · ${fmtCountdown(fh.resetsAt)}` : 'Claude — dati 5h non disponibili',
-        sd && typeof sd.percent === 'number' ? `settimana: ${Math.round(sd.percent)}% · ${fmtCountdown(sd.resetsAt)}` : null,
+        fh ? `Claude — 5h: ${Math.round(fh.percent)}% · ${fmtCountdown(fh.resetsAt)}` : 'Claude — 5h data unavailable',
+        sd && typeof sd.percent === 'number' ? `week: ${Math.round(sd.percent)}% · ${fmtCountdown(sd.resetsAt)}` : null,
       ].filter(Boolean).join('\n');
     }
     return;
@@ -1565,8 +1599,8 @@ function renderUsageWidget() {
         const pct = win5h.limit ? 100 * win5h.used / win5h.limit : 0;
         setUsageBar(pct);
         txt.textContent = `${Math.round(pct)}%`;
-        const periodTxt = period ? ` · periodo: ${period.used}/${period.limit} (${fmtCountdown(period.resetsAt)})` : '';
-        w.title = `Kimi — finestra 5h: ${win5h.used}/${win5h.limit} · ${fmtCountdown(win5h.resetsAt)}${periodTxt}`;
+        const periodTxt = period ? ` · period: ${period.used}/${period.limit} (${fmtCountdown(period.resetsAt)})` : '';
+        w.title = `Kimi — 5h window: ${win5h.used}/${win5h.limit} · ${fmtCountdown(win5h.resetsAt)}${periodTxt}`;
       } else if (period) {
         const pct = periodPct ?? 0;
         setUsageBar(pct);
@@ -1574,7 +1608,7 @@ function renderUsageWidget() {
         w.title = `Kimi — ${period.used}/${period.limit} · ${fmtCountdown(period.resetsAt)}`;
         hideUsageBar2();
       } else {
-        txt.textContent = 'n/d'; setUsageBar(0); hideUsageBar2(); w.title = 'Kimi — dati non disponibili';
+        txt.textContent = 'n/a'; setUsageBar(0); hideUsageBar2(); w.title = 'Kimi — data unavailable';
       }
     }
     return;
@@ -1589,14 +1623,14 @@ function connect() {
   if (es) { try { es.close(); } catch {} }
   es = new EventSource(withKey('/api/events'));
   es.onopen = () => { $('conn').classList.remove('off'); $('connTxt').textContent = 'connesso'; };
-  es.onerror = () => { $('conn').classList.add('off'); $('connTxt').textContent = 'riconnessione…'; };
+  es.onerror = () => { $('conn').classList.add('off'); $('connTxt').textContent = 'reconnecting…'; };
   es.onmessage = (e) => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     try { handleEvent(ev); } catch (err) { console.error(err); toast('UI: ' + err.message); }
   };
 }
 function handleEvent(ev) {
-  // eventi globali: riguardano le ALTRE chat aperte, non questa
+  // global events: they are about the OTHER open chats, not this one
   if (ev.scope === 'global') {
     if (ev.kind === 'running') {
       if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
@@ -1604,7 +1638,7 @@ function handleEvent(ev) {
         renderSessions();
         if (!ev.running) {
           const s = allSessions.find((x) => x.path === ev.key);
-          toast('Chat completata: ' + (s?.name || s?.firstMessage || 'in background'), true);
+          toast('Chat finished: ' + (s?.name || s?.firstMessage || '(background chat)'), true);
         }
       }
     } else if (ev.kind === 'sessions') {
@@ -1639,13 +1673,13 @@ function handleEvent(ev) {
     case 'usage': renderStats(ev.chat, ev.context, ev.chatByModel); break;
     case 'status':
       if (ev.status === 'running') {
-        setChatStarted(true);  // sta girando ⇒ la chat è nata
-        if (ev.model) state.turnModel = ev.model;  // modello che sta rispondendo (può cambiare a metà chat)
+        setChatStarted(true);  // it is running ⇒ the chat exists
+        if (ev.model) state.turnModel = ev.model;  // model answering right now (it can change mid-chat)
         setAgentTask(true, ev.model);
       } else {
         state.turnModel = null;
         setAgentTask(false);
-        refreshGit();  // l'agente può aver toccato file / branch
+        refreshGit();  // the agent may have touched files / branches
       }
       setRunning(ev.status === 'running'); break;
     case 'cwd':
@@ -1673,8 +1707,8 @@ function renderModelBtn() {
   $('modelLogo').outerHTML = m
     ? logoHtml(m.provider, m.id).replace('class="logo ', 'id="modelLogo" class="logo ')
     : '<span class="logo" id="modelLogo"></span>';
-  $('modelName').textContent = m ? (modelMeta()?.name || m.id) : 'nessun modello';
-  $('modelBtn').title = m ? `${m.provider}/${m.id}` : 'nessun modello autenticato';
+  $('modelName').textContent = m ? (modelMeta()?.name || m.id) : 'no model';
+  $('modelBtn').title = m ? `${m.provider}/${m.id}` : 'no authenticated model';
 }
 async function selectModel(provider, id) {
   const r = await post('/api/model', { provider, id });
@@ -1683,33 +1717,34 @@ async function selectModel(provider, id) {
   state.thinking = r.thinkingLevel ?? state.thinking;
   state.thinkingLevels = r.thinkingLevels?.length ? r.thinkingLevels : ['off'];
   renderModelBtn(); renderModelMenu(); renderThinking(); renderUsageWidget();
-  // il context window dipende dal modello: risincronizza subito la barra/composer
-  // invece di aspettare il prossimo messaggio (che è quando si aggiornava prima)
+  // the context window depends on the model: resync bar/composer right away
+  // instead of waiting for the next message (which is when it used to update)
   if (r.context) renderStats(lastChat, r.context, lastByModel);
   if (!$('settingsView').classList.contains('hide')) renderSettings();
-  toast(`Modello: ${id}`, true);
+  toast(`Model: ${id}`, true);
 }
-// Shift+M: cicla tra i modelli disponibili/autenticati
+// Shift+M: cycle through the available/authenticated models
 async function cycleModel() {
-  if (!modelsCache.length) { toast('Nessun modello disponibile'); return; }
+  if (!modelsCache.length) { toast('No model available'); return; }
   let idx = modelsCache.findIndex((m) => state.model && m.provider === state.model.provider && m.id === state.model.id);
   idx = (idx + 1) % modelsCache.length;
   const m = modelsCache[idx];
   await selectModel(m.provider, m.id);
 }
-// Menu a due livelli: prima i provider, i modelli compaiono in un flyout
-// laterale al passaggio del mouse (o al click/tastiera, per accessibilità).
+// Two-level menu: providers first, models show up in a side flyout on hover
+// (or on click/keyboard, for accessibility).
 function renderModelMenu() {
   const menu = $('modelMenu');
   menu.innerHTML = '';
-  document.querySelectorAll('body > .dd-flyout').forEach((f) => f.remove());  // flyout della resa precedente
-  if (!modelsCache.length) { menu.innerHTML = '<div class="dd-group">nessun modello attivo</div>'; return; }
+  document.querySelectorAll('body > .dd-flyout').forEach((f) => f.remove());  // flyouts of the previous render
+  if (!modelsCache.length) { menu.innerHTML = '<div class="dd-group">no active model</div>'; return; }
   const byProv = {};
   for (const m of modelsCache) (byProv[m.provider] ??= []).push(m);
   let closeTimer = null;
-  // I flyout vivono nel <body>, non dentro l'header: l'header ha backdrop-filter
-  // e diventerebbe il blocco contenitore dei figli position:fixed, sballando le
-  // coordinate. Nel body le coordinate sono davvero quelle della finestra.
+  // Flyouts live in <body>, not inside the header: the header has
+  // backdrop-filter and would become the containing block of position:fixed
+  // children, throwing the coordinates off. In the body they really are
+  // window coordinates.
   const closeAllSubs = () => {
     menu.querySelectorAll('.dd-sub.open').forEach((s) => s.classList.remove('open'));
     document.querySelectorAll('.dd-flyout.on').forEach((f) => f.classList.remove('on'));
@@ -1722,9 +1757,9 @@ function renderModelMenu() {
     fly.classList.add('on');
     const menuBox = menu.getBoundingClientRect();
     const headBox = sub.getBoundingClientRect();
-    fly.style.left = '0px'; fly.style.top = '0px';       // misura a posizione nota
+    fly.style.left = '0px'; fly.style.top = '0px';       // measure at a known position
     const w = fly.offsetWidth, h = fly.offsetHeight;
-    // attaccato al bordo del menu provider (i due bordi si sovrappongono di 1px)
+    // glued to the provider menu edge (the two borders overlap by 1px)
     const flip = menuBox.right - 1 + w > window.innerWidth - 8;
     fly.classList.toggle('flip', flip);
     fly.style.left = (flip ? Math.max(8, menuBox.left + 1 - w) : menuBox.right - 1) + 'px';
@@ -1740,7 +1775,7 @@ function renderModelMenu() {
     head.className = 'dd-item' + (hasSel ? ' hasSel' : '');
     head.innerHTML = `${logoHtml(prov, hasSel ? state.model.id : list[0]?.id ?? '')}<span class="col">
       <span>${esc(prov)}</span>
-      <span class="desc">${list.length} model${list.length === 1 ? 'lo' : 'li'}${hasSel ? ' · in uso' : ''}</span></span>
+      <span class="desc">${list.length} model${list.length === 1 ? '' : 's'}${hasSel ? ' · in use' : ''}</span></span>
       <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>`;
     const fly = document.createElement('div');
     fly.className = 'dd-flyout';
@@ -1770,7 +1805,7 @@ function renderModelMenu() {
     menu.appendChild(sub);
   }
 }
-const THINK_DESC = { off: 'Nessun ragionamento esteso', low: 'Ragionamento breve', medium: 'Ragionamento intermedio', high: 'Ragionamento approfondito', xhigh: 'Ragionamento molto approfondito', max: 'Massimo budget di ragionamento' };
+const THINK_DESC = { off: 'No extended reasoning', low: 'Short reasoning', medium: 'Moderate reasoning', high: 'Deep reasoning', xhigh: 'Very deep reasoning', max: 'Maximum reasoning budget' };
 function renderThinking() {
   const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
   if (!levels.includes(state.thinking)) state.thinking = levels[0];
@@ -1778,7 +1813,7 @@ function renderThinking() {
   $('thinkName').textContent = only && levels[0] === 'off' ? 'no reasoning' : state.thinking;
   $('thinkBtn').style.opacity = only ? '.55' : '1';
   const menu = $('thinkMenu');
-  menu.innerHTML = `<div class="dd-group">Effort disponibili per ${esc(state.model?.id ?? 'questo modello')}</div>`;
+  menu.innerHTML = `<div class="dd-group">Effort levels available for ${esc(state.model?.id ?? 'this model')}</div>`;
   for (const lv of levels) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -1793,10 +1828,10 @@ function renderThinking() {
     menu.appendChild(b);
   }
 }
-// Shift+T: cicla tra gli effort di reasoning disponibili per il modello corrente
+// Shift+T: cycle through the reasoning effort levels of the current model
 async function cycleThinking() {
   const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
-  if (levels.length <= 1) { toast('Nessun altro effort disponibile per questo modello'); return; }
+  if (levels.length <= 1) { toast('No other effort level available for this model'); return; }
   let idx = levels.indexOf(state.thinking);
   idx = (idx + 1) % levels.length;
   const lv = levels[idx];
@@ -1810,12 +1845,13 @@ async function cycleThinking() {
 function setCwdLabel(p) {
   const parts = (p || '').split(/[\\/]/).filter(Boolean);
   $('cwdLabel').textContent = parts.slice(-2).join('/') || p || '—';
-  $('cwdChip').title = 'Cartella di lavoro: ' + p;
+  $('cwdChip').title = 'Working folder: ' + p;
   $('cwdInput').value = p;
 }
-/* Una chat "vuota" non esiste: è solo la home, la chat nasce col primo prompt.
-   Finché siamo lì la cartella si sceglie liberamente; appena la chat parte il
-   percorso ne fa parte e il selettore diventa in sola lettura. */
+/* An "empty" chat does not exist: it is just the home screen, a chat is born
+   with its first prompt. While we are there the folder can be changed freely;
+   as soon as the chat starts the path is part of it and the picker becomes
+   read-only. */
 let chatStarted = false;
 function setChatStarted(v) {
   v = !!v;
@@ -1824,14 +1860,14 @@ function setChatStarted(v) {
   $('cwdInput').readOnly = v;
   $('cwdEditRow').style.display = v ? 'none' : '';
   $('cwdHint').textContent = v
-    ? 'Chat già avviata: la cartella non si può più cambiare. Per lavorare altrove apri una nuova chat.'
-    : "Cartella di lavoro: l'agente legge e modifica i file al suo interno. La scegli qui prima di iniziare la chat.";
+    ? 'Chat already started: the folder can no longer be changed. Open a new chat to work somewhere else.'
+    : 'Working folder: the agent reads and edits the files inside it. You pick it here before starting the chat.';
 }
 async function changeCwd(p) {
-  if (chatStarted) { toast('La chat è già avviata: la cartella non si può cambiare.'); return; }
+  if (chatStarted) { toast('This chat has already started: the folder cannot be changed.'); return; }
   p = (p ?? $('cwdInput').value).trim().replace(/^["']|["']$/g, '');
   if (!p) return;
-  $('cwdMsg').textContent = 'imposto…';
+  $('cwdMsg').textContent = 'setting…';
   const r = await post('/api/cwd', { path: p });
   $('cwdMsg').textContent = '';
   if (r.error) return; // toast already shown, chat untouched
@@ -1840,30 +1876,43 @@ async function changeCwd(p) {
   setCwdLabel(state.cwd);
   await refreshAll();               // reload sessions and projects for the new folder
   loadRecentCwds();
-  toast('Cartella impostata: la chat partirà in ' + state.cwd, true);
+  toast('Folder set: the chat will start in ' + state.cwd, true);
 }
 $('cwdApply').addEventListener('click', () => changeCwd());
 $('cwdInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); changeCwd(); } });
 $('browseBtn').addEventListener('click', async () => {
-  $('browseBtn').disabled = true;
+  const btn = $('browseBtn');
+  btn.disabled = true;
   try {
     const d = await api('/api/pick-folder', { method: 'POST' });
     if (d.cancelled || d.error) return;
     if (d.path) await changeCwd(d.path);
-  } finally { $('browseBtn').disabled = false; }
+  } finally { btn.disabled = false; }
 });
-// apre la cartella di lavoro in Esplora risorse (non cambia né chat né cartella)
+// opens the working folder in the system file manager (changes neither chat nor folder)
 $('explorerBtn').addEventListener('click', async () => {
   const r = await post('/api/open-explorer');
   if (!r.error) cwdDd.classList.remove('open');
 });
-// apre PowerShell nella cartella di lavoro; se la chat non ha ancora messaggi lancia "pi"
+// opens a terminal in the working folder and runs "pi" there
 $('terminalBtn').addEventListener('click', async () => {
   const r = await post('/api/open-terminal');
-  if (!r.error) toast('PowerShell aperto: avvio pi…', true);
+  if (!r.error) toast('Terminal opened: starting pi…', true);
 });
 
-/* ---- cartelle recenti: sezione espandibile dentro il menu della cartella ---- */
+// The three native features do not exist everywhere (no picker without zenity
+// on Linux, and so on): the server says what it can do and we hide the rest, so
+// no button promises something that would end in an error.
+function applyPlatformCapabilities(caps) {
+  if (!caps) return;
+  $('browseBtn').classList.toggle('hide', !caps.pickFolder);
+  $('explorerBtn').parentElement.classList.toggle('hide', !caps.openFolder);
+  $('terminalBtn').classList.toggle('hide', !caps.openTerminal);
+  // without a native picker the text field is the only way to choose the folder
+  if (!caps.pickFolder) $('cwdInput').placeholder = 'Paste the folder path here';
+}
+
+/* ---- recent folders: expandable section inside the folder menu ---- */
 let recentCwds = [];
 async function loadRecentCwds() {
   const r = await api('/api/recent-cwds');
@@ -1875,7 +1924,7 @@ function renderRecentCwds() {
   const list = $('recentList');
   $('recentCount').textContent = recentCwds.length || '';
   list.innerHTML = '';
-  if (!recentCwds.length) { list.innerHTML = '<div class="sys" style="padding:.35rem .4rem">Nessuna cartella recente</div>'; return; }
+  if (!recentCwds.length) { list.innerHTML = '<div class="sys" style="padding:.35rem .4rem">No recent folder</div>'; return; }
   for (const p of recentCwds) {
     const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
     const cur = state.cwd && p.toLowerCase() === state.cwd.toLowerCase();
@@ -1886,7 +1935,7 @@ function renderRecentCwds() {
     b.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span class="nm">${esc(name)}</span><span class="pth">${esc(p)}</span>`;
     const del = document.createElement('span');
-    del.className = 'del'; del.textContent = '×'; del.title = 'Dimentica questa cartella';
+    del.className = 'del'; del.textContent = '×'; del.title = 'Forget this folder';
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
       const r = await api('/api/recent-cwds?path=' + encodeURIComponent(p), { method: 'DELETE' });
@@ -1905,14 +1954,14 @@ $('recentHead').addEventListener('click', () => {
 });
 if (localStorage.getItem('piRecentOpen') !== '0') $('recentBox').classList.add('open');
 
-/* ---- logo π: apre sempre una nuova chat ---- */
+/* ---- π logo: always opens a new chat ---- */
 $('homeBtn').addEventListener('click', () => {
   showChat();
   if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
   newChat();
 });
 
-/* ---- barra laterale ridimensionabile col mouse (larghezza persistente) ---- */
+/* ---- mouse-resizable sidebar (persisted width) ---- */
 const SB_MIN = 190, SB_MAX = 460;
 function setSidebarWidth(px) {
   const w = Math.max(SB_MIN, Math.min(SB_MAX, Math.round(px)));
@@ -1933,13 +1982,13 @@ $('sidebarResize').addEventListener('pointerdown', (e) => {
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', up);
 });
-// doppio click sulla maniglia: torna alla larghezza di default
+// double click on the handle: back to the default width
 $('sidebarResize').addEventListener('dblclick', () => setSidebarWidth(230));
 
 /* ---------------- sessions ---------------- */
 let allSessions = [], currentSessionPath = null;
-const runningKeys = new Set();   // chat che stanno lavorando (anche in altre schede)
-let openKeys = [];               // chat vive sul server (contesti agente in background)
+const runningKeys = new Set();   // chats currently working (also in other tabs)
+let openKeys = [];               // chats alive on the server (background agent contexts)
 function fmtDate(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return '';
@@ -1948,8 +1997,8 @@ function fmtDate(iso) {
     : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
 }
 async function loadSessions() {
-  // niente più filtro per progetto: la sidebar mostra sempre tutte le chat,
-  // "Per progetto" nel raggruppamento e la ricerca bastano a orientarsi
+  // no per-project filter any more: the sidebar always shows every chat,
+  // "By project" grouping plus search are enough to find your way
   const res = await api('/api/sessions?scope=all');
   if (res.error) return;
   allSessions = res.sessions ?? [];
@@ -1959,11 +2008,22 @@ async function loadSessions() {
   openKeys = res.open ?? [];
   renderSessions();
 }
-// stato+periodo scelti nel popover a icona; 'all'/'all' = nessun filtro attivo
+// status+period chosen in the icon popover; 'all'/'all' = no active filter
+const isChatDone = (s) => chatArchiving && s.status === 'done';
+// with the feature off the two status filters no longer exist: hide the entries
+// and fall back to "All" without losing the choice saved in localStorage
+function applyChatArchiving(enabled) {
+  chatArchiving = enabled !== false;
+  $('filterMenu').querySelectorAll('.archiveOnly').forEach((b) => {
+    b.classList.toggle('hide', !chatArchiving);
+  });
+  renderFilterMenu();
+  renderSessions();
+}
 function passesSessionFilter(s) {
   const { status, period } = sessionFilter;
-  if (status === 'active' && s.status === 'done') return false;
-  if (status === 'done' && s.status !== 'done') return false;
+  if (chatArchiving && status === 'active' && s.status === 'done') return false;
+  if (chatArchiving && status === 'done' && s.status !== 'done') return false;
   if (status === 'favorite' && !s.favorite) return false;
   if (period !== 'all') {
     const d = new Date(s.modified);
@@ -1972,7 +2032,7 @@ function passesSessionFilter(s) {
     if (period === 'today' && d < startOfDay) return false;
     if (period === 'week') {
       const startOfWeek = new Date(startOfDay);
-      startOfWeek.setDate(startOfDay.getDate() - ((startOfDay.getDay() + 6) % 7)); // lunedì
+      startOfWeek.setDate(startOfDay.getDate() - ((startOfDay.getDay() + 6) % 7)); // Monday
       if (d < startOfWeek) return false;
     }
     if (period === 'month' && (d.getMonth() !== now.getMonth() || d.getFullYear() !== now.getFullYear())) return false;
@@ -1984,10 +2044,10 @@ function renderSessions() {
   const list = allSessions.filter((s) => passesSessionFilter(s) && (!q || `${s.name || ''} ${s.firstMessage || ''} ${s.cwd || ''}`.toLowerCase().includes(q)));
   const sort = $('sortFilter').value;
   const groupBy = $('groupFilter').value;
-  // i preferiti stanno sempre in cima e tra loro sono ordinati per data (recenti
-  // prima), qualunque vista/ordinamento sia selezionato; il resto segue il sort
-  // le concluse stanno sempre sotto le attive, anche se più recenti
-  const isDone = (s) => s.status === 'done';
+  // favorites always sit on top and among themselves are sorted by date (newest
+  // first), whatever view/sort is selected; the rest follows the sort.
+  // Done chats always sit below active ones, even when more recent.
+  const isDone = isChatDone;
   list.sort((a, b) => {
     const da = isDone(a) ? 1 : 0, db = isDone(b) ? 1 : 0;
     if (da !== db) return da - db;
@@ -2001,10 +2061,10 @@ function renderSessions() {
   $('sessionCount').textContent = list.length;
   const el = $('sessionList');
   el.innerHTML = '';
-  if (!list.length) { el.innerHTML = '<div class="sys" style="padding:.8rem">Nessuna chat</div>'; return; }
-  // raggruppamento (indipendente dall'ordinamento): giorno / progetto / modello.
-  // Per giorno l'ordine per data basta già; negli altri casi serve una passata
-  // stabile che renda contigui i gruppi senza toccare l'ordine interno.
+  if (!list.length) { el.innerHTML = '<div class="sys" style="padding:.8rem">No chat</div>'; return; }
+  // grouping (independent from sorting): day / project / model.
+  // By day the date order is already enough; in the other cases a stable pass is
+  // needed to make the groups contiguous without touching the inner order.
   if (groupBy === 'project' || groupBy === 'model') {
     list.sort((a, b) => (isDone(a) ? 1 : 0) - (isDone(b) ? 1 : 0)
       || (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)
@@ -2013,7 +2073,7 @@ function renderSessions() {
   let lastGroup = null;
   for (const s of list) {
     if (groupBy !== 'none') {
-      const g = isDone(s) ? 'Concluse' : s.favorite ? 'Preferiti' : groupOf(s, groupBy);
+      const g = isDone(s) ? 'Done' : s.favorite ? 'Favorites' : groupOf(s, groupBy);
       if (g !== lastGroup) {
         lastGroup = g;
         const h = document.createElement('div');
@@ -2029,18 +2089,18 @@ function renderSessions() {
     const proj = (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
     const running = runningKeys.has(s.path);
     div.innerHTML = `<div class="acts">
-      <button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Riporta tra le attive' : 'Segna come conclusa'}">${done ? '↺' : '✓'}</button>
-      <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Togli dai preferiti' : 'Aggiungi ai preferiti'}">${s.favorite ? '♥' : '♡'}</button>
+      ${chatArchiving ? `<button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Move back to active' : 'Mark as done'}">${done ? '↺' : '✓'}</button>` : ''}
+      <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
       </div><div class="title">${running ? '<span class="runDot"></span>' : done ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span>
-      ${s.status === 'reopened' ? '<span class="reopened">riaperta</span>' : ''}
+      ${chatArchiving && s.status === 'reopened' ? '<span class="reopened">reopened</span>' : ''}
       ${s.favorite ? '<span class="favMark">♥</span>' : ''}</div><div class="meta">
       ${s.model || s.provider ? `<span title="${esc((s.provider || '') + '/' + (s.model || ''))}">${logoHtml(s.provider || '', s.model || '')}</span>` : ''}
       ${proj ? `<span class="proj" title="${esc(s.cwd)}">${esc(proj)}</span><span>·</span>` : ''}
       <span>${s.messageCount} msg</span><span>·</span><span>${fmtDate(s.modified)}</span>
-      ${running ? '<span>·</span><span style="color:var(--teal)">in esecuzione</span>' : ''}</div>`;
+      ${running ? '<span>·</span><span style="color:var(--teal)">running</span>' : ''}</div>`;
     div.querySelector('.lbl').textContent = label;
     div.title = label;
-    // preferito: il click sul cuore non deve aprire la chat
+    // favorite: clicking the heart must not open the chat
     div.querySelector('.fav').addEventListener('click', async (e) => {
       e.stopPropagation();
       const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
@@ -2048,8 +2108,8 @@ function renderSessions() {
       s.favorite = !s.favorite;
       renderSessions();
     });
-    // concludi / riapri: anche qui il click non deve aprire la chat
-    div.querySelector('.doneBtn').addEventListener('click', async (e) => {
+    // done / reopen: here too the click must not open the chat
+    div.querySelector('.doneBtn')?.addEventListener('click', async (e) => {
       e.stopPropagation();
       const next = done ? 'active' : 'done';
       const r = await post('/api/status', { path: s.path, status: next });
@@ -2057,10 +2117,10 @@ function renderSessions() {
       s.status = r.status ?? next;
       renderSessions();
     });
-    // rotellina o Ctrl+click = apri la chat in una nuova scheda (ogni scheda ha la sua chat)
+    // middle click or Ctrl+click = open the chat in a new tab (every tab has its own chat)
     const openInNewTab = () => window.open(
       location.origin + location.pathname + '#s=' + encodeURIComponent(s.path), '_blank');
-    div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // niente autoscroll
+    div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll
     div.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openInNewTab(); } });
     div.addEventListener('click', (e) => {
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); openInNewTab(); return; }
@@ -2069,11 +2129,11 @@ function renderSessions() {
     el.appendChild(div);
   }
 }
-// etichetta del gruppo di una chat nella sidebar
+// group label of a chat in the sidebar
 function groupOf(s, mode) {
-  if (mode === 'project') return (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || 'senza progetto';
-  if (mode === 'model') return s.model || 'modello sconosciuto';
-  // giorno, in cesti leggibili
+  if (mode === 'project') return (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || 'no project';
+  if (mode === 'model') return s.model || 'unknown model';
+  // day, in readable buckets
   const d = new Date(s.modified);
   const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const now = new Date();
@@ -2086,13 +2146,13 @@ function groupOf(s, mode) {
   return day.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
 }
 
-// Cambiare chat non interrompe niente: la chat lasciata continua a lavorare sul
-// server e la ritrovi (risultato incluso) quando ci torni.
+// Switching chat interrupts nothing: the chat you leave keeps working on the
+// server and you find it again (result included) when you come back.
 async function openSession(s) {
   showChat();
   const r = await post('/api/session', { action: 'open', path: s.path, cwd: s.cwd || undefined });
   if (r.error) return;
-  setSessionKey(r.key ?? s.path);   // riaggancia l'SSE alla nuova chat
+  setSessionKey(r.key ?? s.path);   // reattach the SSE to the new chat
   await refreshAll();               // never rely on the SSE event alone
 }
 async function newChat() {
@@ -2111,20 +2171,20 @@ $('groupFilter').addEventListener('change', () => {
   renderSessions();
 });
 $('groupFilter').value = localStorage.getItem('piGroupBy') || 'none';
-// Shift+P: cicla tra i progetti aprendo l'ultima chat di quel progetto
+// Shift+P: cycle through projects, opening the latest chat of each
 async function cycleProject() {
   const opts = [...new Set(allSessions.map((s) => s.cwd).filter(Boolean))].sort();
-  if (opts.length < 2) { toast('Nessun altro progetto disponibile'); return; }
+  if (opts.length < 2) { toast('No other project available'); return; }
   let idx = opts.indexOf(state.cwd);
   idx = (idx + 1) % opts.length;
   const proj = opts[idx];
   const sessions = allSessions.filter((s) => s.cwd === proj).sort((a, b) => new Date(b.modified) - new Date(a.modified));
   if (sessions.length) await openSession(sessions[0]);
-  else toast('Nessuna chat per il progetto: ' + proj);
+  else toast('No chat for project: ' + proj);
 }
 function setSidebarCollapsed(v) {
   $('sidebar').classList.toggle('collapsed', v);
-  // a barra chiusa il testo della chat si allarga ancora (vedi body.sb-closed)
+  // with the sidebar closed the chat text gets even wider (see body.sb-closed)
   document.body.classList.toggle('sb-closed', v);
 }
 $('sidebarToggle').addEventListener('click', () => setSidebarCollapsed(true));
@@ -2170,7 +2230,7 @@ async function loadHistory() {
     if (!blocks.length && !m.errorMessage) continue;
     const body = newTurn(m.role === 'user' ? 'user' : 'pi',
       m.role === 'assistant' && (m.provider || m.model) ? { provider: m.provider, id: m.model } : null);
-    // le tool card vanno nel turno che si sta ricostruendo, non in quello live
+    // tool cards belong to the turn being rebuilt, not to the live one
     const prevTurn = currentTurn;
     currentTurn = body;
     let lastText = null;
@@ -2184,14 +2244,14 @@ async function loadHistory() {
         if (b.status === 'end') renderTool({ ...b, status: 'end' });
       }
     }
-    // turno finito male (errore provider / interruzione): senza questo la
-    // cronologia mostrerebbe solo un turno vuoto, senza spiegazione
+    // turn that ended badly (provider error / abort): without this the history
+    // would show an empty turn with no explanation
     if (m.errorMessage) bubble('sys err', (m.stopReason === 'aborted' ? '⏹ ' : '⚠ ') + m.errorMessage, body);
     currentTurn = prevTurn;
     if (lastText) addMsgActions(body, lastText, { entryId: m.entryId });
   }
-  // turno ancora in corso (la chat stava lavorando mentre eri altrove):
-  // lo si ricostruisce dal buffer del server e lo streaming prosegue live
+  // turn still in progress (the chat kept working while you were elsewhere):
+  // it is rebuilt from the server buffer and streaming continues live
   if (res.turnModel) state.turnModel = res.turnModel;
   currentTurn = currentAssistant = currentThinking = null;
   for (const seg of res.live ?? []) {
@@ -2210,7 +2270,7 @@ async function loadHistory() {
       else if (seg.tool.output) renderTool({ ...seg.tool, status: 'update' });
     }
   }
-  // la cartella si può ancora scegliere solo se la chat non è mai partita
+  // the folder can still be chosen only if the chat never started
   setChatStarted((res.messages ?? []).length > 0 || (res.live ?? []).length > 0);
   setRunning(!!res.streaming);
   if (res.streaming && !agentTask) setAgentTask(true, res.turnModel);
@@ -2245,7 +2305,7 @@ async function showDiff(p) {
   let html = '';
   if (d.write) html += '<div class="hunk">' + dlines('add', d.write.content) + '</div>';
   for (const h of d.hunks) html += '<div class="hunk">' + dlines('del', h.oldText) + dlines('add', h.newText) + '</div>';
-  $('diffBody').innerHTML = html || '<div class="sys" style="padding:.5rem">(nessuna modifica)</div>';
+  $('diffBody').innerHTML = html || '<div class="sys" style="padding:.5rem">(no change)</div>';
 }
 $('navDiff').addEventListener('click', () => {
   const open = $('diffPanel').classList.toggle('open');
@@ -2259,14 +2319,14 @@ $('diffClose').addEventListener('click', () => {
   document.body.classList.remove('diff-open');
 });
 
-/* ---------------- tasks panel: processi in background DI QUESTA chat --------
-   Una voce per il turno dell'agente (se sta girando) e una per ogni tool a
-   lunga durata (bash, task/agent, web) partito in questa chat. La lista è
-   legata alla chat corrente: cambiare chat la azzera e la ricostruisce dagli
-   eventi/replay del server. */
+/* ---------------- tasks panel: background processes OF THIS chat ------------
+   One entry for the agent turn (while it is running) and one for every
+   long-running tool (bash, task/agent, web) started in this chat. The list is
+   bound to the current chat: switching chat clears it and rebuilds it from the
+   server events/replay. */
 const tasks = new Map();          // toolCallId → { name, summary, t0, t1, error }
 const TASK_TOOLS = /^(bash|shell|task|agent|subagent|dispatch_agent|web_search|web_fetch|fetch)$/i;
-let agentTask = null;             // il turno dell'agente in corso su questa chat
+let agentTask = null;             // the agent turn currently running on this chat
 
 function resetTasks() { tasks.clear(); agentTask = null; syncTasks(); }
 function taskFromTool(ev) {
@@ -2306,7 +2366,7 @@ function renderTasks(list = taskList()) {
   const el = $('tasksBody');
   el.innerHTML = '';
   if (!list.length) {
-    el.innerHTML = '<div class="sys" style="padding:.6rem">Nessun processo in background in questa chat</div>';
+    el.innerHTML = '<div class="sys" style="padding:.6rem">No background process in this chat</div>';
     return;
   }
   for (const t of list) {
@@ -2315,14 +2375,14 @@ function renderTasks(list = taskList()) {
     div.className = 'taskItem';
     div.innerHTML = `<div class="t">${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span></div>
       <div class="m"><span>${esc(t.name)}</span><span>·</span>
-      <span class="${t.error ? 'err' : running ? 'st' : 'idle'}">${t.error ? 'Errore' : running ? 'In esecuzione' : 'Completato'}</span>
+      <span class="${t.error ? 'err' : running ? 'st' : 'idle'}">${t.error ? 'Error' : running ? 'Running' : 'Completed'}</span>
       <span>·</span><span>${fmtDur((t.t1 ?? Date.now()) - t.t0)}</span></div>`;
     div.querySelector('.lbl').textContent = t.summary || t.name;
     div.title = t.summary || t.name;
     el.appendChild(div);
   }
 }
-// i tempi dei task in corso scorrono da soli, ma solo a pannello aperto
+// running task timers tick on their own, but only while the panel is open
 setInterval(() => {
   if ($('tasksPanel').classList.contains('open') && taskList().some((t) => !t.t1)) renderTasks();
 }, 1000);
@@ -2332,7 +2392,7 @@ $('navTasks').addEventListener('click', () => {
   if (open) renderTasks();
 });
 $('tasksRefresh').addEventListener('click', () => {
-  // "Pulisci": via i task già finiti, restano solo quelli in corso
+  // "Clear": drop the finished tasks, keep only the running ones
   for (const [id, t] of tasks) if (t.t1) tasks.delete(id);
   if (agentTask?.t1) agentTask = null;
   syncTasks(); renderTasks();
@@ -2349,7 +2409,7 @@ const THEMES = [
   { id: 'ember', name: 'Ember', cols: ['#0a0705', '#17100b', '#fb923c'] },
   { id: 'nord', name: 'Nord Ice', cols: ['#090e15', '#131e2b', '#7dd3fc'] },
   { id: 'rose', name: 'Rosé', cols: ['#0c060f', '#1b1121', '#f472b6'] },
-  { id: 'daylight', name: 'Daylight (chiaro)', cols: ['#f6f7f9', '#e3e7ee', '#0d9488'] },
+  { id: 'daylight', name: 'Daylight (light)', cols: ['#f6f7f9', '#e3e7ee', '#0d9488'] },
 ];
 function applyTheme(id) {
   document.documentElement.dataset.theme = THEMES.some((t) => t.id === id) ? id : 'noir';
@@ -2359,22 +2419,25 @@ function applyTheme(id) {
 applyTheme(localStorage.getItem('piTheme') || 'noir');
 
 /* ---------------- views ---------------- */
-// sezioni della pagina impostazioni mostrate nella sidebar (al posto delle chat)
+// settings page sections listed in the sidebar (in place of the chats)
 const SETTINGS_SECTIONS = [
-  ['analytics', 'Analisi costi'],
-  ['sec-pi', 'Impostazioni di pi'],
-  ['sec-theme', 'Tema'],
-  ['sec-usage', 'Limiti account'],
-  ['sec-session', 'Sessione'],
-  ['sec-models', 'Modelli'],
-  ['sec-auth', 'Provider'],
-  ['sec-tools', 'Tool'],
-  ['sec-paths', 'Percorsi'],
-  ['sec-raw', 'Config raw'],
+  ['analytics', 'Cost analytics'],
+  ['sec-pi', 'pi settings'],
+  ['sec-theme', 'Theme'],
+  ['sec-usage', 'Account limits'],
+  ['sec-session', 'Session'],
+  ['sec-enabled', 'Enabled providers and models'],
+  ['sec-models', 'Models'],
+  ['sec-network', 'Local network'],
+  ['sec-chats', 'Chats'],
+  ['sec-auth', 'Providers'],
+  ['sec-tools', 'Tools'],
+  ['sec-paths', 'Paths'],
+  ['sec-raw', 'Raw config'],
 ];
 function buildSettingsNav() {
   const nav = $('settingsNav');
-  nav.innerHTML = '<div class="snav-label">Impostazioni</div>';
+  nav.innerHTML = '<div class="snav-label">Settings</div>';
   for (const [id, label] of SETTINGS_SECTIONS) {
     const b = document.createElement('button');
     b.className = 'snavItem';
@@ -2388,7 +2451,7 @@ function buildSettingsNav() {
     nav.appendChild(b);
   }
 }
-// evidenzia nella sidebar la sezione che stai guardando
+// highlight in the sidebar the section you are looking at
 $('settingsView').addEventListener('scroll', () => {
   const top = $('settingsView').getBoundingClientRect().top;
   let current = null;
@@ -2406,19 +2469,19 @@ function showChat() {
   $('navSettings').classList.remove('on');
   $('navDiff').classList.remove('hide');
   $('navTasks').classList.remove('hide');
-  $('sidebar').classList.remove('mode-settings');   // la sidebar torna alle chat
+  $('sidebar').classList.remove('mode-settings');   // the sidebar goes back to the chats
 }
 function showSettings() {
   $('chatView').classList.add('hide');
   $('settingsView').classList.remove('hide');
   $('navChat').classList.remove('on');
   $('navSettings').classList.add('on');
-  // in impostazioni i pannelli diff/attività non hanno senso: chiudili e nascondi i tasti
+  // in settings the diff/tasks panels make no sense: close them and hide the buttons
   $('diffClose').click();
   $('tasksClose').click();
   $('navDiff').classList.add('hide');
   $('navTasks').classList.add('hide');
-  $('sidebar').classList.add('mode-settings');      // la sidebar mostra le sezioni
+  $('sidebar').classList.add('mode-settings');      // the sidebar shows the sections
   buildSettingsNav();
   renderSettings();
   loadAnalytics();
@@ -2432,11 +2495,11 @@ const anState = { range: '30', model: '__all', project: '__all', gran: 'day', so
 async function loadAnalytics(force) {
   const box = $('analytics');
   if (!anData || force) {
-    box.innerHTML = '<div class="sys">Caricamento analisi costi…</div>';
+    box.innerHTML = '<div class="sys">Loading cost analytics…</div>';
     anData = await api('/api/analytics');
   }
   if (!anData || anData.error) {
-    box.innerHTML = '<div class="sys">Impossibile leggere lo storico delle sessioni</div>';
+    box.innerHTML = '<div class="sys">Could not read the session history</div>';
     return;
   }
   renderAnalytics();
@@ -2471,7 +2534,6 @@ function anFiltered() {
 
 function renderAnalytics() {
   const rows = anFiltered();
-  const money = (n) => '$' + (n < 1 ? n.toFixed(4) : n.toFixed(2));
 
   // totals per model + per period
   const byModel = new Map(), byPeriod = new Map();
@@ -2496,52 +2558,52 @@ function renderAnalytics() {
   const kpi = (k, v) => `<div class="an-kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 
   $('analytics').innerHTML = `
-    <h3>Analisi costi</h3>
-    <p class="note">Stima calcolata da pi sui prezzi API al momento di ogni richiesta, letta dallo storico
-      delle sessioni (${anData.files} file). Con un piano ad abbonamento non corrisponde a una spesa reale.</p>
+    <h3>Cost analytics</h3>
+    <p class="note">Estimate computed by pi from the API prices at the time of each request, read from the
+      session history (${anData.files} files). On a subscription plan it does not match a real spend.</p>
     <div class="an-filters">
       <select id="anRange">
-        ${opt('7', 'Ultimi 7 giorni', anState.range)}${opt('30', 'Ultimi 30 giorni', anState.range)}
-        ${opt('90', 'Ultimi 90 giorni', anState.range)}${opt('365', 'Ultimo anno', anState.range)}
-        ${opt('all', 'Tutto lo storico', anState.range)}
+        ${opt('7', 'Last 7 days', anState.range)}${opt('30', 'Last 30 days', anState.range)}
+        ${opt('90', 'Last 90 days', anState.range)}${opt('365', 'Last year', anState.range)}
+        ${opt('all', 'All history', anState.range)}
       </select>
       <select id="anGran">
-        ${opt('day', 'per giorno', anState.gran)}${opt('week', 'per settimana', anState.gran)}${opt('month', 'per mese', anState.gran)}
+        ${opt('day', 'per day', anState.gran)}${opt('week', 'per week', anState.gran)}${opt('month', 'per month', anState.gran)}
       </select>
       <select id="anModel">
-        ${opt('__all', 'Tutti i modelli', anState.model)}
+        ${opt('__all', 'All models', anState.model)}
         ${anData.models.map((m) => opt(m, m, anState.model)).join('')}
       </select>
       <select id="anProject">
-        ${opt('__all', 'Tutti i progetti', anState.project)}
+        ${opt('__all', 'All projects', anState.project)}
         ${anData.projects.map((p) => opt(p, p.split(/[\\/]/).pop() || p, anState.project)).join('')}
       </select>
       <span style="flex:1"></span>
-      <button class="btn outline" id="anReload">Aggiorna</button>
+      <button class="btn outline" id="anReload">Refresh</button>
     </div>
     <div class="an-kpis">
-      ${kpi('Costo totale', money(tot.cost))}
-      ${kpi('Token totali', fmt(tot.tokens))}
-      ${kpi('Richieste', fmt(tot.requests))}
-      ${kpi('Sessioni', fmt(tot.sessions))}
-      ${kpi('Costo / sessione', tot.sessions ? money(tot.cost / tot.sessions) : '—')}
-      ${kpi('Modello top', top ? top.model.split('/').pop() : '—')}
+      ${kpi('Total cost', money(tot.cost))}
+      ${kpi('Total tokens', fmt(tot.tokens))}
+      ${kpi('Requests', fmt(tot.requests))}
+      ${kpi('Sessions', fmt(tot.sessions))}
+      ${kpi('Cost / session', tot.sessions ? money(tot.cost / tot.sessions) : '—')}
+      ${kpi('Top model', top ? top.model.split('/').pop() : '—')}
     </div>
     ${anChart(periods, colorOf)}
     <div class="an-legend">${[...colorOf].map(([m, c]) => `<span><i style="background:${c}"></i>${esc(m)}</span>`).join('')}</div>
     <table class="an-table">
       <thead><tr>
-        <th data-s="model">Modello</th><th data-s="input">Input</th><th data-s="output">Output</th>
+        <th data-s="model">Model</th><th data-s="input">Input</th><th data-s="output">Output</th>
         <th data-s="cacheWrite">Cache W</th><th data-s="cacheRead">Cache R</th>
-        <th data-s="requests">Req</th><th data-s="cost">Costo</th><th>%</th>
+        <th data-s="requests">Req</th><th data-s="cost">Cost</th><th>%</th>
       </tr></thead>
       <tbody>
         ${models.map((m) => `<tr>
           <td><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf.get(m.model)};margin-right:.4rem"></i>${esc(m.model)}</td>
           <td>${fmt(m.input)}</td><td>${fmt(m.output)}</td><td>${fmt(m.cacheWrite)}</td><td>${fmt(m.cacheRead)}</td>
           <td>${m.requests}</td><td>${money(m.cost)}</td><td>${tot.cost ? (100 * m.cost / tot.cost).toFixed(1) : '0.0'}%</td>
-        </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--faint)">Nessun dato per questi filtri</td></tr>'}
-        ${models.length ? `<tr><td>Totale</td><td>${fmt(models.reduce((s, m) => s + m.input, 0))}</td>
+        </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--faint)">No data for these filters</td></tr>'}
+        ${models.length ? `<tr><td>Total</td><td>${fmt(models.reduce((s, m) => s + m.input, 0))}</td>
           <td>${fmt(models.reduce((s, m) => s + m.output, 0))}</td><td>${fmt(models.reduce((s, m) => s + m.cacheWrite, 0))}</td>
           <td>${fmt(models.reduce((s, m) => s + m.cacheRead, 0))}</td><td>${tot.requests}</td><td>${money(tot.cost)}</td><td>100%</td></tr>` : ''}
       </tbody>
@@ -2558,7 +2620,7 @@ function renderAnalytics() {
 
 // Stacked bar chart, plain SVG (no chart library in this project on purpose).
 function anChart(periods, colorOf) {
-  if (!periods.length) return '<div class="sys" style="padding:1.5rem 0;text-align:center">Nessun dato nel periodo selezionato</div>';
+  if (!periods.length) return '<div class="sys" style="padding:1.5rem 0;text-align:center">No data in the selected period</div>';
   const W = 900, H = 190, padL = 46, padB = 22, padT = 8;
   const max = Math.max(...periods.map((p) => p.cost)) || 1;
   const bw = Math.max(2, Math.min(38, (W - padL - 8) / periods.length - 3));
@@ -2596,9 +2658,9 @@ $('navSettings').addEventListener('click', showSettings);
 
 async function renderSettings() {
   const body = $('settingsBody');
-  body.innerHTML = '<div class="sys">Caricamento…</div>';
+  body.innerHTML = '<div class="sys">Loading…</div>';
   const [st, c, usageCfg] = await Promise.all([api('/api/settings'), api('/api/config'), api('/api/usage/config')]);
-  if (st.error || c.error) { body.innerHTML = '<div class="sys">Impossibile caricare la configurazione</div>'; return; }
+  if (st.error || c.error) { body.innerHTML = '<div class="sys">Could not load the configuration</div>'; return; }
   $('agentDir').textContent = st.agentDir ?? c.paths.agentDir;
 
   /* ---- 1. pi settings, editable where possible ---- */
@@ -2610,7 +2672,7 @@ async function renderSettings() {
         const val = it.value;
         let ctl;
         if (!it.editable) {
-          ctl = `<span class="v" style="font-size:.78rem;color:var(--faint)">${val === null ? 'non impostato' : esc(JSON.stringify(val))}</span>`;
+          ctl = `<span class="v" style="font-size:.78rem;color:var(--faint)">${val === null ? 'not set' : esc(JSON.stringify(val))}</span>`;
         } else if (it.type === 'boolean') {
           ctl = `<span class="sw ${val ? 'on' : ''}" id="${id}" data-key="${esc(it.key)}" data-type="boolean" role="switch" tabindex="0"></span>`;
         } else if (it.options && it.options.length > 1) {
@@ -2625,32 +2687,32 @@ async function renderSettings() {
         }
         return `<div class="setRow ${it.editable ? '' : 'ro'}">
           <div>
-            <div class="k">${esc(it.key)} <span class="badge">${esc(it.type)}</span>${it.set ? '<span class="badge ok">impostato</span>' : ''}</div>
+            <div class="k">${esc(it.key)} <span class="badge">${esc(it.type)}</span>${it.set ? '<span class="badge ok">set</span>' : ''}</div>
             <div class="d">${esc(it.description)}</div>
             ${it.default && it.default !== '-' ? `<div class="def">default: <code>${esc(it.default)}</code></div>` : ''}
           </div>
-          <div class="ctl">${ctl}<span class="saved" id="${id}_ok">salvato</span></div>
+          <div class="ctl">${ctl}<span class="saved" id="${id}_ok">saved</span></div>
         </div>`;
       }).join('')}
     </div>`).join('');
 
   body.innerHTML = `
     <div class="sec" id="sec-pi">
-      <h3>Impostazioni di pi — <span style="color:var(--txt-dim);text-transform:none;letter-spacing:0">${esc(st.path)}</span></h3>
-      <p class="lead" style="margin:-.3rem 0 .8rem">Le modifiche vengono salvate subito nel file. La maggior parte viene letta da pi all'avvio: riavvia il server (⏻) o la CLI per applicarle.</p>
+      <h3>pi settings — <span style="color:var(--txt-dim);text-transform:none;letter-spacing:0">${esc(st.path)}</span></h3>
+      <p class="lead" style="margin:-.3rem 0 .8rem">Changes are saved to the file right away. Most of them are read by pi at startup: restart the server (⏻) or the CLI to apply them.</p>
       ${secHtml}
-      ${st.extras?.length ? `<div class="sys">Chiavi presenti nel file ma non documentate: ${st.extras.map(esc).join(', ')}</div>` : ''}
+      ${st.extras?.length ? `<div class="sys">Keys present in the file but undocumented: ${st.extras.map(esc).join(', ')}</div>` : ''}
     </div>
 
     <div class="sec" id="sec-theme">
-      <h3>Tema della web UI</h3>
+      <h3>Web UI theme</h3>
       <div class="themeGrid">${THEMES.map((t) => `
         <button class="themeCard" data-t="${t.id}">
           <span class="sw-row">${t.cols.map((c2) => `<i style="background:${c2}"></i>`).join('')}</span>
           <span class="nm">${esc(t.name)}</span>
         </button>`).join('')}</div>
 
-      <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Loghi dei modelli</h4>
+      <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
       <div class="themeGrid">${LOGO_STYLES.map((s) => `
         <button class="themeCard logoStyleCard" data-l="${s.id}">
           <span class="prev">${['anthropic', 'openai', 'google', 'kimi'].map((p) => logoHtml(p, '', 'lg fixed')).join('')}</span>
@@ -2659,99 +2721,166 @@ async function renderSettings() {
     </div>
 
     <div class="sec" id="sec-usage">
-      <h3>Limiti reali dell'account (claude.ai / kimi.com)</h3>
-      <p class="lead" style="margin:-.3rem 0 .8rem">Non è un'API pubblica: replica quello che il browser vede sulle pagine di utilizzo dei due account. Serve la sessione del browser — <b>resta solo su questo PC</b>, in <code>~/.pi/agent/web-usage.json</code>, mai committata. Va rinnovata quando scade.<br><b>Non serve capire niente:</b> copia la richiesta con <b>Copy as cURL</b> e incollala qui sotto, il resto lo ricavo io.</p>
+      <h3>Real account limits (claude.ai / kimi.com)</h3>
+      <p class="lead" style="margin:-.3rem 0 .8rem">This is not a public API: it replays what the browser sees on the usage pages of the two accounts. It needs your browser session — <b>it stays on this machine only</b>, in <code>~/.pi/agent/web-usage.json</code>, never committed. It has to be renewed when it expires.<br><b>Nothing to figure out:</b> copy the request with <b>Copy as cURL</b> and paste it below, the rest is derived from it.</p>
       <div class="card" style="padding:.9rem 1rem;margin-bottom:.7rem">
         <h4 style="margin:0 0 .5rem;font-size:.82rem;color:var(--teal)">Claude (claude.ai)
-          <span class="badge ${usageCfg.anthropic?.configured ? 'ok' : ''}" id="claudeCfgBadge">${usageCfg.anthropic?.configured ? 'configurato' : 'non configurato'}</span>
+          <span class="badge ${usageCfg.anthropic?.configured ? 'ok' : ''}" id="claudeCfgBadge">${usageCfg.anthropic?.configured ? 'configured' : 'not configured'}</span>
         </h4>
         <ol class="d" style="margin:0 0 .5rem;padding-left:1.2rem;line-height:1.6">
-          <li>Apri <code>claude.ai</code> e premi <b>F12</b> → scheda <b>Network</b> (lasciala aperta)</li>
-          <li><b>Ora</b> vai su <b>Impostazioni → Utilizzo (Usage)</b>: la richiesta parte solo quando apri quella pagina, prima nel Network non c'è</li>
-          <li>Scrivi <code>usage</code> nel filtro e cerca la riga il cui URL è tipo:<br><code style="word-break:break-all">https://claude.ai/api/organizations/e44d8396-f752-4390-a998-eea4232dad75/usage</code></li>
-          <li>Tasto destro su quella riga → <b>Copy</b> → <b>Copy as cURL</b> (qualsiasi variante: POSIX, bash o Windows)</li>
-          <li>Incolla <b>tutto</b> il comando qui sotto — non solo l'URL — e premi <b>Salva e prova</b></li>
+          <li>Open <code>claude.ai</code> and press <b>F12</b> → <b>Network</b> tab (leave it open)</li>
+          <li><b>Now</b> go to <b>Settings → Usage</b>: the request only fires when you open that page, before that it is not in Network</li>
+          <li>Type <code>usage</code> in the filter and look for the row whose URL looks like:<br><code style="word-break:break-all">https://claude.ai/api/organizations/e44d8396-f752-4390-a998-eea4232dad75/usage</code></li>
+          <li>Right-click that row → <b>Copy</b> → <b>Copy as cURL</b> (any variant: POSIX, bash or Windows)</li>
+          <li>Paste the <b>whole</b> command below — not just the URL — and press <b>Save and test</b></li>
         </ol>
         <textarea id="claudeCookie" placeholder="curl 'https://claude.ai/api/organizations/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/usage' \&#10;  -H 'Cookie: sessionKey=...; cf_clearance=...' \&#10;  -H 'Accept: */*' ..." rows="5" style="width:100%;resize:vertical;font:12px var(--font-mono);background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;color:var(--txt);padding:.5rem"></textarea>
-        <details style="margin-top:.4rem"><summary class="sys" style="cursor:pointer">…oppure incollo il cookie a mano</summary>
-          <div class="sys" style="margin:.4rem 0">Va bene anche l'header <code>Cookie</code> in una riga (<code>sessionKey=…; cf_clearance=…</code>) o la tabella DevTools → Application → Cookies. Attenzione: se copi dal pannello a schermo i valori lunghi sono <b>troncati</b> con <code>…</code> e non funzionano. In questo caso l'org id va scritto a mano:</div>
-          <input id="claudeOrgId" placeholder="org id, es. e44d8396-f752-4390-a998-eea4232dad75" value="${esc(usageCfg.anthropic?.orgId ?? '')}">
+        <details style="margin-top:.4rem"><summary class="sys" style="cursor:pointer">…or paste the cookie by hand</summary>
+          <div class="sys" style="margin:.4rem 0">A one-line <code>Cookie</code> header (<code>sessionKey=…; cf_clearance=…</code>) or the DevTools → Application → Cookies table works too. Careful: if you copy from the on-screen panel the long values are <b>truncated</b> with <code>…</code> and will not work. In that case the org id has to be typed in by hand:</div>
+          <input id="claudeOrgId" placeholder="org id, e.g. e44d8396-f752-4390-a998-eea4232dad75" value="${esc(usageCfg.anthropic?.orgId ?? '')}">
         </details>
         <div class="row" style="margin-top:.5rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
-          <button class="btn teal" id="claudeCfgSave">Salva e prova</button>
-          <button class="btn outline" id="claudeCfgTest">Riprova</button>
-          <button class="btn outline" id="claudeCfgClear">Rimuovi</button>
+          <button class="btn teal" id="claudeCfgSave">Save and test</button>
+          <button class="btn outline" id="claudeCfgTest">Retry</button>
+          <button class="btn outline" id="claudeCfgClear">Remove</button>
           <span class="sys" id="claudeCfgMsg" style="flex:1 0 100%"></span>
         </div>
       </div>
       <div class="card" style="padding:.9rem 1rem">
         <h4 style="margin:0 0 .5rem;font-size:.82rem;color:var(--teal)">Kimi (kimi.com)
-          <span class="badge ${usageCfg.kimi?.configured ? 'ok' : ''}" id="kimiCfgBadge">${usageCfg.kimi?.configured ? 'configurato' : 'non configurato'}</span>
+          <span class="badge ${usageCfg.kimi?.configured ? 'ok' : ''}" id="kimiCfgBadge">${usageCfg.kimi?.configured ? 'configured' : 'not configured'}</span>
         </h4>
         <ol class="d" style="margin:0 0 .5rem;padding-left:1.2rem;line-height:1.6">
-          <li>Apri <code>kimi.com/code/console</code> e premi <b>F12</b> → scheda <b>Network</b> (lasciala aperta)</li>
-          <li><b>Ora</b> ricarica la pagina o apri il pannello dei consumi: la richiesta parte solo lì</li>
-          <li>Scrivi <code>GetUsages</code> nel filtro e cerca la riga il cui URL è:<br><code style="word-break:break-all">https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages</code></li>
-          <li>Tasto destro su quella riga → <b>Copy</b> → <b>Copy as cURL</b> (qualsiasi variante)</li>
-          <li>Incolla <b>tutto</b> il comando qui sotto e premi <b>Salva e prova</b></li>
+          <li>Open <code>kimi.com/code/console</code> and press <b>F12</b> → <b>Network</b> tab (leave it open)</li>
+          <li><b>Now</b> reload the page or open the usage panel: the request only fires there</li>
+          <li>Type <code>GetUsages</code> in the filter and look for the row whose URL is:<br><code style="word-break:break-all">https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages</code></li>
+          <li>Right-click that row → <b>Copy</b> → <b>Copy as cURL</b> (any variant)</li>
+          <li>Paste the <b>whole</b> command below and press <b>Save and test</b></li>
         </ol>
         <textarea id="kimiBearer" placeholder="curl 'https://www.kimi.com/apiv2/.../GetUsages' -H 'Authorization: Bearer eyJ...' ..." rows="4" style="width:100%;resize:vertical;font:12px var(--font-mono);background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;color:var(--txt);padding:.5rem"></textarea>
-        <div class="sys" style="margin-top:.3rem">Va bene anche il solo token JWT (il valore dopo <code>Bearer </code>, tre parti separate da punti).</div>
+        <div class="sys" style="margin-top:.3rem">The bare JWT token also works (the value after <code>Bearer </code>, three dot-separated parts).</div>
         <div class="row" style="margin-top:.5rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
-          <button class="btn teal" id="kimiCfgSave">Salva e prova</button>
-          <button class="btn outline" id="kimiCfgTest">Riprova</button>
-          <button class="btn outline" id="kimiCfgClear">Rimuovi</button>
+          <button class="btn teal" id="kimiCfgSave">Save and test</button>
+          <button class="btn outline" id="kimiCfgTest">Retry</button>
+          <button class="btn outline" id="kimiCfgClear">Remove</button>
           <span class="sys" id="kimiCfgMsg" style="flex:1 0 100%"></span>
         </div>
       </div>
     </div>
 
+    <div class="sec" id="sec-network">
+      <h3>Local network access</h3>
+      <div class="card" style="padding:.9rem 1rem">
+        <div class="setRow">
+          <div>
+            <div class="k">lanAccess <span class="badge">boolean</span></div>
+            <div class="d"><b>Warning:</b> this web UI drives an agent that reads, writes and runs commands on <b>your</b> computer. Opening it to the local network means anyone who gets the link (or is on the same Wi-Fi, for instance a guest or a compromised device) can use it with your permissions. Traffic is plain HTTP, not encrypted. Leave it off unless you really need it.</div>
+            <div class="def">default: <code>off</code> — the server listens on 127.0.0.1 only. Connected devices must repeat the handshake every 24 hours: the access cookie expires on purpose.</div>
+          </div>
+          <div class="ctl"><span class="sw" id="lanAccessSw" role="switch" tabindex="0"></span></div>
+        </div>
+        <div id="lanDetails" class="hide" style="margin-top:.6rem">
+          <div class="kv">
+            <div class="k">detected address</div><div class="v" id="lanIp">—</div>
+            <div class="k">access link</div><div class="v"><code id="lanUrl" style="word-break:break-all">hidden — use the button below</code></div>
+          </div>
+          <div class="sys" style="margin:.4rem 0">Reveal the link and open it <b>once</b> on the other device: the token is exchanged for a cookie and disappears from the address bar. Do not share it.</div>
+          <div class="row" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+            <button class="btn outline" id="lanReveal">Show connection URL</button>
+            <button class="btn outline" id="lanCopy">Copy link</button>
+            <button class="btn outline" id="lanRegen">Regenerate token</button>
+            <span class="sys" id="lanMsg" style="flex:1 0 100%"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec" id="sec-chats">
+      <h3>Chat archiving</h3>
+      <div class="card" style="padding:.9rem 1rem">
+        <div class="setRow">
+          <div>
+            <div class="k">chatArchiving <span class="badge">boolean</span></div>
+            <div class="d">Done chats sink to the bottom of the sidebar and look dimmed, so the list stays tidy. Turning the option off makes the sidebar a flat list again: the statuses already saved are not deleted and come back if you turn it on again.</div>
+            <div class="def">default: <code>on</code> — on the very first start, chats idle for more than 24 hours are marked done once</div>
+          </div>
+          <div class="ctl"><span class="sw" id="chatArchivingSw" role="switch" tabindex="0"></span></div>
+        </div>
+        <div id="chatArchivingDetails" class="hide" style="margin-top:.6rem">
+          <div class="row" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+            <button class="btn outline" id="archiveNowBtn">Archive chats older than 24 hours</button>
+            <span class="sys" id="chatArchivingMsg" style="flex:1 0 100%"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="sec" id="sec-session">
-      <h3>Sessione corrente</h3>
+      <h3>Current session</h3>
       <div class="card" style="padding:.9rem 1rem"><div class="kv">
-        <div class="k">modello</div><div class="v">${c.current ? esc(c.current.provider + '/' + c.current.id) : '—'}</div>
-        <div class="k">reasoning</div><div class="v">${esc(c.thinkingLevel)} (disponibili: ${c.thinkingLevels.join(', ')})</div>
-        <div class="k">cartella di lavoro</div><div class="v">${esc(c.cwd)}</div>
-        <div class="k">file di sessione</div><div class="v">${esc(c.sessionFile ?? '—')}</div>
+        <div class="k">model</div><div class="v">${c.current ? esc(c.current.provider + '/' + c.current.id) : '—'}</div>
+        <div class="k">reasoning</div><div class="v">${esc(c.thinkingLevel)} (available: ${c.thinkingLevels.join(', ')})</div>
+        <div class="k">working folder</div><div class="v">${esc(c.cwd)}</div>
+        <div class="k">session file</div><div class="v">${esc(c.sessionFile ?? '—')}</div>
         <div class="k">node</div><div class="v">${esc(c.node)}</div>
       </div></div>
     </div>
 
+    <div class="sec" id="sec-enabled">
+      <h3>Enabled providers and models</h3>
+      <p class="lead" style="margin:-.3rem 0 .8rem">Only the ticked entries show up in the model picker at the top. The list is written to the <code>enabledModels</code> key of settings.json (glob format, shared with the pi CLI): ticking a provider writes <code>provider/*</code>, ticking a model writes its full identifier.</p>
+      <div class="card" style="padding:.9rem 1rem">
+        <div class="sys" id="enabledHint"></div>
+        <h4 style="margin:.7rem 0 .4rem;font-size:.82rem;color:var(--teal);letter-spacing:.04em">Providers</h4>
+        <div id="enabledProviders" style="display:flex;gap:.4rem;flex-wrap:wrap"></div>
+        <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal);letter-spacing:.04em">Models</h4>
+        <div class="search" style="margin-bottom:.5rem">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+          <input id="enabledSearch" placeholder="Search model or provider…">
+        </div>
+        <div id="enabledModelList" style="display:flex;gap:.4rem;flex-wrap:wrap;max-height:320px;overflow:auto"></div>
+        <div class="row" style="margin-top:.6rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <button class="btn outline" id="enabledClear">Clear the list</button>
+          <span class="sys" id="enabledMsg" style="flex:1 0 100%"></span>
+        </div>
+      </div>
+    </div>
+
     <div class="sec" id="sec-models">
-      <h3>Modelli — clicca una card per attivare il modello</h3>
+      <h3>Models — click a card to activate the model</h3>
       <div style="display:flex;gap:.5rem;margin-bottom:.7rem;align-items:center;flex-wrap:wrap">
         <div class="search" style="flex:1;min-width:200px">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
-          <input id="modelSearch" placeholder="Cerca modello o provider…">
+          <input id="modelSearch" placeholder="Search model or provider…">
         </div>
-        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyAuth" checked> solo autenticati</label>
-        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyReason"> solo con reasoning</label>
+        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyAuth" checked> authenticated only</label>
+        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyReason"> with reasoning only</label>
         <span class="sys" id="modelCount"></span>
       </div>
       <div class="modelGrid" id="modelGrid"></div>
     </div>
 
     <div class="sec" id="sec-auth">
-      <h3>Provider &amp; autenticazione</h3>
+      <h3>Providers &amp; authentication</h3>
       <div class="card" style="padding:.9rem 1rem"><div class="kv">${c.providers.filter((p) => p.configured || p.models > 0).map((p) => `
         <div class="k">${esc(p.id)}</div>
-        <div class="v">${p.configured ? '<span class="badge ok">autenticato</span>' : '<span class="badge no">non configurato</span>'}
+        <div class="v">${p.configured ? '<span class="badge ok">authenticated</span>' : '<span class="badge no">not configured</span>'}
           ${p.oauth ? '<span class="badge">oauth</span>' : ''}
-          <span class="badge">${p.models} modelli</span> ${esc(p.detail || '')}</div>`).join('')}</div>
+          <span class="badge">${p.models} models</span> ${esc(p.detail || '')}</div>`).join('')}</div>
       </div>
     </div>
 
     <div class="sec" id="sec-tools">
-      <h3>Tool attivi (${(c.tools ?? []).filter((t) => t.active).length}/${(c.tools ?? []).length})</h3>
+      <h3>Active tools (${(c.tools ?? []).filter((t) => t.active).length}/${(c.tools ?? []).length})</h3>
       <div class="card" style="padding:.5rem 1rem">
         ${(c.tools ?? []).map((t) => `<div class="toolItem"><span class="n">${esc(t.name)}</span>
           <span class="d">${esc(t.description)}</span><span style="flex:1"></span>
-          <span class="badge ${t.active ? 'ok' : ''}">${t.active ? 'attivo' : 'off'}</span></div>`).join('') || '<div class="sys">—</div>'}
+          <span class="badge ${t.active ? 'ok' : ''}">${t.active ? 'active' : 'off'}</span></div>`).join('') || '<div class="sys">—</div>'}
       </div>
     </div>
 
     <div class="sec" id="sec-paths">
-      <h3>Percorsi</h3>
+      <h3>Paths</h3>
       <div class="card" style="padding:.9rem 1rem"><div class="kv">
         ${Object.entries(c.paths).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join('')}
       </div></div>
@@ -2767,6 +2896,63 @@ async function renderSettings() {
       <pre class="raw">${esc(JSON.stringify(c.rawModels ?? {}, null, 2))}</pre>
     </div>`;
 
+  /* ---- LAN access ---- */
+  function drawNetwork(net) {
+    if (net.error) { $('lanMsg').textContent = net.error; return; }
+    $('lanAccessSw').classList.toggle('on', net.lanAccess);
+    $('lanDetails').classList.toggle('hide', !net.lanAccess);
+    $('lanIp').textContent = net.ip ?? 'no network interface';
+    // The status response never carries the URL: hide it again on every redraw.
+    $('lanUrl').textContent = 'hidden — use the button below';
+    $('lanMsg').textContent = net.restartRequired
+      ? 'Restart the server (⏻) to listen on the new interface.'
+      : '';
+  }
+  drawNetwork(await api('/api/network'));
+  const setLanAccess = async (body) => drawNetwork(await post('/api/network', body));
+  const lanSw = $('lanAccessSw');
+  const toggleLan = () => setLanAccess({ lanAccess: !lanSw.classList.contains('on') });
+  lanSw.addEventListener('click', toggleLan);
+  lanSw.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLan(); }
+  });
+  $('lanRegen').addEventListener('click', () => setLanAccess({ regenerate: true }));
+  $('lanReveal').addEventListener('click', async () => {
+    const res = await post('/api/network', { reveal: true });
+    if (res.error) { $('lanMsg').textContent = res.error; return; }
+    $('lanUrl').textContent = res.url;
+  });
+  $('lanCopy').addEventListener('click', async () => {
+    const url = $('lanUrl').textContent;
+    if (!url.startsWith('http')) { $('lanMsg').textContent = 'reveal the URL first'; return; }
+    await navigator.clipboard.writeText(url).catch(() => {});
+    $('lanMsg').textContent = 'link copied';
+  });
+
+  /* ---- chat archiving ---- */
+  function drawArchiving(cfg, msg = '') {
+    if (cfg.error) return;
+    applyChatArchiving(cfg.enabled);
+    $('chatArchivingSw').classList.toggle('on', chatArchiving);
+    $('chatArchivingDetails').classList.toggle('hide', !chatArchiving);
+    $('chatArchivingMsg').textContent = msg;
+  }
+  drawArchiving(await api('/api/archiving'));
+  const toggleArchiving = async () => {
+    drawArchiving(await post('/api/archiving', { enabled: !chatArchiving }));
+    loadSessions();
+  };
+  $('chatArchivingSw').addEventListener('click', toggleArchiving);
+  $('chatArchivingSw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleArchiving(); }
+  });
+  $('archiveNowBtn').addEventListener('click', async () => {
+    const r = await post('/api/archiving', { archiveNow: true });
+    if (r.error) { $('chatArchivingMsg').textContent = r.error; return; }
+    drawArchiving(r, `${r.archived} chats archived`);
+    loadSessions();
+  });
+
   /* ---- usage credentials handlers ---- */
   function cfgMsg(id, text, kind) {
     const el = $(id);
@@ -2774,19 +2960,25 @@ async function renderSettings() {
     el.style.color = kind === 'ok' ? 'var(--teal)' : kind === 'err' ? 'var(--red, #e5534b)' : '';
   }
   async function testUsage(provider, msgId) {
-    cfgMsg(msgId, 'verifico…', '');
+    cfgMsg(msgId, 'checking…', '');
     const r = await post('/api/usage/test', { provider });
-    if (r.error || !r.ok) { cfgMsg(msgId, '✗ ' + (r.reason || r.error || 'non funziona'), 'err'); return false; }
-    cfgMsg(msgId, '✓ funziona — dati ricevuti da ' + (provider === 'anthropic' ? 'claude.ai' : 'kimi.com'), 'ok');
+    if (r.error || !r.ok) { cfgMsg(msgId, '✗ ' + (r.reason || r.error || 'not working'), 'err'); return false; }
+    cfgMsg(msgId, '✓ works — data received from ' + (provider === 'anthropic' ? 'claude.ai' : 'kimi.com'), 'ok');
     return true;
+  }
+  // provider credentials badge: same two states for every provider
+  function setCfgBadge(id, configured) {
+    const badge = $(id);
+    badge.textContent = configured ? 'configured' : 'not configured';
+    badge.classList.toggle('ok', configured);
   }
   $('claudeCfgSave').addEventListener('click', async () => {
     const orgId = $('claudeOrgId').value.trim();
     const paste = $('claudeCookie').value.trim();
-    if (!paste && !orgId) { cfgMsg('claudeCfgMsg', 'incolla il comando cURL copiato da DevTools', 'err'); return; }
+    if (!paste && !orgId) { cfgMsg('claudeCfgMsg', 'paste the cURL command copied from DevTools', 'err'); return; }
     const r = await post('/api/usage/config', { provider: 'anthropic', paste, ...(orgId ? { orgId } : {}) });
     if (r.error) { cfgMsg('claudeCfgMsg', '✗ ' + r.error, 'err'); return; }
-    $('claudeCfgBadge').textContent = 'configurato'; $('claudeCfgBadge').classList.add('ok');
+    setCfgBadge('claudeCfgBadge', true);
     $('claudeOrgId').value = r.status?.anthropic?.orgId ?? orgId;
     $('claudeCookie').value = '';
     await testUsage('anthropic', 'claudeCfgMsg');
@@ -2796,23 +2988,23 @@ async function renderSettings() {
   $('kimiCfgTest').addEventListener('click', () => testUsage('kimi', 'kimiCfgMsg'));
   $('claudeCfgClear').addEventListener('click', async () => {
     await api('/api/usage/config', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'anthropic' }) });
-    $('claudeCfgBadge').textContent = 'non configurato'; $('claudeCfgBadge').classList.remove('ok');
+    setCfgBadge('claudeCfgBadge', false);
     $('claudeOrgId').value = ''; $('claudeCookie').value = ''; cfgMsg('claudeCfgMsg', '', '');
     refreshUsage();
   });
   $('kimiCfgSave').addEventListener('click', async () => {
     const paste = $('kimiBearer').value.trim();
-    if (!paste) { cfgMsg('kimiCfgMsg', 'incolla il comando cURL copiato da DevTools', 'err'); return; }
+    if (!paste) { cfgMsg('kimiCfgMsg', 'paste the cURL command copied from DevTools', 'err'); return; }
     const r = await post('/api/usage/config', { provider: 'kimi', paste });
     if (r.error) { cfgMsg('kimiCfgMsg', '✗ ' + r.error, 'err'); return; }
-    $('kimiCfgBadge').textContent = 'configurato'; $('kimiCfgBadge').classList.add('ok');
+    setCfgBadge('kimiCfgBadge', true);
     $('kimiBearer').value = '';
     await testUsage('kimi', 'kimiCfgMsg');
     refreshUsage();
   });
   $('kimiCfgClear').addEventListener('click', async () => {
     await api('/api/usage/config', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'kimi' }) });
-    $('kimiCfgBadge').textContent = 'non configurato'; $('kimiCfgBadge').classList.remove('ok');
+    setCfgBadge('kimiCfgBadge', false);
     $('kimiBearer').value = ''; cfgMsg('kimiCfgMsg', '', '');
     refreshUsage();
   });
@@ -2821,7 +3013,7 @@ async function renderSettings() {
   async function saveSetting(key, value, okEl) {
     const r = await post('/api/settings', { key, value });
     if (r.error) return false;
-    if (okEl) { okEl.textContent = r.restart ? 'salvato · riavvia' : 'salvato'; okEl.classList.add('show'); setTimeout(() => okEl.classList.remove('show'), 2500); }
+    if (okEl) { okEl.textContent = r.restart ? 'saved · restart' : 'saved'; okEl.classList.add('show'); setTimeout(() => okEl.classList.remove('show'), 2500); }
     return true;
   }
   body.querySelectorAll('.sw[data-key]').forEach((sw) => {
@@ -2849,6 +3041,57 @@ async function renderSettings() {
   applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
   applyTheme(document.documentElement.dataset.theme);
 
+  /* ---- enabledModels: allow-list per provider and per model ---- */
+  // An empty list is pi's default and means "everything enabled": it must not be
+  // confused with "nothing enabled".
+  const providerPattern = (provider) => `${provider}/*`;
+  const modelPattern = (m) => `${m.provider}/${m.id}`;
+  const authedModels = c.models.filter((m) => m.authed);
+  const authedProviders = [...new Set(authedModels.map((m) => m.provider))].sort();
+  let enabledPatterns = c.options?.enabledModels ?? [];
+
+  const checkbox = (pattern, label, on) =>
+    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}> ${esc(label)}</label>`;
+
+  function drawEnabled() {
+    const on = new Set(enabledPatterns);
+    $('enabledHint').textContent = enabledPatterns.length
+      ? `${enabledPatterns.length} active patterns: ${enabledPatterns.join(', ')}`
+      : 'Empty list: every model of the authenticated providers is enabled.';
+    $('enabledProviders').innerHTML = authedProviders
+      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)))).join('')
+      || '<div class="sys">No authenticated provider</div>';
+    const q = $('enabledSearch').value.trim().toLowerCase();
+    const list = authedModels.filter((m) => !q
+      || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q));
+    $('enabledModelList').innerHTML = list
+      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)))).join('')
+      || '<div class="sys">No model matches the search</div>';
+  }
+
+  async function saveEnabled(patterns) {
+    const r = await post('/api/settings', { key: 'enabledModels', value: patterns });
+    if (r.error) { $('enabledMsg').textContent = '✗ ' + r.error; drawEnabled(); return; }
+    enabledPatterns = r.value ?? [];
+    $('enabledMsg').textContent = 'saved';
+    drawEnabled();
+    loadModels();   // the picker at the top must reflect the list right away
+  }
+
+  const onEnabledToggle = (e) => {
+    const box = e.target.closest('input[data-pattern]');
+    if (!box) return;
+    const pattern = box.dataset.pattern;
+    saveEnabled(box.checked
+      ? [...new Set([...enabledPatterns, pattern])]
+      : enabledPatterns.filter((p) => p !== pattern));
+  };
+  $('enabledProviders').addEventListener('change', onEnabledToggle);
+  $('enabledModelList').addEventListener('change', onEnabledToggle);
+  $('enabledSearch').addEventListener('input', drawEnabled);
+  $('enabledClear').addEventListener('click', () => saveEnabled([]));
+  drawEnabled();
+
   /* ---- model grid with filters (1000+ models registered) ---- */
   const grid = $('modelGrid');
   function drawGrid() {
@@ -2859,20 +3102,20 @@ async function renderSettings() {
         && (!$('onlyReason').checked || m.reasoning)
         && (!q || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q)))
       .slice(0, 180);
-    $('modelCount').textContent = `${list.length} mostrati su ${c.models.length}`;
+    $('modelCount').textContent = `${list.length} shown out of ${c.models.length}`;
     grid.innerHTML = list.map(({ m, i }) => `
-      <button class="modelCard ${c.current && m.provider === c.current.provider && m.id === c.current.id ? 'sel' : ''} ${m.authed ? '' : 'off'}" data-i="${i}" ${m.authed ? '' : 'disabled title="provider non autenticato"'}>
+      <button class="modelCard ${c.current && m.provider === c.current.provider && m.id === c.current.id ? 'sel' : ''} ${m.authed ? '' : 'off'}" data-i="${i}" ${m.authed ? '' : 'disabled title="provider not authenticated"'}>
         <div class="h">${logoHtml(m.provider, m.id, 'lg')}
           <div style="min-width:0"><div class="nm">${esc(m.name || m.id)}</div><div class="pv">${esc(m.provider)}/${esc(m.id)}</div></div>
         </div>
         <div class="row">
           ${m.contextWindow ? `<span class="badge">ctx ${fmt(m.contextWindow)}</span>` : ''}
-          ${m.reasoning ? `<span class="badge ok">effort: ${m.thinkingLevels.filter((l) => l !== 'off').join(' · ') || 'sì'}</span>` : '<span class="badge">no reasoning</span>'}
+          ${m.reasoning ? `<span class="badge ok">effort: ${m.thinkingLevels.filter((l) => l !== 'off').join(' · ') || 'yes'}</span>` : '<span class="badge">no reasoning</span>'}
           ${m.input != null ? `<span class="badge">${m.input}/M in</span>` : ''}
           ${m.output != null ? `<span class="badge">${m.output}/M out</span>` : ''}
           ${m.authed ? '' : '<span class="badge no">no auth</span>'}
         </div>
-      </button>`).join('') || '<div class="sys">Nessun modello corrisponde ai filtri</div>';
+      </button>`).join('') || '<div class="sys">No model matches the filters</div>';
     grid.querySelectorAll('.modelCard[data-i]').forEach((b) => b.addEventListener('click', () => {
       const m = c.models[+b.dataset.i];
       if (m.authed) selectModel(m.provider, m.id);
@@ -2898,7 +3141,7 @@ function renderAttachments() {
       ? `<img src="${a.url}" alt="${esc(a.name)}">`
       : `<div class="file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm" title="${esc(a.name)}">${esc(a.name)}</span></div>`;
     const x = document.createElement('button');
-    x.type = 'button'; x.className = 'x'; x.textContent = '×'; x.title = 'Rimuovi';
+    x.type = 'button'; x.className = 'x'; x.textContent = '×'; x.title = 'Remove';
     x.addEventListener('click', () => { pending.splice(i, 1); renderAttachments(); });
     t.appendChild(x);
     el.appendChild(t);
@@ -2911,16 +3154,16 @@ function addFiles(files) {
       const r = new FileReader();
       r.onload = () => {
         const url = String(r.result);
-        pending.push({ kind: 'image', name: file.name || 'immagine', url, data: url.split(',')[1], mimeType: file.type });
+        pending.push({ kind: 'image', name: file.name || 'image', url, data: url.split(',')[1], mimeType: file.type });
         renderAttachments();
       };
       r.readAsDataURL(file);
     } else if (file.type.startsWith('text/') || TEXT_EXT.test(file.name) || !file.type) {
-      if (file.size > 512 * 1024) { toast(`${file.name}: troppo grande (max 512 KB)`); continue; }
+      if (file.size > 512 * 1024) { toast(`${file.name}: too large (max 512 KB)`); continue; }
       const r = new FileReader();
       r.onload = () => { pending.push({ kind: 'file', name: file.name, text: String(r.result) }); renderAttachments(); };
       r.readAsText(file);
-    } else toast(`${file.name}: tipo non supportato`);
+    } else toast(`${file.name}: unsupported type`);
   }
 }
 $('attachBtn').addEventListener('click', () => $('fileInput').click());
@@ -2953,13 +3196,14 @@ async function loadCommands() {
   const r = await api('/api/commands');
   commandsCache = r.commands ?? [];
 }
-const CMD_SOURCE_LABEL = { extension: 'estensione', prompt: 'prompt', skill: 'skill' };
+const CMD_SOURCE_LABEL = { extension: 'extension', prompt: 'prompt', skill: 'skill' };
 let cmdMenuOpen = false, cmdMenuItems = [], cmdMenuIndex = 0, cmdMenuRange = null;
 // only triggers for a "/" at the start of the current line, with no space typed
 // yet after it — exactly like a console command
 function slashToken() {
-  const v = $('input').value, pos = $('input').selectionStart;
-  if (pos !== $('input').selectionEnd) return null;
+  const el = $('input');
+  const v = el.value, pos = el.selectionStart;
+  if (pos !== el.selectionEnd) return null;
   const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
   const line = v.slice(lineStart, pos);
   const m = /^\/([a-zA-Z0-9_:.\-]*)$/.exec(line);
@@ -3009,7 +3253,7 @@ function pickCmd(i) {
   input.focus();
 }
 
-/* ---------------- composer (Invio = a capo, Ctrl+Invio = invia) ---------------- */
+/* ---------------- composer (Enter = new line, Ctrl+Enter = send) ---------------- */
 const input = $('input');
 function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
 input.addEventListener('input', () => { autoGrow(); updateCmdMenu(); });
@@ -3023,18 +3267,18 @@ $('composer').addEventListener('submit', async (e) => {
   const images = pending.filter((a) => a.kind === 'image').map((a) => ({ data: a.data, mimeType: a.mimeType }));
   let payload = text;
   for (const d of pending.filter((a) => a.kind === 'file')) {
-    payload += `\n\n--- file allegato: ${d.name} ---\n\`\`\`\n${d.text}\n\`\`\``;
+    payload += `\n\n--- attached file: ${d.name} ---\n\`\`\`\n${d.text}\n\`\`\``;
   }
   const body = newTurn('user');
-  // allegati PRIMA del testo: le immagini stanno in cima al messaggio, in
-  // miniatura, e il testo scritto resta sotto
+  // attachments BEFORE the text: images sit at the top of the message, as
+  // thumbnails, and the typed text stays below
   if (pending.length) {
     const media = document.createElement('div');
     media.className = 'media';
     for (const a of pending) {
       if (a.kind === 'image') {
         const img = document.createElement('img');
-        img.src = a.url; img.alt = a.name; img.title = a.name + ' — clicca per ingrandire';
+        img.src = a.url; img.alt = a.name; img.title = a.name + ' — click to enlarge';
         media.appendChild(img);
       } else { const c = document.createElement('span'); c.className = 'filechip'; c.textContent = '📄 ' + a.name; media.appendChild(c); }
     }
@@ -3055,7 +3299,7 @@ input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closeCmdMenu(); return; }
   }
   if (e.key === 'Enter' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); e.target.form.requestSubmit(); return; }
-  // "* " all'inizio di una riga diventa un vero bullet point "• "
+  // "* " at the start of a line becomes a real bullet point "• "
   if (e.key === ' ') {
     const { value, selectionStart, selectionEnd } = input;
     if (selectionStart === selectionEnd) {
@@ -3072,8 +3316,8 @@ input.addEventListener('keydown', (e) => {
     }
     return;
   }
-  // Invio dentro una lista: prosegue la lista (bullet o numero incrementato);
-  // Invio su una voce vuota: esce dalla lista
+  // Enter inside a list: continues the list (bullet or incremented number);
+  // Enter on an empty item: leaves the list
   if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && continueList()) e.preventDefault();
 });
 function continueList() {
@@ -3087,7 +3331,7 @@ function continueList() {
   const [, indent, marker, num, punc, ws, content] = m;
   const rest = value.slice(selectionStart);
   if (!content.trim()) {
-    // voce vuota: rimuovi il marcatore e resta su una riga pulita
+    // empty item: drop the marker and stay on a clean line
     input.value = value.slice(0, lineStart) + rest;
     input.selectionStart = input.selectionEnd = lineStart;
     autoGrow();
@@ -3101,9 +3345,9 @@ function continueList() {
   return true;
 }
 
-/* ---------------- lightbox immagini ----------------
-   Le immagini in chat sono miniature: un click le apre a schermo intero, la ✕
-   (o Esc / click sullo sfondo) le chiude. */
+/* ---------------- image lightbox ----------------
+   Images in the chat are thumbnails: a click opens them full screen, the ✕
+   (or Esc / a click on the backdrop) closes them. */
 function openLightbox(src, alt = '') {
   $('lightboxImg').src = src;
   $('lightboxImg').alt = alt;
@@ -3120,20 +3364,20 @@ chat.addEventListener('click', (e) => {
 $('lightboxClose').addEventListener('click', closeLightbox);
 $('lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
 
-/* ---------------- pannello scorciatoie (Shift tenuto premuto 2s) ---------------- */
+/* ---------------- shortcuts panel (Shift held down) ---------------- */
 const SHORTCUTS = [
-  [['Ctrl', 'Invio'], 'Invia il messaggio'],
-  [['Invio'], 'A capo nel messaggio'],
-  [['Shift', 'M'], 'Cambia modello (ciclo)'],
-  [['Shift', 'T'], 'Cambia livello di reasoning'],
-  [['Shift', 'P'], 'Cambia progetto / cartella'],
-  [['Shift', 'N'], 'Nuova chat'],
-  [['Shift', 'S'], 'Apri impostazioni'],
-  [['/'], 'Palette dei comandi nel composer'],
-  [['Ctrl', 'click'], 'Apri una chat in una nuova scheda'],
-  [['Esc'], 'Chiudi menu, immagine o pannello'],
-  [['Shift', '(1,3s)'], 'Mostra questo pannello'],
-  [['doppio click'], 'Bordo sidebar: larghezza di default'],
+  [['Ctrl', 'Enter'], 'Send the message'],
+  [['Enter'], 'New line in the message'],
+  [['Shift', 'M'], 'Switch model (cycle)'],
+  [['Shift', 'T'], 'Switch reasoning level'],
+  [['Shift', 'P'], 'Switch project / folder'],
+  [['Shift', 'N'], 'New chat'],
+  [['Shift', 'S'], 'Open settings'],
+  [['/'], 'Command palette in the composer'],
+  [['Ctrl', 'click'], 'Open a chat in a new tab'],
+  [['Esc'], 'Close menu, image or panel'],
+  [['Shift', '(1.3s)'], 'Show this panel'],
+  [['double click'], 'Sidebar edge: default width'],
 ];
 $('shortcutsGrid').innerHTML = SHORTCUTS.map(([keys, d]) =>
   `<div class="sc"><span class="keys">${keys.map((k) => `<span class="kbd">${esc(k)}</span>`).join('')}</span><span class="d">${esc(d)}</span></div>`).join('');
@@ -3145,14 +3389,14 @@ document.addEventListener('keydown', (e) => {
     shiftTimer = setTimeout(() => showShortcuts(true), 1300);
     return;
   }
-  // premuto un altro tasto (= stai usando una scorciatoia): il pannello si
-  // toglie di mezzo subito, così vedi l'effetto di quello che hai lanciato
+  // another key was pressed (= you are using a shortcut): the panel gets out of
+  // the way at once, so you can see the effect of what you launched
   clearShift();
 }, true);
 const clearShift = () => { clearTimeout(shiftTimer); shiftTimer = null; showShortcuts(false); };
 document.addEventListener('keyup', (e) => { if (e.key === 'Shift') clearShift(); });
 window.addEventListener('blur', clearShift);
-// Esc chiude, nell'ordine, il pannello scorciatoie, la lightbox e i dropdown
+// Esc closes, in order, the shortcuts panel, the lightbox and the dropdowns
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if ($('shortcuts').classList.contains('on')) { clearShift(); return; }
@@ -3163,7 +3407,7 @@ document.addEventListener('keydown', (e) => {
 
 /* ---------------- global keyboard shortcuts ---------------- */
 document.addEventListener('keydown', (e) => {
-  // Ctrl+Invio: invia il messaggio da qualunque punto della pagina
+  // Ctrl+Enter: send the message from anywhere on the page
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'Enter') {
     if (input.value.trim() || pending.length) { e.preventDefault(); $('composer').requestSubmit(); }
     return;
@@ -3171,36 +3415,36 @@ document.addEventListener('keydown', (e) => {
   if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
   const tag = (e.target.tagName || '').toLowerCase();
   const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
-  if (typing) return; // non rubare Shift+lettera mentre si sta scrivendo
+  if (typing) return; // do not steal Shift+letter while the user is typing
   switch (e.key.toLowerCase()) {
-    case 'm': e.preventDefault(); cycleModel(); break;      // Shift+M: cicla modelli
-    case 't': e.preventDefault(); cycleThinking(); break;   // Shift+T: cicla effort
-    case 'p': e.preventDefault(); cycleProject(); break;    // Shift+P: cicla progetti
-    case 's': e.preventDefault(); showSettings(); break;    // Shift+S: impostazioni
-    case 'n': e.preventDefault(); newChat(); break;         // Shift+N: nuova chat
+    case 'm': e.preventDefault(); cycleModel(); break;      // Shift+M: cycle models
+    case 't': e.preventDefault(); cycleThinking(); break;   // Shift+T: cycle effort
+    case 'p': e.preventDefault(); cycleProject(); break;    // Shift+P: cycle projects
+    case 's': e.preventDefault(); showSettings(); break;    // Shift+S: settings
+    case 'n': e.preventDefault(); newChat(); break;         // Shift+N: new chat
   }
 });
 $('abort').addEventListener('click', () => post('/api/abort'));
 $('quit').addEventListener('click', async () => {
-  if (!confirm('Spegnere il server pi-web-ui?\nLa pagina smetterà di funzionare finché non lo riavvii dallo shortcut sul Desktop.')) return;
+  if (!confirm('Shut down the pi-web-ui server?\nThis page will stop working until you start it again with `npm start`.')) return;
   try { await fetch('/api/shutdown', { method: 'POST' }); } catch {}
-  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Server pi-web-ui arrestato.<br><br>Riavvialo dallo shortcut sul Desktop.</div>';
+  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi-web-ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
 });
 $('restartBtn').addEventListener('click', async () => {
-  if (!confirm('Riavviare il server pi-web-ui?\nLa chat resta salvata; la pagina si ricarica da sola appena il server è di nuovo pronto.')) return;
+  if (!confirm('Restart the pi-web-ui server?\nThe chat stays saved; the page reloads by itself as soon as the server is ready again.')) return;
   try { await fetch('/api/restart', { method: 'POST' }); } catch {}
-  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Riavvio di pi-web-ui in corso…<br><br>La pagina si ricarica da sola.</div>';
-  // poll finché il nuovo processo risponde, poi ricarica — stesso check usato da run.vbs
+  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Restarting pi-web-ui…<br><br>The page will reload by itself.</div>';
+  // poll until the new process answers, then reload
   const wait = setInterval(async () => {
     try {
       const r = await fetch('/api/state');
       if (r.ok) { clearInterval(wait); location.reload(); }
-    } catch { /* server ancora giù: continua a provare */ }
+    } catch { /* server still down: keep trying */ }
   }, 700);
   setTimeout(() => clearInterval(wait), 30000);
 });
 
-/* ---------------- git status (branch + modifiche in canna) ---------------- */
+/* ---------------- git status (branch + pending changes) ---------------- */
 let gitInfo = null;
 async function refreshGit() {
   const g = await api('/api/git');
@@ -3214,15 +3458,16 @@ function renderGit() {
   chip.classList.remove('hide');
   $('gitBranch').textContent = gitInfo.branch;
   const n = gitInfo.changed ?? 0;
-  $('gitCount').textContent = n;
-  $('gitCount').classList.toggle('hide', !n);
-  $('gitCount').classList.toggle('warn', (gitInfo.staged ?? 0) > 0);
+  const count = $('gitCount');
+  count.textContent = n;
+  count.classList.toggle('hide', !n);
+  count.classList.toggle('warn', (gitInfo.staged ?? 0) > 0);
   const sync = [];
-  if (gitInfo.ahead) sync.push(`↑ ${gitInfo.ahead} commit da pushare`);
-  if (gitInfo.behind) sync.push(`↓ ${gitInfo.behind} commit da scaricare`);
+  if (gitInfo.ahead) sync.push(`↑ ${gitInfo.ahead} commits to push`);
+  if (gitInfo.behind) sync.push(`↓ ${gitInfo.behind} commits to pull`);
   chip.title = `branch: ${gitInfo.branch}\n` +
-    `modifiche in canna: ${n} (staged ${gitInfo.staged} · non staged ${gitInfo.unstaged} · nuovi ${gitInfo.untracked})\n` +
-    (sync.length ? sync.join(' · ') : 'sincronizzato col remoto');
+    `pending changes: ${n} (staged ${gitInfo.staged} · unstaged ${gitInfo.unstaged} · new ${gitInfo.untracked})\n` +
+    (sync.length ? sync.join(' · ') : 'in sync with the remote');
 }
 
 /* ---------------- boot ---------------- */
@@ -3231,6 +3476,8 @@ async function loadState() {
   if (s.error) return;
   state.cwd = s.cwd;
   state.model = s.current ?? state.model;
+  applyPlatformCapabilities(s.platform);
+  applyChatArchiving(s.chatArchiving);
   setCwdLabel(s.cwd);
   renderStats(s.chat, s.context, s.chatByModel);
   setRunning(!!s.streaming);
@@ -3249,7 +3496,7 @@ async function loadState() {
 setInterval(() => { if (!document.hidden && es?.readyState === 2) { es.close(); connect(); } }, 5000);
 // real account usage limits (claude.ai / kimi.com) — poll, don't hammer
 setInterval(() => { if (!document.hidden) refreshUsage(); }, 30000);
-// git branch / modifiche in canna — poll leggero (il server ha cache 5s)
+// git branch / pending changes — light poll (the server caches for 5s)
 setInterval(() => { if (!document.hidden) refreshGit(); }, 20000);
 </script>
 </body>
