@@ -12,16 +12,20 @@
  *   GET  /api/state     → cwd, current model, usage totals, context info
  *   GET  /api/models    → models with valid auth only
  *   GET  /api/config    → pi settings, providers/auth, tools, paths (settings page)
+ *   GET  /api/network   → LAN access state, detected LAN ip, one-shot access URL
+ *   POST /api/network   → turn LAN access on/off, regenerate the access token
  *   GET  /api/settings  → documented pi settings schema + current values
  *   POST /api/settings  → { key, value } write one setting into ~/.pi/agent/settings.json
  *   POST /api/model     → { provider, id }  switch model
  *   POST /api/thinking  → { level }
  *   POST /api/cwd       → { path }  choose the folder of the not-yet-started chat
  *   POST /api/pick-folder → open native folder picker, returns { path }
- *   POST /api/open-explorer → open the chat's working folder in Windows Explorer
- *   POST /api/open-terminal → open a PowerShell window in the chat's working folder and run `pi` there
+ *   POST /api/open-explorer → reveal the chat's working folder in the system file manager
+ *   POST /api/open-terminal → open a terminal in the chat's working folder and run `pi` there
  *   POST /api/favorites → { path, favorite }  pin/unpin a chat in the sidebar
- *   POST /api/status    → { path, status }    conclusa / riaperta / attiva
+ *   POST /api/status    → { path, status }    done / reopened / active
+ *   GET  /api/archiving → chat archiving on/off + first-run sweep timestamp
+ *   POST /api/archiving → { enabled } toggle, { archiveNow } sweep chats idle > 24h
  *   GET  /api/sessions  → list persisted sessions for current cwd
  *   POST /api/session   → { action:'new'|'open'|'continue'|'forkFrom', path?, entryId? }  switch/fork session
  *   GET  /api/history   → messages of the current session (each with an `entryId` for forking)
@@ -42,11 +46,14 @@ import http from "node:http";
 import os from "node:os";
 import readline from "node:readline";
 import { createReadStream } from "node:fs";
-import { readFile, writeFile, mkdir, stat, readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, readdir, chmod } from "node:fs/promises";
 import { openSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { ACCESS_COOKIE, ACCESS_PARAM, classifyRequest, isLoopbackPeer } from "./access-control.mjs";
+import { pickFolder, openFolder, openTerminal, platformCapabilities } from "./platform.mjs";
 import {
   createAgentSession,
   ModelRuntime,
@@ -64,7 +71,9 @@ import {
 } from "./usage-tracker.mjs";
 
 const PORT = process.env.PORT ?? 3777;
-const HOST = process.env.HOST ?? "0.0.0.0";
+// The address we bind to is decided further down, once the LAN access state is
+// known: loopback only unless the user opted in (see HOST).
+const HOST_OVERRIDE = process.env.HOST ?? null;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---- path helpers ----------------------------------------------------------
@@ -72,6 +81,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 async function resolveDir(input) {
   if (typeof input !== "string" || !input.trim()) {
     throw new Error("missing path");
+  }
+  // These characters are legal in paths but get reinterpreted by cmd.exe when
+  // a terminal is opened in the directory: refuse them outright.
+  if (/["&|^\n\r]/.test(input)) {
+    throw new Error("path contains forbidden characters");
   }
   const resolved = path.resolve(input.trim());
   let info;
@@ -100,33 +114,45 @@ async function resolveFile(input) {
   return resolved;
 }
 
-// Open the modern native folder picker (IFileOpenDialog + FOS_PICKFOLDERS, see
-// pick-folder.ps1) and resolve to the chosen path (or null when cancelled).
-// The old inline FolderBrowserDialog was both ugly and opened *behind* the
-// browser, having no owner window; the script owns it to the foreground window.
-function pickFolderNative(initial) {
-  return new Promise((resolve) => {
-    execFile(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-STA",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(__dirname, "pick-folder.ps1"),
-        "-Initial",
-        initial ?? "",
-      ],
-      { windowsHide: true },
-      (err, stdout) => {
-        if (err) return resolve(null);
-        const p = (stdout ?? "").trim();
-        resolve(p || null);
-      },
-    );
-  });
+// True when filePath sits inside root (root + separator prevents a sibling
+// like "sessions-evil" from matching). Windows paths compare case-insensitively.
+function isInsideDir(filePath, root) {
+  const prefix = root + path.sep;
+  if (process.platform === "win32") {
+    return filePath.toLowerCase().startsWith(prefix.toLowerCase());
+  }
+  return filePath.startsWith(prefix);
 }
+
+
+// ---- secret redaction ------------------------------------------------------
+// settings.json / models.json may hold API keys, tokens or custom headers.
+// Before either file is echoed back by /api/config, every string value whose
+// key name looks sensitive is replaced with a placeholder. Key names stay
+// visible so the settings panel can still list what is configured.
+const SENSITIVE_KEY_RE = /key|token|secret|password|cookie|authorization|bearer/i;
+const REDACTED_PLACEHOLDER = "\u00abredacted\u00bb";
+
+function redactSecrets(value, keyName = "") {
+  if (typeof value === "string") {
+    return SENSITIVE_KEY_RE.test(keyName) ? REDACTED_PLACEHOLDER : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactSecrets(item, keyName));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = redactSecrets(item, key);
+    return out;
+  }
+  return value;
+}
+
+// ---- request validation ----------------------------------------------------
+// Whitelists for the endpoints that drive the agent: anything outside them is a
+// 400, never a silent no-op.
+const CHAT_STATUSES = ["done", "reopened", "active"];
+// `continue` is also the default when the client sends no action at all.
+const SESSION_ACTIONS = ["continue", "new", "open", "forkFrom"];
+const isNonEmptyString = (v) => typeof v === "string" && v.length > 0;
 
 // ---- thinking levels -------------------------------------------------------
 // Mirrors getSupportedThinkingLevels() from @earendil-works/pi-ai (not directly
@@ -144,7 +170,8 @@ function supportedThinkingLevels(model) {
 
 // ---- settings schema (parsed from the SDK docs, so types/defaults/descriptions
 // stay in sync with the installed pi version) --------------------------------
-const AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
+// Overridable so tests (and sandboxed runs) never touch the real ~/.pi/agent.
+const AGENT_DIR = process.env.PI_WEB_UI_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 const SETTINGS_PATH = path.join(AGENT_DIR, "settings.json");
 
 // ---- favorite chats (pinned on top of the sidebar) -------------------------
@@ -162,9 +189,9 @@ async function saveFavorites() {
   await writeFile(FAVORITES_PATH, JSON.stringify([...favorites], null, 1)).catch(() => {});
 }
 
-// ---- chat status: concluse / riaperte --------------------------------------
-// Una chat "conclusa" scende in fondo alla sidebar e appare spenta; se ci si
-// riscrive dentro torna su come "riaperta". Stato lato server, come i preferiti.
+// ---- chat status: done / reopened ------------------------------------------
+// A "done" chat sinks to the bottom of the sidebar and looks dimmed; writing in
+// it again brings it back up as "reopened". Server-side state, like favorites.
 const STATUS_PATH = path.join(AGENT_DIR, "web-ui-status.json");
 let chatStatus = new Map(); // path -> "done" | "reopened"
 try {
@@ -184,6 +211,58 @@ async function saveChatStatus() {
   );
 }
 
+// ---- chat archiving (opt-out feature, on by default) -----------------------
+// Turning it off deletes nothing: the statuses stay in web-ui-status.json and
+// show up again as soon as it is turned back on. `firstRunArchivedAt` exists
+// because the initial sweep must happen once, not on every restart.
+const ARCHIVING_PATH = path.join(AGENT_DIR, "web-ui-archiving.json");
+const ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000;
+let archiving = { enabled: true, firstRunArchivedAt: null };
+try {
+  const raw = JSON.parse(await readFile(ARCHIVING_PATH, "utf8"));
+  if (raw && typeof raw === "object") {
+    archiving = {
+      enabled: raw.enabled !== false,
+      firstRunArchivedAt: typeof raw.firstRunArchivedAt === "string" ? raw.firstRunArchivedAt : null,
+    };
+  }
+} catch {
+  /* first install: defaults */
+}
+async function saveArchiving() {
+  await mkdir(AGENT_DIR, { recursive: true }).catch(() => {});
+  await writeFile(ARCHIVING_PATH, JSON.stringify(archiving, null, 1)).catch(() => {});
+}
+
+// Marks as done every chat idle for more than 24 hours. Age is measured on the
+// session's last activity, not on its creation. Chats already done are left
+// untouched.
+async function archiveStaleChats(now = Date.now()) {
+  const sessions = await SessionManager.listAll();
+  let archived = 0;
+  for (const s of sessions) {
+    if (!s?.path || chatStatus.get(s.path) === "done") continue;
+    const lastActivity = new Date(s.modified).getTime();
+    if (!Number.isFinite(lastActivity) || now - lastActivity < ARCHIVE_AFTER_MS) continue;
+    chatStatus.set(s.path, "done");
+    archived += 1;
+  }
+  if (archived) await saveChatStatus();
+  return archived;
+}
+
+// First-run sweep: the flag is written only after archiving succeeded, so a
+// failure halfway through leaves the job retryable.
+if (archiving.enabled && !archiving.firstRunArchivedAt) {
+  try {
+    await archiveStaleChats();
+    archiving.firstRunArchivedAt = new Date().toISOString();
+    await saveArchiving();
+  } catch (e) {
+    console.error("first-run chat archiving failed:", e?.message ?? e);
+  }
+}
+
 // ---- recent working directories (quick picker in the cwd dropdown) ---------
 // Most-recent-first, deduplicated, capped: the point is one click to go back to
 // a folder you already used, not a full history.
@@ -196,12 +275,88 @@ try {
 } catch {
   /* no recent folders yet */
 }
-async function rememberCwd(dir) {
-  if (!dir) return;
-  recentCwds = [dir, ...recentCwds.filter((p) => p !== dir)].slice(0, RECENT_CWDS_MAX);
+async function saveRecentCwds() {
   await mkdir(AGENT_DIR, { recursive: true }).catch(() => {});
   await writeFile(RECENT_CWDS_PATH, JSON.stringify(recentCwds, null, 1)).catch(() => {});
 }
+async function rememberCwd(dir) {
+  if (!dir) return;
+  recentCwds = [dir, ...recentCwds.filter((p) => p !== dir)].slice(0, RECENT_CWDS_MAX);
+  await saveRecentCwds();
+}
+// ---- LAN access (off by default) -------------------------------------------
+// Exposing an agent that runs commands on the network is an explicit choice:
+// the switch and the token that guards it live here. The token never reaches a
+// log, nor stays in the query string after the handshake.
+const NETWORK_PATH = path.join(AGENT_DIR, "web-ui-network.json");
+const ACCESS_COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
+// The file holds the LAN access token: owner-only. No-op on Windows.
+const AGENT_DIR_MODE = 0o700;
+const SECRET_FILE_MODE = 0o600;
+let network = { lanAccess: false, token: null };
+try {
+  const raw = JSON.parse(await readFile(NETWORK_PATH, "utf8"));
+  if (raw && typeof raw === "object") {
+    network = {
+      lanAccess: raw.lanAccess === true,
+      token: typeof raw.token === "string" && raw.token ? raw.token : null,
+    };
+  }
+} catch {
+  /* LAN access never enabled */
+}
+async function saveNetwork() {
+  await mkdir(AGENT_DIR, { recursive: true, mode: AGENT_DIR_MODE }).catch(() => {});
+  await writeFile(NETWORK_PATH, JSON.stringify(network, null, 1), { mode: SECRET_FILE_MODE }).catch(() => {});
+  // `mode` on writeFile only applies when the file is created: tighten pre-existing ones.
+  await chmod(NETWORK_PATH, SECRET_FILE_MODE).catch(() => {});
+}
+function newAccessToken() {
+  return randomBytes(32).toString("base64url");
+}
+// First non-loopback IPv4 address: only used to build the URL shown in
+// settings, never to decide who is allowed in.
+function lanAddress() {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal) return entry.address;
+    }
+  }
+  return null;
+}
+function networkStatus() {
+  // Deliberately token-free: the URL that embeds the token is only handed out
+  // by an explicit `reveal` POST, never by the default status response.
+  return {
+    lanAccess: network.lanAccess,
+    ip: lanAddress(),
+    port: Number(PORT),
+    listening: HOST,
+    restartRequired: network.lanAccess !== (HOST !== "127.0.0.1"),
+  };
+}
+// The URL carries the token: it is the only way to get it to the other
+// device, and it works once (then it becomes an HttpOnly cookie).
+function accessUrl() {
+  const ip = lanAddress();
+  return network.lanAccess && ip && network.token
+    ? `http://${ip}:${PORT}/?${ACCESS_PARAM}=${network.token}`
+    : null;
+}
+
+// Loopback until LAN access is opened on purpose.
+const HOST = HOST_OVERRIDE ?? (network.lanAccess ? "0.0.0.0" : "127.0.0.1");
+
+// Binding beyond loopback without LAN access enabled would expose the agent
+// with no token gate at all: refuse to start rather than start exposed.
+if (!network.lanAccess && HOST !== "localhost" && !isLoopbackPeer(HOST)) {
+  console.error(
+    `pi-web-ui: refusing to listen on ${HOST} while LAN access is disabled. ` +
+      "Enable LAN access from the settings panel, or unset HOST.",
+  );
+  process.exit(1);
+}
+
 const SETTINGS_DOC = path.join(
   __dirname,
   "node_modules",
@@ -303,8 +458,30 @@ async function* readSessionRecords(file) {
   }
 }
 
-// file path -> { mtimeMs, size, project, rows: [...] }
+// file path -> { mtimeMs, size, project, sessionId, file, buckets, lastModel, first, last }
+// Only the *aggregated* buckets are kept: the per-message rows are consumed
+// during the scan and thrown away, so memory no longer grows with the number
+// of assistant messages. Insertion order doubles as recency: a hit re-inserts
+// the entry at the end, and overflow evicts from the front (least recently used).
+const ANALYTICS_CACHE_MAX = 500;
 const analyticsCache = new Map();
+
+function cacheGet(file) {
+  const entry = analyticsCache.get(file);
+  if (!entry) return null;
+  analyticsCache.delete(file);
+  analyticsCache.set(file, entry);
+  return entry;
+}
+
+function cacheSet(file, entry) {
+  analyticsCache.delete(file);
+  analyticsCache.set(file, entry);
+  while (analyticsCache.size > ANALYTICS_CACHE_MAX) {
+    const lru = analyticsCache.keys().next().value;
+    analyticsCache.delete(lru);
+  }
+}
 
 async function listSessionFiles() {
   const out = [];
@@ -330,53 +507,6 @@ async function listSessionFiles() {
   return out;
 }
 
-// Extract one row per assistant message with usage: the raw material of the dashboard.
-async function scanSessionFile(file) {
-  let info;
-  try {
-    info = await stat(file);
-  } catch {
-    return null;
-  }
-  const cached = analyticsCache.get(file);
-  if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached;
-
-  let project = "";
-  let sessionId = path.basename(file, ".jsonl");
-  let model = "";
-  let provider = "";
-  const rows = [];
-  try {
-    for await (const rec of readSessionRecords(file)) {
-      if (rec.type === "session") {
-        project = rec.cwd ?? project;
-        sessionId = rec.id ?? sessionId;
-      } else if (rec.type === "model_change") {
-        model = rec.modelId ?? model;
-        provider = rec.provider ?? provider;
-      } else if (rec.type === "message" && rec.message?.role === "assistant") {
-        const u = rec.message.usage;
-        if (!u) continue;
-        rows.push({
-          ts: rec.timestamp ?? null,
-          model: rec.message.model ?? model ?? "?",
-          provider: rec.message.provider ?? provider ?? "?",
-          input: u.input ?? 0,
-          output: u.output ?? 0,
-          cacheRead: u.cacheRead ?? 0,
-          cacheWrite: u.cacheWrite ?? 0,
-          cost: u.cost?.total ?? 0,
-        });
-      }
-    }
-  } catch {
-    return null;
-  }
-  const entry = { mtimeMs: info.mtimeMs, size: info.size, project, sessionId, file, rows };
-  analyticsCache.set(file, entry);
-  return entry;
-}
-
 const emptyBucket = () => ({
   input: 0,
   output: 0,
@@ -387,6 +517,89 @@ const emptyBucket = () => ({
   requests: 0,
   sessions: 0,
 });
+
+// Aggregate one session file into day x model buckets. Each bucket counts the
+// file as one session, exactly as the previous per-file `seen` set did.
+async function scanSessionFile(file) {
+  let info;
+  try {
+    info = await stat(file);
+  } catch {
+    return null;
+  }
+  const cached = cacheGet(file);
+  if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached;
+
+  let project = "";
+  let sessionId = path.basename(file, ".jsonl");
+  let model = "";
+  let provider = "";
+  let lastModel = null;
+  let first = null;
+  let last = null;
+  const buckets = new Map();
+  try {
+    for await (const rec of readSessionRecords(file)) {
+      if (rec.type === "session") {
+        project = rec.cwd ?? project;
+        sessionId = rec.id ?? sessionId;
+        continue;
+      }
+      if (rec.type === "model_change") {
+        model = rec.modelId ?? model;
+        provider = rec.provider ?? provider;
+        continue;
+      }
+      if (rec.type !== "message" || rec.message?.role !== "assistant") continue;
+      const u = rec.message.usage;
+      if (!u) continue;
+
+      const ts = rec.timestamp ?? null;
+      const rowModel = rec.message.model ?? model ?? "?";
+      const rowProvider = rec.message.provider ?? provider ?? "?";
+      const input = u.input ?? 0;
+      const output = u.output ?? 0;
+      const cacheWrite = u.cacheWrite ?? 0;
+      const day = (ts ?? "").slice(0, 10) || "?";
+      const modelKey = `${rowProvider}/${rowModel}`;
+
+      const key = `${day}\u0000${modelKey}`;
+      let b = buckets.get(key);
+      if (!b) {
+        b = { day, model: modelKey, ...emptyBucket(), sessions: 1 };
+        buckets.set(key, b);
+      }
+      b.input += input;
+      b.output += output;
+      b.cacheRead += u.cacheRead ?? 0;
+      b.cacheWrite += cacheWrite;
+      b.tokens += input + output + cacheWrite;
+      b.cost += u.cost?.total ?? 0;
+      b.requests += 1;
+
+      lastModel = { provider: rowProvider, model: rowModel };
+      if (ts) {
+        if (!first || ts < first) first = ts;
+        if (!last || ts > last) last = ts;
+      }
+    }
+  } catch {
+    return null;
+  }
+  const entry = {
+    mtimeMs: info.mtimeMs,
+    size: info.size,
+    project,
+    sessionId,
+    file,
+    buckets: [...buckets.values()],
+    lastModel,
+    first,
+    last,
+  };
+  cacheSet(file, entry);
+  return entry;
+}
 
 // Pre-aggregate by day x model x project. The client applies filters on this
 // (small) payload, so switching range/model never hits the disk again.
@@ -400,34 +613,27 @@ async function buildAnalytics() {
 
   for (const file of files) {
     const entry = await scanSessionFile(file);
-    if (!entry || !entry.rows.length) continue;
+    if (!entry || !entry.buckets.length) continue;
     projects.add(entry.project);
-    const seen = new Set();
-    for (const r of entry.rows) {
-      const day = (r.ts ?? "").slice(0, 10) || "?";
-      const key = `${day}\u0000${r.provider}/${r.model}\u0000${entry.project}`;
+    for (const fb of entry.buckets) {
+      const key = `${fb.day}\u0000${fb.model}\u0000${entry.project}`;
       let b = buckets.get(key);
       if (!b) {
-        b = { day, model: `${r.provider}/${r.model}`, project: entry.project, ...emptyBucket() };
+        b = { day: fb.day, model: fb.model, project: entry.project, ...emptyBucket() };
         buckets.set(key, b);
       }
-      b.input += r.input;
-      b.output += r.output;
-      b.cacheRead += r.cacheRead;
-      b.cacheWrite += r.cacheWrite;
-      b.tokens += r.input + r.output + r.cacheWrite;
-      b.cost += r.cost;
-      b.requests += 1;
-      if (!seen.has(key)) {
-        seen.add(key);
-        b.sessions += 1;
-      }
+      b.input += fb.input;
+      b.output += fb.output;
+      b.cacheRead += fb.cacheRead;
+      b.cacheWrite += fb.cacheWrite;
+      b.tokens += fb.tokens;
+      b.cost += fb.cost;
+      b.requests += fb.requests;
+      b.sessions += fb.sessions;
       models.add(b.model);
-      if (r.ts) {
-        if (!first || r.ts < first) first = r.ts;
-        if (!last || r.ts > last) last = r.ts;
-      }
     }
+    if (entry.first && (!first || entry.first < first)) first = entry.first;
+    if (entry.last && (!last || entry.last > last)) last = entry.last;
   }
 
   return {
@@ -446,6 +652,9 @@ async function buildAnalytics() {
 // context's events. A handful of events (running badges, session list) are
 // global and go to every connected tab, tagged with `scope:"global"`.
 const allClients = new Set();
+// SSE comment line: ignored by EventSource, enough to keep the socket alive.
+const SSE_PING = ": ping\n\n";
+const SSE_PING_MS = 15_000;
 function sseSend(res, event) {
   try {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -489,31 +698,24 @@ const emptyChatUsage = () => ({
   requests: 0,
 });
 
-function addChatUsage(ctx, u, modelKey = "?") {
+function accumulateChatUsage(target, u) {
   const input = u.input ?? 0;
   const output = u.output ?? 0;
   const cacheWrite = u.cacheWrite ?? 0;
-  const cacheRead = u.cacheRead ?? 0;
-  const c = ctx.chat;
-  c.input += input;
-  c.output += output;
-  c.cacheWrite += cacheWrite;
-  c.cacheRead += cacheRead;
-  c.tokens += input + cacheWrite + output;
-  c.cost += u.cost?.total ?? 0;
-  c.requests += 1;
+  target.input += input;
+  target.output += output;
+  target.cacheWrite += cacheWrite;
+  target.cacheRead += u.cacheRead ?? 0;
+  target.tokens += input + cacheWrite + output;
+  target.cost += u.cost?.total ?? 0;
+  target.requests += 1;
+}
+
+function addChatUsage(ctx, u, modelKey = "?") {
+  accumulateChatUsage(ctx.chat, u);
   // same counters, broken down by the model that produced the message:
   // switching LLM mid-chat stays visible in the top-right counter toggle
-  const m = (ctx.chatByModel[modelKey] ??= {
-    tokens: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, requests: 0,
-  });
-  m.input += input;
-  m.output += output;
-  m.cacheWrite += cacheWrite;
-  m.cacheRead += cacheRead;
-  m.tokens += input + cacheWrite + output;
-  m.cost += u.cost?.total ?? 0;
-  m.requests += 1;
+  accumulateChatUsage((ctx.chatByModel[modelKey] ??= emptyChatUsage()), u);
 }
 
 // "provider/model" of an assistant message, falling back to the session's
@@ -546,7 +748,9 @@ async function sessionCwd(file) {
       if (rec.type === "session") return rec.cwd ?? null;
       break; // the header is the first record: don't scan the whole file
     }
-  } catch {}
+  } catch (err) {
+    console.warn(`pi-web-ui: could not read the cwd of ${file}: ${err?.message ?? err}`);
+  }
   return null;
 }
 
@@ -575,7 +779,7 @@ function recordFileChange(ctx, toolName, args) {
 const MAX_TOOL_TEXT = 20000;
 function clip(text, max = MAX_TOOL_TEXT) {
   if (typeof text !== "string") return text;
-  return text.length > max ? `${text.slice(0, max)}\n… [troncato, ${text.length} caratteri totali]` : text;
+  return text.length > max ? `${text.slice(0, max)}\n… [truncated, ${text.length} characters total]` : text;
 }
 
 // Drop huge/binary payloads (e.g. base64 images) before sending args to the UI.
@@ -732,7 +936,7 @@ function wireSession(ctx) {
       // empty turn and the reason would only exist in the terminal log
       const stop = event.message.stopReason;
       if (stop === "error" || stop === "aborted") {
-        const message = event.message.errorMessage ?? (stop === "aborted" ? "Risposta interrotta" : "Errore sconosciuto del provider");
+        const message = event.message.errorMessage ?? (stop === "aborted" ? "Response interrupted" : "Unknown provider error");
         broadcast(ctx, { kind: "error", message, aborted: stop === "aborted" });
       }
       // a brand-new chat only becomes a persisted file on its first message: the
@@ -849,7 +1053,9 @@ async function createContext({ cwd = DEFAULT_CWD, mode = "continue", openPath = 
   if (file && contexts.has(file)) {
     try {
       session.dispose();
-    } catch {}
+    } catch (err) {
+      console.warn(`pi-web-ui: disposing the duplicate session for ${file} failed: ${err?.message ?? err}`);
+    }
     const known = contexts.get(file);
     known.lastActive = Date.now();
     return known;
@@ -907,7 +1113,9 @@ async function useContext(key) {
 function disposeContext(ctx) {
   try {
     ctx.session.dispose();
-  } catch {}
+  } catch (err) {
+    console.warn(`pi-web-ui: disposing the session of ${ctx.key} failed: ${err?.message ?? err}`);
+  }
   contexts.delete(ctx.key);
 }
 
@@ -1022,13 +1230,56 @@ async function gitStatus(cwd) {
 }
 
 // ---- HTTP helpers ----------------------------------------------------------
-async function jsonBody(req) {
-  let body = "";
-  for await (const chunk of req) body += chunk;
-  return body ? JSON.parse(body) : {};
+// A single request must never be able to exhaust the heap of the process that
+// hosts every chat: the body is capped. 32 MB covers the base64 images that
+// /api/prompt legitimately carries.
+const MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
 }
 
-function send(res, code, data, type = "application/json") {
+async function jsonBody(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) {
+      throw httpError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`);
+    }
+    chunks.push(chunk);
+  }
+  if (!size) return {};
+  const body = Buffer.concat(chunks).toString("utf8");
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw httpError(400, "invalid JSON body");
+  }
+}
+
+// Applied to every dynamic response: the payloads carry chat content, so they
+// must never be sniffed as another type nor cached by an intermediary.
+// Locks the HTML page down to same-origin resources. 'unsafe-inline' on
+// script-src is required for as long as the UI lives inline in index.html.
+const HTML_CSP = [
+  "default-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Cache-Control": "no-store",
+};
+
+function send(res, code, data, type = "application/json; charset=utf-8") {
   // Defensive: a handler that already sent a response (e.g. /api/restart sends
   // 200 then does risky follow-up work) must never crash the whole process by
   // trying to write headers twice if that follow-up throws.
@@ -1036,33 +1287,152 @@ function send(res, code, data, type = "application/json") {
     console.error(`pi-web-ui: tried to send twice on the same response (code ${code}), ignored`);
     return;
   }
-  res.writeHead(code, { "Content-Type": type });
+  res.writeHead(code, { "Content-Type": type, ...SECURITY_HEADERS });
   res.end(typeof data === "string" ? data : JSON.stringify(data));
 }
 
+// ---- request guard ---------------------------------------------------------
+// The guard logic lives in access-control.mjs (pure and unit-tested); only the
+// token check stays here, because it needs `crypto` and the `network` state.
+
+// Constant-time comparison that also tolerates different lengths.
+function secretEquals(candidate, secret) {
+  if (typeof candidate !== "string" || typeof secret !== "string" || !secret) return false;
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+const hasAccessToken = (value) => secretEquals(value, network.token ?? "");
+
+// Move the token out of the URL and into an HttpOnly cookie, so it never stays
+// in the address bar, in history or in a Referer header.
+function completeAccessHandshake(res, url) {
+  const clean = new URL(url);
+  clean.searchParams.delete(ACCESS_PARAM);
+  res.writeHead(302, {
+    Location: clean.pathname + clean.search,
+    "Set-Cookie": `${ACCESS_COOKIE}=${network.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${ACCESS_COOKIE_MAX_AGE}`,
+    "Cache-Control": "no-store",
+  });
+  res.end();
+}
+
+// ---- vendored browser libraries --------------------------------------------
+// marked, highlight.js and DOMPurify are served from node_modules instead of a CDN, so the
+// UI works offline and no third party sees the traffic of a page that drives an
+// agent. Only the sub-trees listed here are reachable.
+const VENDOR_PREFIX = "/vendor/";
+const VENDOR_ROOT = path.join(__dirname, "node_modules");
+const VENDOR_ALLOWED = ["marked/lib/", "highlight.js/es/", "highlight.js/styles/", "dompurify/dist/"];
+const VENDOR_TYPES = {
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+};
+
+function vendorFilePath(pathname) {
+  const rel = decodeURIComponent(pathname.slice(VENDOR_PREFIX.length));
+  if (!VENDOR_ALLOWED.some((prefix) => rel.startsWith(prefix))) return null;
+  if (!Object.hasOwn(VENDOR_TYPES, path.extname(rel))) return null;
+  const file = path.resolve(VENDOR_ROOT, rel);
+  // Defence in depth: a crafted ".." must never escape node_modules.
+  if (file !== VENDOR_ROOT && !file.startsWith(VENDOR_ROOT + path.sep)) return null;
+  return file;
+}
+
+async function serveVendor(res, pathname) {
+  const file = vendorFilePath(pathname);
+  if (!file) return send(res, 404, { error: "not found" });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, {
+      "Content-Type": VENDOR_TYPES[path.extname(file)],
+      "Cache-Control": "public, max-age=31536000, immutable",
+    });
+    res.end(body);
+  } catch {
+    send(res, 404, { error: "not found" });
+  }
+}
+
 // ---- server ----------------------------------------------------------------
+// A denied remote peer is worth a log line (it may be a probe), but a port
+// scan must not flood the terminal: at most one line per window, with a
+// count of what was suppressed in between.
+const REMOTE_DENY_LOG_MS = 5000;
+let remoteDenyLogAt = 0;
+let remoteDenySuppressed = 0;
+function warnRemoteDeny(req) {
+  const now = Date.now();
+  if (now - remoteDenyLogAt < REMOTE_DENY_LOG_MS) {
+    remoteDenySuppressed++;
+    return;
+  }
+  const suppressed = remoteDenySuppressed ? ` (+${remoteDenySuppressed} more suppressed)` : "";
+  remoteDenyLogAt = now;
+  remoteDenySuppressed = 0;
+  console.warn(
+    `pi-web-ui: denied remote request from ${req.socket.remoteAddress} — ${req.method} ${req.url}${suppressed}`,
+  );
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  const verdict = classifyRequest(
+    {
+      method: req.method,
+      headers: req.headers,
+      searchParams: url.searchParams,
+      remoteAddress: req.socket.remoteAddress,
+    },
+    { port: PORT, lanAccess: network.lanAccess, matchesToken: hasAccessToken },
+  );
+  if (verdict === "handshake") return completeAccessHandshake(res, url);
+  if (verdict !== "allow") {
+    if (!isLoopbackPeer(req.socket.remoteAddress)) warnRemoteDeny(req);
+    return send(res, 403, { error: "forbidden origin" });
+  }
   // which chat this tab is talking about (null → most recent one)
   const sessionKey = url.searchParams.get("s") || req.headers["x-pi-session"] || null;
   try {
     if (url.pathname === "/") {
       const html = await readFile(path.join(__dirname, "public", "index.html"), "utf8");
-      return send(res, 200, html, "text/html");
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": HTML_CSP,
+        ...SECURITY_HEADERS,
+      });
+      return res.end(html);
     }
+
+    if (url.pathname.startsWith(VENDOR_PREFIX)) return serveVendor(res, url.pathname);
 
     if (url.pathname === "/api/events") {
       const ctx = await useContext(sessionKey);
       res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
+        "X-Content-Type-Options": "nosniff",
+        // tells nginx and friends not to buffer the stream
+        "X-Accel-Buffering": "no",
       });
+      // events are small and latency-sensitive, and the socket must outlive a
+      // long silent turn of the agent
+      res.socket?.setNoDelay(true);
+      res.socket?.setTimeout(0);
       res.write("retry: 1000\n\n");
       allClients.add(res);
       ctx.clients.add(res);
       sseSend(res, { kind: "attached", key: ctx.key, cwd: ctx.cwd, running: ctx.running });
+      // a chat can stay quiet for minutes: without traffic a proxy, a NAT or an
+      // antivirus drops the connection and the tab silently stops updating
+      const ping = setInterval(() => res.write(SSE_PING), SSE_PING_MS);
+      ping.unref();
       req.on("close", () => {
+        clearInterval(ping);
         allClients.delete(res);
         ctx.clients.delete(res);
         ctx.lastActive = Date.now();
@@ -1085,6 +1455,10 @@ const server = http.createServer(async (req, res) => {
         chatByModel: ctx.chatByModel,
         context: ctx.context,
         streaming: ctx.running || session.isStreaming,
+        // the UI hides the native buttons this machine cannot honour
+        platform: await platformCapabilities(),
+        // when off, the sidebar goes back to a flat list with no trace of the feature
+        chatArchiving: archiving.enabled,
       });
     }
 
@@ -1158,9 +1532,14 @@ const server = http.createServer(async (req, res) => {
       else if (item.type === "boolean") v = Boolean(v);
       else if (item.type === "number") {
         v = Number(v);
-        if (!Number.isFinite(v)) return send(res, 400, { error: "valore numerico non valido" });
+        if (!Number.isFinite(v)) return send(res, 400, { error: "invalid numeric value" });
       } else if (item.type === "string") {
         v = String(v);
+      } else if (item.type.endsWith("[]")) {
+        // list settings (e.g. `enabledModels`): keep them as clean string arrays.
+        // An empty array is meaningful — for `enabledModels` it means "all models".
+        if (!Array.isArray(v)) return send(res, 400, { error: `${key} expects an array` });
+        v = v.map((entry) => String(entry).trim()).filter(Boolean);
       }
       const current = await readSettingsFile();
       setPath(current, key, v);
@@ -1173,7 +1552,17 @@ const server = http.createServer(async (req, res) => {
           for (const ctx of contexts.values()) ctx.session.setThinkingLevel(v);
           applied = true;
         }
-      } catch {}
+        // the model picker reads the allow-list from the live settings manager,
+        // so pushing it there makes the change visible without a restart
+        if (key === "enabledModels") {
+          for (const ctx of contexts.values()) {
+            ctx.session.settingsManager?.setEnabledModels?.(v ?? []);
+          }
+          applied = true;
+        }
+      } catch (err) {
+        console.warn(`pi-web-ui: applying the setting "${key}" to the live sessions failed: ${err?.message ?? err}`);
+      }
       return send(res, 200, {
         ok: true,
         key,
@@ -1186,10 +1575,9 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/config") {
       const ctx = await useContext(sessionKey);
       const { session, cwd } = ctx;
-      const agentDir = path.join(os.homedir(), ".pi", "agent");
       const readJson = async (f) => {
         try {
-          return JSON.parse(await readFile(path.join(agentDir, f), "utf8"));
+          return JSON.parse(await readFile(path.join(AGENT_DIR, f), "utf8"));
         } catch {
           return null;
         }
@@ -1220,6 +1608,7 @@ const server = http.createServer(async (req, res) => {
       );
       const sm = session.settingsManager;
       return send(res, 200, {
+        platform: await platformCapabilities(),
         cwd,
         sessionFile: session.sessionManager?.getSessionFile?.() ?? null,
         sessionId: session.sessionManager?.getSessionId?.() ?? null,
@@ -1251,6 +1640,7 @@ const server = http.createServer(async (req, res) => {
               defaultProvider: sm.getDefaultProvider?.() ?? null,
               defaultModel: sm.getDefaultModel?.() ?? null,
               defaultThinkingLevel: sm.getDefaultThinkingLevel?.() ?? null,
+              enabledModels: sm.getEnabledModels?.() ?? [],
               theme: sm.getTheme?.() ?? null,
               steeringMode: sm.getSteeringMode?.() ?? null,
               followUpMode: sm.getFollowUpMode?.() ?? null,
@@ -1265,15 +1655,62 @@ const server = http.createServer(async (req, res) => {
             }
           : null,
         paths: {
-          agentDir,
-          settings: path.join(agentDir, "settings.json"),
-          models: path.join(agentDir, "models.json"),
-          auth: path.join(agentDir, "auth.json"),
+          agentDir: AGENT_DIR,
+          settings: path.join(AGENT_DIR, "settings.json"),
+          models: path.join(AGENT_DIR, "models.json"),
+          auth: path.join(AGENT_DIR, "auth.json"),
         },
-        rawSettings: settings,
-        rawModels: modelsJson,
+        rawSettings: redactSecrets(settings),
+        rawModels: redactSecrets(modelsJson),
         node: process.version,
       });
+    }
+
+    if (url.pathname === "/api/archiving" && req.method === "GET") {
+      return send(res, 200, { ...archiving });
+    }
+
+    if (url.pathname === "/api/archiving" && req.method === "POST") {
+      const { enabled, archiveNow } = await jsonBody(req);
+      if (typeof enabled === "boolean") {
+        archiving.enabled = enabled;
+        await saveArchiving();
+        broadcastGlobal({ kind: "sessions" });
+        return send(res, 200, { ...archiving });
+      }
+      if (archiveNow === true) {
+        const archived = await archiveStaleChats();
+        broadcastGlobal({ kind: "sessions" });
+        return send(res, 200, { ...archiving, archived });
+      }
+      return send(res, 400, { error: "nothing to change" });
+    }
+
+    if (url.pathname === "/api/network" && req.method === "GET") {
+      return send(res, 200, networkStatus());
+    }
+
+    if (url.pathname === "/api/network" && req.method === "POST") {
+      const { lanAccess, regenerate, reveal } = await jsonBody(req);
+      if (reveal === true) {
+        const url = accessUrl();
+        if (!url) return send(res, 400, { error: "LAN access is off" });
+        console.log("pi-web-ui: LAN access URL revealed from settings");
+        return send(res, 200, { url });
+      }
+      if (typeof lanAccess === "boolean") {
+        network.lanAccess = lanAccess;
+        // Every activation starts from a fresh token: turning access off
+        // invalidates the URLs already handed out.
+        network.token = lanAccess ? newAccessToken() : null;
+      } else if (regenerate === true) {
+        if (!network.lanAccess) return send(res, 400, { error: "LAN access is off" });
+        network.token = newAccessToken();
+      } else {
+        return send(res, 400, { error: "nothing to change" });
+      }
+      await saveNetwork();
+      return send(res, 200, networkStatus());
     }
 
     if (url.pathname === "/api/usage") {
@@ -1303,7 +1740,7 @@ const server = http.createServer(async (req, res) => {
         : await fetchKimiUsage({ force: true });
       // `reason`, not `error`: the client's api() helper treats `error` as a
       // transport failure and toasts it; here the failure is the answer.
-      if (!data.configured) return send(res, 200, { ok: false, reason: "credenziali non salvate" });
+      if (!data.configured) return send(res, 200, { ok: false, reason: "credentials not saved" });
       if (data.error) return send(res, 200, { ok: false, reason: data.error });
       return send(res, 200, { ok: true, data });
     }
@@ -1322,6 +1759,9 @@ const server = http.createServer(async (req, res) => {
       const ctx = await useContext(sessionKey);
       const { session } = ctx;
       const { provider, id } = await jsonBody(req);
+      if (!isNonEmptyString(provider) || !isNonEmptyString(id)) {
+        return send(res, 400, { error: "provider and id must be non-empty strings" });
+      }
       const models = await availableModels();
       const model = models.find((m) => m.provider === provider && m.id === id);
       if (!model) return send(res, 404, { error: "model not found or not authenticated" });
@@ -1343,6 +1783,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/thinking" && req.method === "POST") {
       const { session } = await useContext(sessionKey);
       const { level } = await jsonBody(req);
+      const levels = supportedThinkingLevels(session.model);
+      if (!levels.includes(level)) {
+        return send(res, 400, { error: `invalid thinking level, expected one of: ${levels.join(", ")}` });
+      }
       session.setThinkingLevel(level);
       return send(res, 200, { ok: true, thinkingLevel: session.thinkingLevel });
     }
@@ -1364,7 +1808,7 @@ const server = http.createServer(async (req, res) => {
       if (cur.session.messages.length > 0) {
         return send(res, 400, {
           error:
-            "La chat è già avviata: la cartella non si può cambiare. Apri una nuova chat per lavorare altrove.",
+            "This chat has already started: the folder cannot be changed. Open a new chat to work somewhere else.",
         });
       }
       if (path.resolve(cur.cwd) === dir) {
@@ -1381,34 +1825,22 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "DELETE") {
         const gone = url.searchParams.get("path") ?? "";
         recentCwds = recentCwds.filter((p) => p !== gone);
-        await mkdir(AGENT_DIR, { recursive: true }).catch(() => {});
-        await writeFile(RECENT_CWDS_PATH, JSON.stringify(recentCwds, null, 1)).catch(() => {});
+        await saveRecentCwds();
       }
       return send(res, 200, { recent: recentCwds });
     }
 
     if (url.pathname === "/api/open-explorer" && req.method === "POST") {
       const ctx = await useContext(sessionKey);
-      // explorer.exe exits with code 1 even on success when it hands the path to
-      // an already running instance: fire and forget, the exit code means nothing
-      execFile("explorer.exe", [ctx.cwd], { windowsHide: true }, () => {});
+      const opened = await openFolder(ctx.cwd);
+      if (!opened.ok) return send(res, 501, { error: "opening a folder is not available on this system" });
       return send(res, 200, { ok: true, cwd: ctx.cwd });
     }
 
     if (url.pathname === "/api/open-terminal" && req.method === "POST") {
       const ctx = await useContext(sessionKey);
-      const cdCmd = `Set-Location -LiteralPath '${ctx.cwd.replace(/'/g, "''")}'`;
-      const command = `${cdCmd}; pi`;
-      // The server itself runs with a hidden/absent console (run.vbs), so a plain
-      // spawn() of powershell.exe inherits that invisibility instead of opening a
-      // window. Routing through `cmd /c start` asks the shell to open a brand new,
-      // independent console window regardless of the parent's own console state.
-      const child = spawn(
-        "cmd.exe",
-        ["/c", "start", "", "powershell.exe", "-NoExit", "-Command", command],
-        { cwd: ctx.cwd, detached: true, stdio: "ignore", windowsHide: false },
-      );
-      child.unref();
+      const opened = await openTerminal(ctx.cwd, "pi");
+      if (!opened.ok) return send(res, 501, { error: "opening a terminal is not available on this system" });
       return send(res, 200, { ok: true, cwd: ctx.cwd });
     }
 
@@ -1428,8 +1860,11 @@ const server = http.createServer(async (req, res) => {
       if (!chatPath || typeof chatPath !== "string") {
         return send(res, 400, { error: "missing path" });
       }
-      if (status === "done" || status === "reopened") chatStatus.set(chatPath, status);
-      else chatStatus.delete(chatPath); // "active": nessuno stato da ricordare
+      if (!CHAT_STATUSES.includes(status)) {
+        return send(res, 400, { error: `invalid status, expected one of: ${CHAT_STATUSES.join(", ")}` });
+      }
+      if (status === "active") chatStatus.delete(chatPath); // "active": no state worth remembering
+      else chatStatus.set(chatPath, status);
       await saveChatStatus();
       broadcastGlobal({ kind: "sessions" });
       return send(res, 200, { ok: true, status: chatStatus.get(chatPath) ?? "active" });
@@ -1437,11 +1872,12 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/pick-folder" && req.method === "POST") {
       const current = contexts.get(sessionKey)?.cwd ?? DEFAULT_CWD;
-      const picked = await pickFolderNative(current);
-      if (!picked) return send(res, 200, { cancelled: true });
+      const picked = await pickFolder(current);
+      if (!picked.ok) return send(res, 501, { error: "no native folder picker on this system" });
+      if (!picked.path) return send(res, 200, { cancelled: true });
       let dir;
       try {
-        dir = await resolveDir(picked);
+        dir = await resolveDir(picked.path);
       } catch (e) {
         return send(res, 400, { error: String(e.message ?? e) });
       }
@@ -1479,7 +1915,7 @@ const server = http.createServer(async (req, res) => {
               // last model used in that chat, so the sidebar can show its logo
               // (scanSessionFile is mtime-cached: repeated calls are free)
               const scan = await scanSessionFile(s.path).catch(() => null);
-              const last = scan?.rows?.length ? scan.rows[scan.rows.length - 1] : null;
+              const last = scan?.lastModel ?? null;
               return {
                 path: s.path,
                 id: s.id,
@@ -1499,7 +1935,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/session" && req.method === "POST") {
-      const { action, path: openPath, cwd: wantedCwd, entryId } = await jsonBody(req);
+      const { action = "continue", path: openPath, cwd: wantedCwd, entryId } = await jsonBody(req);
+      if (!SESSION_ACTIONS.includes(action)) {
+        return send(res, 400, { error: `invalid action, expected one of: ${SESSION_ACTIONS.join(", ")}` });
+      }
       // "Fork from here": extract the path from root to a given message entry
       // into a brand new session file, then open that file like any other saved
       // chat. Native SessionManager API (same one behind pi's own /fork).
@@ -1514,7 +1953,7 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return send(res, 400, { error: String(e.message ?? e) });
         }
-        if (!newFile) return send(res, 400, { error: "impossibile forkare: sessione non persistita" });
+        if (!newFile) return send(res, 400, { error: "cannot fork: session not persisted" });
         const ctx = await createContext({ cwd: cur.cwd, mode: "open", openPath: newFile });
         return send(res, 200, { ok: true, key: ctx.key, cwd: ctx.cwd, running: ctx.running });
       }
@@ -1524,6 +1963,10 @@ const server = http.createServer(async (req, res) => {
       if (action === "open") {
         try {
           safePath = await resolveFile(openPath);
+          // only files under the sessions directory may be parsed as sessions
+          if (!isInsideDir(safePath, SESSIONS_DIR)) {
+            return send(res, 400, { error: "path is outside the sessions directory" });
+          }
           // a session may belong to another project: follow its working directory
           if (wantedCwd) targetCwd = await resolveDir(wantedCwd);
         } catch (e) {
@@ -1532,7 +1975,7 @@ const server = http.createServer(async (req, res) => {
       }
       const ctx = await createContext({
         cwd: targetCwd,
-        mode: action ?? "continue",
+        mode: action,
         openPath: safePath,
       });
       return send(res, 200, { ok: true, key: ctx.key, cwd: ctx.cwd, running: ctx.running });
@@ -1657,7 +2100,7 @@ const server = http.createServer(async (req, res) => {
         : [];
       if (!text?.trim() && imgs.length === 0) return send(res, 400, { error: "empty prompt" });
       const opts = imgs.length ? { images: imgs } : undefined;
-      // scrivere in una chat conclusa la riporta in vita come "riaperta"
+      // writing in a done chat brings it back to life as "reopened"
       if (ctx.sessionFile && chatStatus.get(ctx.sessionFile) === "done") {
         chatStatus.set(ctx.sessionFile, "reopened");
         saveChatStatus().then(() => broadcastGlobal({ kind: "sessions" }));
@@ -1715,12 +2158,18 @@ const server = http.createServer(async (req, res) => {
 
     send(res, 404, { error: "not found" });
   } catch (err) {
-    console.error(`pi-web-ui: request error: ${err?.message ?? err}`);
-    if (!res.headersSent) send(res, 500, { error: String(err?.message ?? err) });
+    // Full error (stack, absolute paths, username) goes to the console only.
+    console.error("pi-web-ui: request error:", err);
+    const status = err?.status ?? 500;
+    // Internal messages leak local paths and the username: never echo them back.
+    const payload = status < 500 ? { error: String(err?.message ?? err) } : { error: "internal error" };
+    if (!res.headersSent) send(res, status, payload);
   }
 });
 
 // ---- graceful shutdown -----------------------------------------------------
+// how long to wait for a clean close before killing the process anyway
+const FORCED_EXIT_MS = 1500;
 let stopping = false;
 async function shutdown(reason = "signal") {
   if (stopping) return;
@@ -1740,7 +2189,7 @@ async function shutdown(reason = "signal") {
   allClients.clear();
   server.close(() => process.exit(0));
   // hard exit if something keeps the loop alive
-  setTimeout(() => process.exit(0), 1500).unref();
+  setTimeout(() => process.exit(0), FORCED_EXIT_MS).unref();
 }
 
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
@@ -1763,17 +2212,20 @@ process.on("unhandledRejection", (err) => {
 // released the port: retry EADDRINUSE for a few seconds instead of racing it
 // with a delay guess (which is exactly what made the previous cmd/ping-based
 // approach flaky).
+const LISTEN_RETRY_MAX = 20;
+const LISTEN_RETRY_MS = 300;
 let listenAttempts = 0;
 server.on("error", (err) => {
-  if (err.code !== "EADDRINUSE" || listenAttempts >= 20) {
+  if (err.code !== "EADDRINUSE" || listenAttempts >= LISTEN_RETRY_MAX) {
     console.error(`pi-web-ui: listen failed (${err.code ?? err.message})`);
     process.exit(1);
   }
   listenAttempts++;
-  setTimeout(() => server.listen(PORT, HOST), 300);
+  setTimeout(() => server.listen(PORT, HOST), LISTEN_RETRY_MS);
 });
 server.listen(PORT, HOST, () => {
+  const bootModel = bootCtx.session.model;
   console.log(`pi-web-ui ready → http://${HOST}:${PORT}`);
   console.log(`cwd: ${bootCtx.cwd}`);
-  console.log(`model: ${bootCtx.session.model?.provider}/${bootCtx.session.model?.id}`);
+  console.log(`model: ${bootModel ? `${bootModel.provider}/${bootModel.id}` : "none configured"}`);
 });

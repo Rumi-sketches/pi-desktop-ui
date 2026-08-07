@@ -1,9 +1,9 @@
 # pick-folder.ps1 — modern native folder picker for pi-web-ui.
 #
 # Uses IFileOpenDialog with FOS_PICKFOLDERS: the same dialog family as the
-# Windows file-open dialog (the one shown by "Allega file"), but in folder
+# Windows file-open dialog (the one shown by "Attach file"), but in folder
 # mode. The dialog is owned by the current foreground window — when the user
-# clicks "Sfoglia…" in the browser, the browser IS the foreground window — so
+# clicks "Browse…" in the browser, the browser IS the foreground window — so
 # it opens in front and modal instead of hidden behind everything.
 #
 # Usage: powershell -NoProfile -STA -ExecutionPolicy Bypass -File pick-folder.ps1 [-Initial "C:\path"]
@@ -93,5 +93,5 @@ public static class FolderPicker {
 }
 "@
 
-$r = [FolderPicker]::Pick("Scegli la cartella di lavoro", $Initial)
+$r = [FolderPicker]::Pick("Choose the working folder", $Initial)
 if ($r) { [Console]::Out.Write($r) }
