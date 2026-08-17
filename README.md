@@ -1,29 +1,104 @@
-# pi-web-ui
+# pi-desktop-ui
 
-A local web UI for the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
-It runs a small Node server on your machine and gives the agent a browser front-end: multiple chats
-side by side, streaming answers, diffs, slash commands, model switching and cost analytics.
+A local UI for the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent),
+as a desktop app or in your browser. It runs a small Node server on your machine and gives the agent
+a front-end: multiple chats side by side, streaming answers, diffs, slash commands, model switching
+and cost analytics.
+
+Two ways to run the same thing: `npm run app` opens a desktop window (Electron) with the server
+living inside it, `npm start` keeps the original terminal + browser setup. Both can run at the same
+time.
 
 Everything stays local. There is no backend service, no telemetry, no account: the server talks to
 your own `~/.pi/agent` installation and to the model providers you have already authenticated.
+
+## Design decisions
+
+A few things this project deliberately does not do. They are choices, not gaps; the operational
+details of each one live in [Security and network access](#security-and-network-access).
+
+**The security boundary is the port, not the individual route.** Access is decided once, at the
+door: loopback, or a valid token cookie. Behind that check there is no second tier of privilege,
+because there is nothing to protect it from — whoever is inside already has `/api/cwd` and
+`/api/prompt`, which run arbitrary commands by design.
+
+That is why the code does not validate the path in `?s=`, nor mask the token returned by
+`GET /api/network`. Both would look like hardening and neither would stop anyone: a caller past the
+guard can read that token from disk, or read any file, with a single prompt. Spending checks there
+buys nothing and suggests a boundary that does not exist.
+
+**No TLS in local network mode.** Serving HTTPS from a machine on your LAN means a self-signed
+certificate, accepted by hand on every device that connects, re-accepted whenever it changes. For a
+feature that is off by default and meant for a trusted network, that trade is not worth it. The
+consequence — plain HTTP traffic, cookie included — is stated in the threat model, and enabling the
+mode is an explicit, reversible opt-in.
+
+**No rate limiting.** The server is single-user and local: the only client is the person sitting in
+front of it. There is no quota to protect and no shared capacity to be fair about, so the practical
+limit on request volume is your own patience. The one case where a request has an external cost —
+forcing a provider refresh from `/api/usage` — is handled where it belongs, by requiring the request
+to be same-origin.
+
+**The HTTP API is an implementation detail.** The routes under `/api/` exist to serve `public/`, not
+as a public contract: they are unversioned, undocumented on purpose, and free to change shape
+whenever the UI needs them to. Build a script on top of them if it helps you, but expect it to break,
+and do not read a missing header or a loose response shape as an API defect.
+
+Before opening a security issue, describe the realistic attacker: who they are, and how they get past
+the guard in the first place. An issue that starts after that point is describing the design.
 
 ## Requirements
 
 - **Node.js >= 22**
 - **pi configured on the machine** — the UI reuses `~/.pi/agent` (settings, credentials, sessions).
   If `pi` works in your terminal, you are ready.
+- **For the desktop app only:** Electron, installed as a devDependency by `npm install`. Nothing
+  else — no bundler, no packaging step.
 
 ## Install
 
 ```bash
-git clone https://github.com/Rumi-sketches/pi-web-ui.git
-cd pi-web-ui
+git clone https://github.com/Rumi-sketches/pi-desktop-ui.git
+cd pi-desktop-ui
 npm install
 ```
 
 The package is not published on npm: clone it and run it from the folder.
 
-## Run
+If `npm run app` later complains that Electron has no binary, its post-install step did not run:
+`node node_modules/electron/install.js` downloads it.
+
+## Desktop app
+
+```bash
+npm run app
+```
+
+A window opens on the same UI, and that is the whole app: the server runs *inside* the Electron
+process, so closing the window shuts it down — no stray server left behind, nothing to `Ctrl+C`.
+
+- The server takes an **ephemeral port on loopback**, so the app and a `npm start` session on 3777
+  can be open side by side without fighting over the port or the agent's state files.
+- **One instance:** launching it again brings the existing window to the front.
+- **Links out** (docs, provider pages) open in your system browser; the window itself never leaves
+  the local server.
+- **Restart** from the settings panel swaps the server underneath the window and reloads it, keeping
+  the chat you were on.
+- **Local network access** works exactly as it does from the terminal, token included (see
+  [Security and network access](#security-and-network-access)).
+
+There is no installer and no packaged binary yet: run it from the clone. On Windows, though, you can
+get the double click:
+
+```bash
+npm run shortcut
+```
+
+This puts a single shortcut on your Desktop that opens the app window — no console, no browser, same
+thing `npm run app` does. It is optional and never runs on its own. To remove it, delete the
+shortcut; there is no "Stop" counterpart, because closing the window stops the server with it.
+
+## Run in the browser
 
 ```bash
 npm start
@@ -35,9 +110,6 @@ This starts the server on `http://127.0.0.1:3777`, waits until it answers, and o
 ```bash
 PORT=3778 npm start
 ```
-
-On Windows you can create a Desktop shortcut with `npm run shortcut` (optional, never run
-automatically).
 
 ## Features
 
@@ -88,6 +160,13 @@ Turning the toggle off drops the token (old URLs stop working) and rebinds to lo
 
 Anyone on your LAN who obtains the URL controls the agent with your permissions. Only enable this on
 networks you trust, and turn it back off when you are done.
+
+> **Local network access is plain HTTP, and a VPN does not protect it.**
+> The transport is unencrypted: anyone on the same network can read the access token and the
+> content of your conversations as they travel. A VPN does not cover this case — it encrypts the
+> traffic your machine sends out to the Internet through the tunnel, while local network access
+> arrives from a device sitting on the same network and never enters that tunnel at all. This mode
+> is meant for networks you trust; on public or shared Wi-Fi keep the toggle off.
 
 ### Threat model
 

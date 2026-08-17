@@ -16,3 +16,6 @@ PRDs/
 
 # ssLayer security middleware (local only)
 .sslayer/
+
+# review runs: local only
+.reviews/

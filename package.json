@@ -1,7 +1,7 @@
 {
-  "name": "pi-web-ui",
+  "name": "pi-desktop-ui",
   "version": "1.0.0",
-  "description": "A local web UI for the pi coding agent: chat, sessions, diffs and usage analytics in the browser.",
+  "description": "A local desktop app for the pi coding agent: chat, sessions, diffs and usage analytics in an Electron window, or in the browser.",
   "license": "MIT",
   "author": "Rumi-sketches <rumi.sketches@outlook.com>",
   "type": "module",
@@ -13,15 +13,18 @@
   "keywords": [
     "pi",
     "coding-agent",
+    "desktop",
+    "electron",
     "web-ui",
     "llm"
   ],
   "scripts": {
-    "start": "node bin/pi-web-ui.mjs",
+    "start": "node bin/pi-desktop-ui.mjs",
+    "app": "electron electron/main.mjs",
     "shortcut": "node scripts/create-shortcut.mjs",
     "lint": "eslint .",
     "verify": "node scripts/verify.mjs",
-    "test": "npm run verify"
+    "test": "node --test \"test/*.test.mjs\" && npm run verify"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.0",
@@ -31,6 +34,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "eslint": "^9.39.5"
+    "electron": "^43.3.0",
+    "eslint": "^9.39.5",
+    "typescript": "^7.0.2"
   }
 }

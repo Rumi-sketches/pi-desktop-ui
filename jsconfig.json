@@ -1,0 +1,18 @@
+{
+  // Type checking for plain JS: no build step, no .ts files, no emit.
+  // `npm run verify` runs `tsc --noEmit` over exactly this set of files.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023", "dom"],
+    "strict": false,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.mjs", "public/app.js", "electron/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "bin/**/*.mjs"],
+  "exclude": ["node_modules"]
+}

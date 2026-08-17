@@ -7,6 +7,7 @@ import {
   originMatchesHost,
   readCookie,
   isSameOriginRequest,
+  provesSameOrigin,
   classifyRequest,
   ACCESS_COOKIE,
 } from "../access-control.mjs";
@@ -21,8 +22,8 @@ function request({ method = "GET", headers = {}, search = "", remoteAddress = "1
   return { method, headers, searchParams: new URLSearchParams(search), remoteAddress };
 }
 
-function policy({ lanAccess = false } = {}) {
-  return { port: PORT, lanAccess, matchesToken };
+function policy({ lanAccess = false, matchesToken: tokenCheck = matchesToken } = {}) {
+  return { port: PORT, lanAccess, matchesToken: tokenCheck };
 }
 
 test("splitAuthority parses hostname and port, IPv6 brackets kept", () => {
@@ -85,6 +86,19 @@ test("isSameOriginRequest: Origin decides when Sec-Fetch-Site is absent", () => 
   assert.equal(isSameOriginRequest(bad, host), false);
   const none = request({ method: "POST" });
   assert.equal(isSameOriginRequest(none, host), false);
+});
+
+// /api/usage?force=1 leans on this: a GET must earn the refresh, unlike the
+// guard, which lets every safe method through.
+test("provesSameOrigin: a GET gets no exemption", () => {
+  const host = `localhost:${PORT}`;
+  const headers = (extra) => request({ method: "GET", headers: extra });
+  assert.equal(provesSameOrigin(headers({ "sec-fetch-site": "same-origin" }), host), true);
+  assert.equal(provesSameOrigin(headers({ origin: `http://localhost:${PORT}` }), host), true);
+  assert.equal(provesSameOrigin(headers({ "sec-fetch-site": "none" }), host), true);
+  assert.equal(provesSameOrigin(headers({ "sec-fetch-site": "cross-site", origin: "https://evil.example" }), host), false);
+  assert.equal(provesSameOrigin(headers({ origin: "https://evil.example" }), host), false);
+  assert.equal(provesSameOrigin(headers({}), host), false);
 });
 
 test("classifyRequest: loopback GET is allowed", () => {
@@ -179,4 +193,34 @@ test("classifyRequest: LAN request with the access cookie is allowed", () => {
 test("classifyRequest: LAN request without cookie nor token is denied", () => {
   const req = request({ remoteAddress: LAN_PEER, headers: { host: `192.168.1.50:${PORT}` } });
   assert.equal(classifyRequest(req, policy({ lanAccess: true })), "deny");
+});
+
+// Rotating the LAN token (POST /api/network {regenerate:true}) has to revoke
+// the cookies already handed out: every verdict goes through matchesToken,
+// which compares against the token as it is *now*. Cache the old token, or
+// accept the mere presence of the cookie, and a device kicked off the LAN
+// keeps its access forever.
+test("classifyRequest: a cookie minted before a token rotation is denied", () => {
+  let currentToken = TOKEN;
+  const afterRotation = policy({ lanAccess: true, matchesToken: (value) => value === currentToken });
+  const lanRequest = (headers) =>
+    request({ remoteAddress: LAN_PEER, headers: { host: `192.168.1.50:${PORT}`, ...headers } });
+
+  const oldCookie = lanRequest({ cookie: `${ACCESS_COOKIE}=${TOKEN}` });
+  assert.equal(classifyRequest(oldCookie, afterRotation), "allow");
+
+  currentToken = "rotated-token";
+
+  assert.equal(classifyRequest(oldCookie, afterRotation), "deny");
+  // The stale token is worthless in the query string too: no second handshake.
+  const oldLink = request({
+    remoteAddress: LAN_PEER,
+    headers: { host: `192.168.1.50:${PORT}` },
+    search: `k=${TOKEN}`,
+  });
+  assert.equal(classifyRequest(oldLink, afterRotation), "deny");
+
+  // ...and the freshly issued one works, so the denial is the rotation, not a
+  // malformed request.
+  assert.equal(classifyRequest(lanRequest({ cookie: `${ACCESS_COOKIE}=${currentToken}` }), afterRotation), "allow");
 });
