@@ -18,8 +18,13 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 
-// Overridable so tests (and sandboxed runs) never touch the real ~/.pi/agent.
-const AGENT_DIR = process.env.PI_WEB_UI_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+// Overridable so tests (and sandboxed runs) never touch the real ~/.pi/agent,
+// but only under PI_WEB_UI_TEST=1: the file below holds live session
+// credentials, and a production run must not let the environment decide where
+// they are written or read from.
+const AGENT_DIR =
+  (process.env.PI_WEB_UI_TEST === "1" ? process.env.PI_WEB_UI_AGENT_DIR : undefined)
+  ?? path.join(os.homedir(), ".pi", "agent");
 const CONFIG_PATH = path.join(AGENT_DIR, "web-usage.json");
 const TTL_MS = 45_000; // don't hammer the providers; UI polls faster than this
 // The config holds live session credentials: keep it readable by its owner only.
@@ -28,6 +33,10 @@ const DIR_MODE = 0o700;
 const SECRET_FILE_MODE = 0o600;
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+// The providers this module knows how to talk to: the accepted values of the
+// `provider` argument on the config entry points.
+const PROVIDERS = ["anthropic", "kimi"];
 
 let cache = { anthropic: null, kimi: null };
 
@@ -97,6 +106,9 @@ export function parsePastedCredentials(text) {
   const header = (name) => args.find((a) => a.toLowerCase().startsWith(name))?.slice(name.length).trim();
 
   out.bearer = header("authorization:")?.replace(/^Bearer\s+/i, "")
+    // `\-` is deliberate: the hyphen stays literal wherever it ends up if the
+    // character class is ever reordered.
+    // eslint-disable-next-line no-useless-escape
     ?? raw.match(/[Aa]uthorization:\s*Bearer\s+([\w.\-]+)/)?.[1]
     ?? (/^ey[\w-]+\.[\w-]+\.[\w-]+$/.test(raw) ? raw : undefined);
 
@@ -110,6 +122,7 @@ export function parsePastedCredentials(text) {
   // 2. DevTools cookies table (tab- or multi-space-separated name / "value" pairs)
   const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const pairs = lines
+    // eslint-disable-next-line no-useless-escape -- see above
     .map((l) => l.match(/^([\w.\-]+)[\t ]+["']?([^"']*)["']?$/))
     .filter(Boolean);
   if (pairs.length >= 2 && pairs.length === lines.length) {
@@ -119,6 +132,7 @@ export function parsePastedCredentials(text) {
 
   // 3. plain Cookie header (possibly prefixed with "Cookie:")
   const flat = raw.replace(/^\s*[Cc]ookie:\s*/, "").replace(/\s*\n\s*/g, " ").trim();
+  // eslint-disable-next-line no-useless-escape -- see above
   if (/^[\w.\-]+=/.test(flat)) out.cookie = flat;
   return out;
 }
@@ -127,23 +141,40 @@ function cookieNames(cookie) {
   return new Set(cookie.split(";").map((c) => c.split("=")[0].trim()));
 }
 
+/**
+ * A failure the caller can fix by pasting something else, as opposed to the
+ * environment failing (disk full, permissions). `status` is what the HTTP layer
+ * maps to the response code: without it an unwritable disk reads as "bad paste".
+ * @param {string} message
+ * @returns {Error & { status: number }}
+ */
+function invalidInput(message) {
+  const err = /** @type {Error & { status: number }} */ (new Error(message));
+  err.status = 400;
+  return err;
+}
+
+function assertKnownProvider(provider) {
+  if (!PROVIDERS.includes(provider)) throw invalidInput("unknown provider");
+}
+
 /** Throws a user-facing message when the pasted text can't possibly work. */
 function validate(provider, values) {
   if (provider === "anthropic") {
     const { cookie, orgId } = values;
-    if (!cookie) throw new Error(values.orgId
+    if (!cookie) throw invalidInput(values.orgId
       ? "Found the org id but no cookie: you only pasted the URL. The whole command is needed: right-click the request → Copy → Copy as cURL."
       : "No cookie found in the pasted text. Use DevTools → Network → right-click the 'usage' request → Copy → Copy as cURL.");
-    if (ELLIPSIS_RE.test(cookie)) throw new Error("The cookie is truncated (it contains '…'): that is the shortened text DevTools shows on screen, not the real value. Use Copy as cURL (bash).");
-    if (!cookieNames(cookie).has("sessionKey")) throw new Error("The 'sessionKey' cookie is missing, and that is the one that authenticates: without it claude.ai answers empty. Copy the request with Copy as cURL (bash).");
-    if (!orgId) throw new Error("The org id is missing. If you paste the cURL command it is derived from the URL; otherwise type it in by hand.");
-    if (!UUID_RE.test(orgId)) throw new Error(`The org id '${orgId}' is not a valid UUID (format: 8-4-4-4-12 hex characters).`);
+    if (ELLIPSIS_RE.test(cookie)) throw invalidInput("The cookie is truncated (it contains '…'): that is the shortened text DevTools shows on screen, not the real value. Use Copy as cURL (bash).");
+    if (!cookieNames(cookie).has("sessionKey")) throw invalidInput("The 'sessionKey' cookie is missing, and that is the one that authenticates: without it claude.ai answers empty. Copy the request with Copy as cURL (bash).");
+    if (!orgId) throw invalidInput("The org id is missing. If you paste the cURL command it is derived from the URL; otherwise type it in by hand.");
+    if (!UUID_RE.test(orgId)) throw invalidInput(`The org id '${orgId}' is not a valid UUID (format: 8-4-4-4-12 hex characters).`);
   }
   if (provider === "kimi") {
     const { bearer } = values;
-    if (!bearer) throw new Error("No token found. Use DevTools → Network → right-click the 'GetUsages' request → Copy → Copy as cURL (bash).");
-    if (ELLIPSIS_RE.test(bearer)) throw new Error("The token is truncated (it contains '…'). Use Copy as cURL (bash).");
-    if (bearer.split(".").length !== 3) throw new Error("The token is not shaped like a JWT (three parts separated by '.'). Copy only the value after 'Bearer '.");
+    if (!bearer) throw invalidInput("No token found. Use DevTools → Network → right-click the 'GetUsages' request → Copy → Copy as cURL (bash).");
+    if (ELLIPSIS_RE.test(bearer)) throw invalidInput("The token is truncated (it contains '…'). Use Copy as cURL (bash).");
+    if (bearer.split(".").length !== 3) throw invalidInput("The token is not shaped like a JWT (three parts separated by '.'). Copy only the value after 'Bearer '.");
   }
 }
 
@@ -153,7 +184,7 @@ function validate(provider, values) {
  * which still win if provided (e.g. an org id typed by hand).
  */
 export async function saveUsageConfig(provider, values) {
-  if (!["anthropic", "kimi"].includes(provider)) throw new Error("unknown provider");
+  assertKnownProvider(provider);
   const { paste, ...explicit } = values ?? {};
   const parsed = paste ? parsePastedCredentials(paste) : {};
   const merged = { ...parsed, ...explicit };
@@ -172,7 +203,7 @@ export async function saveUsageConfig(provider, values) {
 }
 
 export async function clearUsageConfig(provider) {
-  if (!["anthropic", "kimi"].includes(provider)) throw new Error("unknown provider");
+  assertKnownProvider(provider);
   const cfg = await readConfig();
   delete cfg[provider];
   await writeConfig(cfg);

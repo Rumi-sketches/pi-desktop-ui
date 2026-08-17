@@ -1,41 +1,38 @@
-// Minimal lint gate: ESLint recommended rules only, on the server-side sources.
+// Minimal lint gate: ESLint recommended rules only, on the server-side sources
+// and on the browser source of the page (public/app.js).
 // Deliberately no stylistic rules and no formatter — see CONTRIBUTING.md.
 import js from "@eslint/js";
+import globals from "globals";
 
 export default [
   {
-    ignores: ["node_modules/", "backup/", "public/", "docs/", "PRDs/", ".memory/", ".reviews/"],
+    ignores: ["node_modules/", "backup/", "docs/", "PRDs/", ".memory/", ".reviews/"],
   },
+  // Kept as its own entry: merging it with the block below would let that
+  // block's `rules` key replace the whole recommended set instead of
+  // overriding two rules of it.
+  { ...js.configs.recommended, files: ["**/*.mjs", "public/*.js"] },
   {
-    ...js.configs.recommended,
-    files: ["**/*.mjs"],
+    files: ["**/*.mjs", "public/*.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
-      globals: {
-        console: "readonly",
-        process: "readonly",
-        fetch: "readonly",
-        setTimeout: "readonly",
-        clearTimeout: "readonly",
-        setInterval: "readonly",
-        clearInterval: "readonly",
-        setImmediate: "readonly",
-        URL: "readonly",
-        URLSearchParams: "readonly",
-        Buffer: "readonly",
-        AbortController: "readonly",
-        TextDecoder: "readonly",
-        TextEncoder: "readonly",
-        crypto: "readonly",
-        structuredClone: "readonly",
-      },
     },
     rules: {
-      // Pre-existing patterns in the codebase; the gate enforces the rest of
-      // the recommended set without forcing a rewrite (see the PRD guardrail).
-      "no-empty": "off",
-      "no-useless-escape": "off",
+      // Empty catch blocks are a deliberate pattern here (best-effort cleanup);
+      // every other empty block stays an error.
+      "no-empty": ["error", { allowEmptyCatch: true }],
+      // `_`-prefixed bindings are the codebase convention for "declared on
+      // purpose, not used" (see electron/main.mjs).
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
+  },
+  { files: ["**/*.mjs"], languageOptions: { globals: { ...globals.node } } },
+  // public/app.js is the only browser source: it runs in the page, next to the
+  // vendored libraries. Those are reached through the `win` view of the global
+  // object, never as bare identifiers, so no extra global is declared here.
+  {
+    files: ["public/*.js"],
+    languageOptions: { globals: { ...globals.browser } },
   },
 ];

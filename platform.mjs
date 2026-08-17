@@ -103,6 +103,14 @@ async function pickFolderLinux(initial) {
   return stdout?.trim() || null;
 }
 
+/** Folder picker per platform; anything else falls back to the Linux one. */
+const PICKERS = {
+  [WINDOWS]: pickFolderWindows,
+  [MACOS]: pickFolderMac,
+};
+
+const folderPicker = () => PICKERS[process.platform] ?? pickFolderLinux;
+
 const canPickFolder = once(async () => {
   if (process.platform === WINDOWS) return hasCommand("powershell.exe");
   if (process.platform === MACOS) return hasCommand("osascript");
@@ -116,12 +124,7 @@ const canPickFolder = once(async () => {
  */
 export async function pickFolder(initial) {
   if (!(await canPickFolder())) return UNAVAILABLE;
-  const pick =
-    process.platform === WINDOWS
-      ? pickFolderWindows
-      : process.platform === MACOS
-        ? pickFolderMac
-        : pickFolderLinux;
+  const pick = folderPicker();
   return { ok: true, path: await pick(initial) };
 }
 
@@ -159,12 +162,17 @@ const linuxTerminal = once(async () => {
 });
 
 function openTerminalWindows(dir, command) {
-  const cd = `Set-Location -LiteralPath '${dir.replace(/'/g, "''")}'`;
   // A plain spawn() of powershell.exe inherits the server's own console state,
   // which may be hidden or absent. Routing through `cmd /c start` asks the shell
   // for a brand new, independent console window regardless of the parent's.
-  const script = command ? `${cd}; ${command}` : cd;
-  return detach("cmd.exe", ["/c", "start", "", "powershell.exe", "-NoExit", "-Command", script], {
+  //
+  // The directory never appears in the command string: it travels as the spawn's
+  // `cwd`, which `start` hands to the new console. A quoted path would have to
+  // survive two levels of parsing (cmd, then PowerShell), and escaping for one
+  // is not escaping for the other.
+  const args = ["/c", "start", "", "powershell.exe", "-NoExit"];
+  if (command) args.push("-Command", command);
+  return detach("cmd.exe", args, {
     cwd: dir,
     windowsHide: false,
   });
@@ -187,6 +195,14 @@ async function openTerminalLinux(dir, command) {
   return detach(term, ["-e", `sh -c ${JSON.stringify(`${command}; exec $SHELL`)}`], { cwd: dir });
 }
 
+/** Terminal opener per platform; anything else falls back to the Linux one. */
+const TERMINALS = {
+  [WINDOWS]: openTerminalWindows,
+  [MACOS]: openTerminalMac,
+};
+
+const terminalOpener = () => TERMINALS[process.platform] ?? openTerminalLinux;
+
 const canOpenTerminal = once(async () => {
   if (process.platform === WINDOWS) return hasCommand("cmd.exe");
   if (process.platform === MACOS) return hasCommand("osascript");
@@ -199,12 +215,7 @@ const canOpenTerminal = once(async () => {
  */
 export async function openTerminal(dir, command) {
   if (!(await canOpenTerminal())) return UNAVAILABLE;
-  const open =
-    process.platform === WINDOWS
-      ? openTerminalWindows
-      : process.platform === MACOS
-        ? openTerminalMac
-        : openTerminalLinux;
+  const open = terminalOpener();
   return (await open(dir, command)) ? { ok: true } : UNAVAILABLE;
 }
 
@@ -213,7 +224,7 @@ export async function openTerminal(dir, command) {
 /**
  * Which native operations this machine can actually perform. The UI hides the
  * buttons that would fail, so the answer must never throw.
- * @returns {Promise<{os: string, pickFolder: boolean, openFolder: boolean, openTerminal: boolean}>}
+ * @returns {Promise<{os: string, osName: string, pickFolder: boolean, openFolder: boolean, openTerminal: boolean}>}
  */
 export async function platformCapabilities() {
   const [folderPicker, fileBrowser, terminal] = await Promise.all([

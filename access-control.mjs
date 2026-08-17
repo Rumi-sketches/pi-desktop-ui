@@ -59,11 +59,11 @@ export function originMatchesHost(origin, hostHeader) {
   return parsed.host.toLowerCase() === String(hostHeader).trim().toLowerCase();
 }
 
-// True when the request proves it comes from our own page (CSRF check).
-// `request` is a plain descriptor: { method, headers }.
-export function isSameOriginRequest(request, hostHeader) {
-  if (SAFE_METHODS.has(request.method)) return true;
-
+// True when the request headers themselves prove it comes from our own page,
+// with no exemption for safe methods. `request` is a plain descriptor:
+// { method, headers }. Handlers whose GET has side effects outside this
+// machine (see /api/usage?force=1) call this instead of isSameOriginRequest.
+export function provesSameOrigin(request, hostHeader) {
   const fetchSite = request.headers["sec-fetch-site"];
   if (fetchSite === "same-origin") return true;
 
@@ -71,6 +71,13 @@ export function isSameOriginRequest(request, hostHeader) {
   if (origin) return originMatchesHost(origin, hostHeader);
   // No Origin at all: only a direct navigation (Sec-Fetch-Site: none) qualifies.
   return fetchSite === "none";
+}
+
+// True when the request may be routed as far as CSRF is concerned: safe methods
+// change nothing, so they pass without proof; anything else must prove itself.
+export function isSameOriginRequest(request, hostHeader) {
+  if (SAFE_METHODS.has(request.method)) return true;
+  return provesSameOrigin(request, hostHeader);
 }
 
 // Verdict for one request: "allow" (route it), "handshake" (a valid ?k= arrived:

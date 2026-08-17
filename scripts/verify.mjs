@@ -1,62 +1,91 @@
 #!/usr/bin/env node
 // Verification gate: syntax-checks every project .mjs file, then runs a smoke
 // test that boots the server on a free port, expects GET /api/state -> 200 and
-// a cross-origin POST -> 403, and a non-loopback Host -> 403.
+// a cross-origin POST -> 403, and a non-loopback Host -> 403. A second smoke
+// test covers the embeddable path the desktop shell uses: startServer({port:0})
+// -> request -> stop() -> port free again.
 // Exits non-zero on the first failed check.
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import http from "node:http";
-import { mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkNoItalianStrings, checkOneProductName, collectFiles } from "./check-language.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const IGNORED_DIRS = new Set(["node_modules", ".git", "backup", ".idea", ".sslayer", "PRDs", ".memory", ".reviews"]);
-// The UI ships in English only: these are the Italian words the translation
-// commit left behind, kept as a tripwire against their return. Documents
-// (.md) and the excluded dirs above are allowed to be in Italian.
-const TRANSLATED_EXTENSIONS = [".mjs", ".js", ".html", ".css"];
-const ITALIAN_BLOCKLIST = [
-  "troncat\\w*",
-  "scadut\\w*",
-  "riconnession\\w*",
-  "richiesta",
-  "totale",
-  "completata",
-  "esecuzione",
-  "caratteri",
-  "misura",
-  "aggiornalo",
-];
-const ITALIAN_RE = new RegExp(`\\b(?:${ITALIAN_BLOCKLIST.join("|")})\\b`, "i");
 const SMOKE_HOST = "127.0.0.1";
 const BOOT_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 250;
-
-async function collectFiles(dir, matches) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue;
-      files.push(...(await collectFiles(full, matches)));
-    } else if (matches(entry.name)) {
-      files.push(full);
-    }
-  }
-  return files;
-}
 
 function run(command, args, options = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { stdio: "pipe", ...options });
     let stderr = "";
     child.stderr.on("data", (chunk) => (stderr += chunk));
+    // `code` is null when the child was killed, e.g. by spawn's own timeout.
     child.on("close", (code) => resolve({ code, stderr }));
   });
+}
+
+// Runs an ESM snippet in a child process with its own agent dir, so the
+// module-level constants that read PI_WEB_UI_AGENT_DIR never see the real
+// ~/.pi/agent of whoever runs the suite. PI_CODING_AGENT_DIR points at the same
+// dir: it is the one the pi library reads, so without it the SessionManager
+// would still write its session files into the real ~/.pi/agent.
+// PI_WEB_UI_TEST=1 is what makes PI_WEB_UI_AGENT_DIR honoured at all: outside
+// test mode the override is ignored on purpose.
+/**
+ * @param {string} script
+ * @param {{ timeout?: number }} [opts]
+ */
+async function runIsolated(script, { timeout } = {}) {
+  const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-desktop-ui-verify-"));
+  try {
+    return await run(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: ROOT,
+      timeout,
+      env: { ...process.env, PI_WEB_UI_TEST: "1", PI_WEB_UI_AGENT_DIR: agentDir, PI_CODING_AGENT_DIR: agentDir },
+    });
+  } finally {
+    await rm(agentDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// docs/api.md is the API documentation, and this is what keeps it honest: the
+// routes literally written in server.mjs's tables must match, one to one, the
+// rows of the document. Both sides are read as text — importing server.mjs here
+// would boot half the agent for three regexes.
+// Only `/api/…` paths are compared: the page and its assets reach the table
+// through spreads (PAGE_ROUTES, VENDOR_ROUTE) that no regex over this file can
+// see, so the document describes them in prose instead of a row.
+const TABLE_ROUTE_RE = /^\s*\["(GET|POST|PUT|DELETE)", "(\/api\/[^"]*)"/gm;
+const DOC_ROUTE_RE = /^\|\s*`(GET|POST|PUT|DELETE) (\/api\/[^`]*)`/gm;
+
+async function checkApiDocumented() {
+  const [source, doc] = await Promise.all([
+    readFile(path.join(ROOT, "server.mjs"), "utf8"),
+    readFile(path.join(ROOT, "docs", "api.md"), "utf8"),
+  ]);
+  const collect = (re, text) => new Set([...text.matchAll(re)].map(([, method, p]) => `${method} ${p}`));
+  const table = collect(TABLE_ROUTE_RE, source);
+  const documented = collect(DOC_ROUTE_RE, doc);
+  const missing = [...table].filter((route) => !documented.has(route));
+  const stale = [...documented].filter((route) => !table.has(route));
+  if (missing.length > 0 || stale.length > 0) {
+    throw new Error(
+      [
+        missing.length > 0 ? `routes missing from docs/api.md:\n  ${missing.join("\n  ")}` : "",
+        stale.length > 0 ? `routes documented but absent from the table:\n  ${stale.join("\n  ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  if (table.size === 0) throw new Error("no route found in server.mjs: the check is reading the wrong shape");
+  return table.size;
 }
 
 async function checkSyntax() {
@@ -72,72 +101,55 @@ async function checkSyntax() {
   return files.length;
 }
 
-// No Italian left in the shipped sources: user-visible strings and comments
-// alike. Reports every offending line, so one run is enough to fix them all.
-async function checkNoItalianStrings() {
-  const files = await collectFiles(ROOT, (name) =>
-    TRANSLATED_EXTENSIONS.some((ext) => name.endsWith(ext)),
-  );
-  const failures = [];
-  const self = fileURLToPath(import.meta.url); // holds the blocklist itself
-  for (const file of files) {
-    if (file === self) continue;
-    const lines = (await readFile(file, "utf8")).split(/\r?\n/);
-    lines.forEach((line, i) => {
-      if (ITALIAN_RE.test(line)) {
-        failures.push(`${path.relative(ROOT, file)}:${i + 1}: ${line.trim()}`);
-      }
-    });
-  }
-  if (failures.length > 0) {
-    throw new Error(`Italian text in ${failures.length} line(s):\n${failures.join("\n")}`);
-  }
-  return files.length;
-}
-
-// Lint gate: ESLint recommended rules over the server-side sources. Invoked
-// through its local bin so the check works the same on every platform.
-function runLint() {
-  return new Promise((resolve, reject) => {
-    const eslintBin = path.join(ROOT, "node_modules", "eslint", "bin", "eslint.js");
-    // ESLint prints violations on stdout, crashes on stderr: surface both.
-    const child = spawn(process.execPath, [eslintBin, "."], { cwd: ROOT, stdio: "pipe" });
+// Runs one of the project's gates in a child node process and rejects with
+// everything it printed. These tools report their findings on stdout and only
+// their own crashes on stderr: both streams are surfaced.
+/**
+ * @param {string[]} args
+ * @param {string} failure how to name the gate in the error message
+ */
+function runGate(args, failure) {
+  return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, { cwd: ROOT, stdio: "pipe" });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
     child.on("close", (code) => {
       if (code === 0) return resolve();
-      reject(new Error(`eslint failed:\n${output.trim()}`));
+      reject(new Error(`${failure}:\n${output.trim()}`));
     });
-  });
+  }));
 }
+
+// Local bins, not shell names: the checks work the same on every platform.
+/** @param {string[]} segments */
+const localBin = (...segments) => path.join(ROOT, "node_modules", ...segments);
+
+// Lint gate: ESLint recommended rules over the server-side sources.
+const runLint = () => runGate([localBin("eslint", "bin", "eslint.js"), "."], "eslint failed");
+
+// Type gate: tsc in checkJs mode over the files jsconfig.json includes. No
+// emit, no .ts sources — the types live in JSDoc, next to the code.
+const runTypeCheck = () =>
+  runGate([localBin("typescript", "bin", "tsc"), "--noEmit", "-p", "jsconfig.json"], "tsc --noEmit failed");
 
 // Unit tests run before the smoke test: they are cheaper and fail faster.
-// node --test reports failures on stdout, so both streams are surfaced.
-function runUnitTests() {
-  return new Promise((resolve, reject) => {
-    // A bare directory argument fails to resolve on Windows: use a glob.
-    const child = spawn(process.execPath, ["--test", "test/*.test.mjs"], { cwd: ROOT, stdio: "pipe" });
-    let output = "";
-    child.stdout.on("data", (chunk) => (output += chunk));
-    child.stderr.on("data", (chunk) => (output += chunk));
-    child.on("close", (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(`unit tests failed (node --test test/):\n${output.trim()}`));
-    });
-  });
-}
+// A bare directory argument fails to resolve on Windows: use a glob.
+const runUnitTests = () =>
+  runGate(["--test", "test/*.test.mjs"], "unit tests failed (node --test test/)");
 
 function findFreePort() {
-  return new Promise((resolve, reject) => {
+  return /** @type {Promise<number>} */ (new Promise((resolve, reject) => {
     const probe = createServer();
     probe.unref();
     probe.on("error", reject);
     probe.listen(0, SMOKE_HOST, () => {
-      const { port } = probe.address();
+      // A TCP server always gets an AddressInfo here; the string form is for
+      // unix sockets, which this probe never uses.
+      const { port } = /** @type {import("node:net").AddressInfo} */ (probe.address());
       probe.close(() => resolve(port));
     });
-  });
+  }));
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -208,11 +220,35 @@ async function checkSecurityHeaders(port) {
 }
 
 // The HTML page renders model-controlled markdown: it must ship with a CSP.
+// script-src has no 'unsafe-inline' since the page logic moved to /app.js, and
+// letting it back in would silently reopen the injection surface.
 async function checkHtmlCsp(port) {
   const res = await fetch(`http://${SMOKE_HOST}:${port}/`);
   const csp = res.headers.get("content-security-policy");
   if (!csp || !csp.includes("default-src 'none'")) {
     throw new Error(`GET /: Content-Security-Policy is "${csp}", expected a restrictive policy`);
+  }
+  const scriptSrc = csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("script-src"));
+  if (scriptSrc !== "script-src 'self'") {
+    throw new Error(`GET /: CSP has "${scriptSrc}", expected exactly "script-src 'self'"`);
+  }
+}
+
+// The page is useless without its two assets, and a wrong Content-Type is fatal
+// under nosniff: the browser refuses the module and the UI stays blank.
+const PAGE_ASSET_TYPES = {
+  "/app.js": "text/javascript; charset=utf-8",
+  "/app.css": "text/css; charset=utf-8",
+};
+
+async function checkPageAssets(port) {
+  for (const [pathname, type] of Object.entries(PAGE_ASSET_TYPES)) {
+    const res = await fetch(`http://${SMOKE_HOST}:${port}${pathname}`);
+    if (res.status !== 200) throw new Error(`GET ${pathname} returned ${res.status}, expected 200`);
+    const actual = res.headers.get("content-type");
+    if (actual !== type) {
+      throw new Error(`GET ${pathname}: Content-Type is "${actual}", expected "${type}"`);
+    }
   }
 }
 
@@ -236,13 +272,29 @@ async function checkConfigSecretsRedacted(port) {
 // exists but lives elsewhere has to be refused, not parsed as a session.
 async function checkSessionOpenConfined(port) {
   const origin = `http://${SMOKE_HOST}:${port}`;
-  const res = await fetch(`${origin}/api/session`, {
+  const outside = encodeURIComponent(path.join(ROOT, "package.json"));
+  const res = await fetch(`${origin}/api/sessions/${outside}/activate`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "open", path: path.join(ROOT, "package.json") }),
+    body: "{}",
   });
   if (res.status !== 400) {
-    throw new Error(`action=open on a file outside SESSIONS_DIR returned ${res.status}, expected 400`);
+    throw new Error(`activating a file outside SESSIONS_DIR returned ${res.status}, expected 400`);
+  }
+}
+
+// Same confinement on the fork route: an id that does not resolve must not slip
+// through to useContext, which would silently fork the most recent chat around.
+async function checkSessionForkConfined(port) {
+  const origin = `http://${SMOKE_HOST}:${port}`;
+  const outside = encodeURIComponent(path.join(ROOT, "package.json"));
+  const res = await fetch(`${origin}/api/sessions/${outside}/fork`, {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ entryId: "whatever" }),
+  });
+  if (res.status !== 400) {
+    throw new Error(`forking a file outside SESSIONS_DIR returned ${res.status}, expected 400`);
   }
 }
 
@@ -251,7 +303,7 @@ async function checkSessionOpenConfined(port) {
 function checkLanHostRejected(port) {
   // fetch() refuses to override the Host header, so this one goes through the
   // raw http client.
-  return new Promise((resolve, reject) => {
+  return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
     const req = http.request(
       {
         host: SMOKE_HOST,
@@ -268,14 +320,17 @@ function checkLanHostRejected(port) {
     );
     req.on("error", reject);
     req.end();
-  });
+  }));
 }
 
 async function smokeTest() {
   const port = await findFreePort();
   // The server rewrites its state files at boot (first-run archiving sweep), so
   // it must never see the real ~/.pi/agent of whoever runs the test suite.
-  const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-web-ui-verify-"));
+  // PI_WEB_UI_AGENT_DIR moves this project's stores, PI_CODING_AGENT_DIR the
+  // agent dir of the pi library where the SessionManager writes sessions, and
+  // PI_WEB_UI_TEST=1 is what makes the first one honoured outside a real run.
+  const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-desktop-ui-verify-"));
   await writeFile(
     path.join(agentDir, "models.json"),
     JSON.stringify({ providers: { fake: { apiKey: SMOKE_FAKE_API_KEY, baseUrl: "https://example.invalid" } } }),
@@ -287,7 +342,9 @@ async function smokeTest() {
       ...process.env,
       PORT: String(port),
       HOST: SMOKE_HOST,
+      PI_WEB_UI_TEST: "1",
       PI_WEB_UI_AGENT_DIR: agentDir,
+      PI_CODING_AGENT_DIR: agentDir,
     },
   });
   let exited = false;
@@ -299,11 +356,13 @@ async function smokeTest() {
     await checkForeignOriginRejected(port);
     await checkSecurityHeaders(port);
     await checkHtmlCsp(port);
+    await checkPageAssets(port);
     await checkLanHostRejected(port);
     await checkConfigSecretsRedacted(port);
     await checkMalformedJsonRejected(port);
     await checkInvalidStatusRejected(port);
     await checkSessionOpenConfined(port);
+    await checkSessionForkConfined(port);
     return port;
   } finally {
     if (!exited) server.kill();
@@ -315,7 +374,6 @@ async function smokeTest() {
 // must be refused at save time. Run in a child process so the temporary agent
 // dir is picked up by usage-tracker's module-level constant.
 async function checkOrgIdTraversalRejected() {
-  const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-web-ui-verify-"));
   const trackerUrl = pathToFileURL(path.join(ROOT, "usage-tracker.mjs")).href;
   const script = `
     const { saveUsageConfig } = await import(${JSON.stringify(trackerUrl)});
@@ -327,38 +385,83 @@ async function checkOrgIdTraversalRejected() {
     } catch { process.exit(0); }
     process.exit(1);
   `;
-  try {
-    const { code } = await run(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, PI_WEB_UI_AGENT_DIR: agentDir },
+  const { code } = await runIsolated(script);
+  if (code !== 0) throw new Error("an org id containing a path traversal was accepted");
+}
+
+// The path the desktop shell rides on: import the server, run it on an
+// ephemeral loopback port, take it down and get the port back. The child is
+// left to exit on its own — a clean exit is the assertion that stop() released
+// every handle (listener, keep-alive sockets, idle sweep timer, agent runs),
+// which is what "close the window, nothing survives" rests on. Electron itself
+// is not needed, and not launched.
+async function checkEmbeddedLifecycle() {
+  const serverUrl = pathToFileURL(path.join(ROOT, "server.mjs")).href;
+  const script = `
+    import { createServer } from "node:net";
+    const { startServer } = await import(${JSON.stringify(serverUrl)});
+    const server = await startServer({ port: 0 });
+    if (!Number.isInteger(server.port) || server.port <= 0) {
+      throw new Error(\`port 0 did not yield an ephemeral port (got \${server.port})\`);
+    }
+    if (!server.url.includes(String(server.port))) {
+      throw new Error(\`url \${server.url} does not point at port \${server.port}\`);
+    }
+    const res = await fetch(server.url);
+    if (res.status !== 200) throw new Error(\`GET \${server.url} returned \${res.status}, expected 200\`);
+    await res.arrayBuffer();
+    await server.stop();
+    await server.stop(); // idempotent: the shell may stop an already stopped server
+    await new Promise((resolve, reject) => {
+      const probe = createServer();
+      probe.on("error", (err) => reject(new Error(\`port \${server.port} still held after stop(): \${err.code}\`)));
+      probe.listen(server.port, ${JSON.stringify(SMOKE_HOST)}, () => probe.close(resolve));
     });
-    if (code !== 0) throw new Error("an org id containing a path traversal was accepted");
-  } finally {
-    await rm(agentDir, { recursive: true, force: true }).catch(() => {});
+  `;
+  const { code, stderr } = await runIsolated(script, { timeout: BOOT_TIMEOUT_MS });
+  if (code === 0) return;
+  if (code === null) {
+    throw new Error(
+      `the embedded server kept the process alive for more than ${BOOT_TIMEOUT_MS}ms after stop()`,
+    );
   }
+  throw new Error(`embedded start/stop failed:\n${stderr.trim()}`);
 }
 
 async function main() {
   const fileCount = await checkSyntax();
   console.log(`✓ syntax: ${fileCount} .mjs file(s) parsed without errors`);
+  // Both wording gates live in scripts/check-language.mjs: separate steps here,
+  // separate lines in the output, one file to open when either one fires.
   const scanned = await checkNoItalianStrings();
-  console.log(`✓ language: ${scanned} source file(s) free of Italian text`);
+  console.log(`✓ language: no known Italian words in ${scanned} source file(s)`);
+  const named = await checkOneProductName();
+  console.log(`✓ naming: no retired product name in ${named} source file(s)`);
+  const routes = await checkApiDocumented();
+  console.log(`✓ api docs: ${routes} route(s) in server.mjs match docs/api.md`);
   await runLint();
   console.log("✓ lint: eslint passed");
+  await runTypeCheck();
+  console.log("✓ types: tsc --noEmit passed with checkJs over jsconfig.json");
   await checkOrgIdTraversalRejected();
   console.log("✓ validation: org id with a path traversal is rejected");
   await runUnitTests();
   console.log("✓ unit tests: node --test test/*.test.mjs passed");
+  await checkEmbeddedLifecycle();
+  console.log("✓ embedded: startServer({ port: 0 }) serves /, stop() frees the port, no handle left");
   const port = await smokeTest();
   console.log(`✓ smoke test: GET http://${SMOKE_HOST}:${port}/api/state -> 200`);
   console.log("✓ smoke test: POST with foreign Origin -> 403");
   console.log("✓ smoke test: responses carry nosniff and no-store");
   console.log("✓ smoke test: GET / carries a restrictive Content-Security-Policy");
+  console.log("✓ smoke test: /app.js and /app.css are served with their own Content-Type");
   console.log("✓ smoke test: POST with a malformed JSON body -> 400");
   console.log("✓ smoke test: POST /api/status with a value outside the whitelist -> 400");
   console.log("✓ smoke test: GET with a LAN Host (lanAccess off) -> 403");
   console.log("✓ smoke test: secret values are redacted from /api/config");
-  console.log("✓ smoke test: action=open outside the sessions directory -> 400");
-  console.log("✓ smoke test: agent state isolated in a temporary PI_WEB_UI_AGENT_DIR");
+  console.log("✓ smoke test: activating a chat outside the sessions directory -> 400");
+  console.log("✓ smoke test: forking a chat outside the sessions directory -> 400");
+  console.log("✓ smoke test: agent state isolated in a temporary PI_WEB_UI_AGENT_DIR + PI_CODING_AGENT_DIR");
 }
 
 main().catch((err) => {

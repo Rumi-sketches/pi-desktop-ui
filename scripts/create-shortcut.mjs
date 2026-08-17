@@ -1,55 +1,61 @@
 #!/usr/bin/env node
-// Optional helper: puts "pi-web-ui - Start" and "pi-web-ui - Stop" shortcuts on
-// the Windows Desktop. Never called automatically — run it with `npm run shortcut`.
+// Optional helper: puts a single shortcut on the Windows Desktop that opens the
+// app window on a double click, exactly like `npm run app`.
+// Never called automatically — run it with `npm run shortcut`.
+//
+// The target is Electron's own executable, not node: electron.exe is a GUI
+// binary, so no console window flashes up and none stays behind. There is no
+// "Stop" counterpart on purpose — the server lives inside the window, so
+// closing the window is how you stop it.
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PRODUCT_NAME } from "../product.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const LAUNCHER = path.join(ROOT, "bin", "pi-web-ui.mjs");
-const PORT = Number(process.env.PORT ?? 3777);
-const START_SHORTCUT_NAME = "pi-web-ui - Start.lnk";
-const STOP_SHORTCUT_NAME = "pi-web-ui - Stop.lnk";
+const ELECTRON = path.join(ROOT, "node_modules", "electron", "dist", "electron.exe");
+const ENTRY = path.join(ROOT, "electron", "main.mjs");
+const SHORTCUT_NAME = `${PRODUCT_NAME}.lnk`;
+// Only `.ico` files: a shortcut's IconLocation is a Windows icon resource, and
+// pointing it at a `.png` gives a blank icon rather than an error. None of
+// these ships today, so the shortcut normally wears Electron's own icon.
+const ICON = ["icon.ico", "favicon.ico"]
+  .map((name) => path.join(ROOT, "public", name))
+  .find((file) => existsSync(file));
 
 if (process.platform !== "win32") {
   console.log(
     `create-shortcut only works on Windows (this is ${process.platform}).\n` +
-      "On macOS and Linux start the app with: npm start",
+      "On macOS and Linux start the app with: npm run app",
   );
   process.exit(0);
+}
+
+if (!existsSync(ELECTRON)) {
+  console.error(
+    "create-shortcut: Electron's binary is missing, so the shortcut would point at nothing.\n" +
+      "Run `node node_modules/electron/install.js` to download it, then try again.",
+  );
+  process.exit(1);
 }
 
 // Quoting rule for a PowerShell single-quoted string: double the quotes.
 const psString = (value) => `'${value.replace(/'/g, "''")}'`;
 
-// Stop shortcut: no PID file is kept anywhere, so it just kills whatever is
-// listening on the port, which is always the pi-web-ui server in practice.
-const stopCommand =
-  `$conns = Get-NetTCPConnection -LocalPort ${PORT} -State Listen -ErrorAction SilentlyContinue; ` +
-  "if (-not $conns) { Write-Host 'pi-web-ui is not running.'; Start-Sleep -Seconds 2; exit }; " +
-  "$conns | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; " +
-  "Write-Host 'pi-web-ui stopped.'; Start-Sleep -Seconds 2";
-
 const script = [
   "$desktop = [Environment]::GetFolderPath('Desktop')",
 
-  `$start = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop ${psString(START_SHORTCUT_NAME)}))`,
-  `$start.TargetPath = ${psString(process.execPath)}`,
-  `$start.Arguments = ${psString(`"${LAUNCHER}"`)}`,
-  `$start.WorkingDirectory = ${psString(ROOT)}`,
-  "$start.Description = 'Start pi-web-ui'",
-  "$start.Save()",
+  `$link = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop ${psString(SHORTCUT_NAME)}))`,
+  `$link.TargetPath = ${psString(ELECTRON)}`,
+  `$link.Arguments = ${psString(`"${ENTRY}"`)}`,
+  `$link.WorkingDirectory = ${psString(ROOT)}`,
+  `$link.Description = ${psString(`Open ${PRODUCT_NAME}`)}`,
+  ...(ICON ? [`$link.IconLocation = ${psString(ICON)}`] : []),
+  "$link.Save()",
 
-  `$stop = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop ${psString(STOP_SHORTCUT_NAME)}))`,
-  "$stop.TargetPath = 'powershell.exe'",
-  `$stop.Arguments = ${psString(`-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -Command "${stopCommand}"`)}`,
-  `$stop.WorkingDirectory = ${psString(ROOT)}`,
-  "$stop.Description = 'Stop pi-web-ui'",
-  "$stop.Save()",
-
-  "Write-Output (Join-Path $desktop " + psString(START_SHORTCUT_NAME) + ")",
-  "Write-Output (Join-Path $desktop " + psString(STOP_SHORTCUT_NAME) + ")",
+  `Write-Output (Join-Path $desktop ${psString(SHORTCUT_NAME)})`,
 ].join("; ");
 
 const child = spawn(
