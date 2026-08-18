@@ -1,11 +1,11 @@
 /**
  * http.mjs — the plumbing every route sits on.
  *
- * Three things live here and nothing else: the request/response helpers (body
- * parsing with a cap, JSON answers, the security headers), the router that
- * turns a `[method, path, handler]` table into a dispatch decision, and the two
- * static-file surfaces of the page (its own assets and the vendored browser
- * libraries).
+ * Four things live here and nothing else: the request/response helpers (body
+ * parsing with a cap, JSON answers, the security headers), the single write
+ * point of every SSE stream, the router that turns a `[method, path, handler]`
+ * table into a dispatch decision, and the two static-file surfaces of the page
+ * (its own assets and the vendored browser libraries).
  *
  * No agent, no session, no persisted state: this module knows about HTTP only,
  * which is why it can be exercised without booting a server.
@@ -97,17 +97,111 @@ export function send(res, code, data, type = "application/json; charset=utf-8") 
 // Only the endpoints that used to answer a failure with 200 speak it — the
 // rest of the API still answers the flat `{ error: "message" }`, and the page
 // reads both (see errorInfo() in public/app.js).
-export function sendError(res, status, code, message) {
-  return send(res, status, { error: { code, message } });
+// `details` is for the rare failure the page has to *do* something with rather
+// than only show — the number of terminals a restart would close, say. It rides
+// inside the error object so the payload keeps carrying nothing but `error`.
+/**
+ * @param {import("node:http").ServerResponse} res
+ * @param {number} status
+ * @param {string} code
+ * @param {string} message
+ * @param {Record<string, unknown>} [details]
+ */
+export function sendError(res, status, code, message, details) {
+  return send(res, status, { error: { code, message, ...details } });
+}
+
+// ---- server-sent events ----------------------------------------------------
+// One write point for every SSE stream of the project (see the SSE entry in
+// DECISIONS.md). An SSE response outlives the request that
+// opened it: the browser can vanish at any moment, and a write on the corpse
+// either throws or — worse — emits an asynchronous `error` on a response with
+// no listener, which is an uncaught exception that takes the whole process
+// down with nothing in the logs.
+
+// A comment line: EventSource ignores it, but it keeps a proxy, a NAT or an
+// antivirus from dropping a socket that carried nothing for minutes.
+export const SSE_PING = ": ping\n\n";
+export const SSE_PING_MS = 15_000;
+
+/**
+ * The only place an SSE stream is written to.
+ *
+ * @param {import("node:http").ServerResponse} res
+ * @param {string} chunk raw SSE text, framing included.
+ * @returns {boolean} false when the response is already gone.
+ */
+export function sseWrite(res, chunk) {
+  if (res.writableEnded || res.destroyed) return false;
+  res.write(chunk);
+  return true;
+}
+
+/**
+ * One `data:` frame. Payloads travel as JSON because chat content and terminal
+ * output carry newlines, which the SSE framing would otherwise eat.
+ *
+ * An `id` makes the frame resumable: the browser remembers the last one it saw
+ * and sends it back as `Last-Event-ID` when it reconnects. Only finite numbers
+ * are accepted, which is also what keeps a newline out of the id line and the
+ * framing intact.
+ *
+ * @param {import("node:http").ServerResponse} res
+ * @param {unknown} event
+ * @param {number} [id] the offset this frame brings the client to
+ * @returns {boolean} false when the response is already gone.
+ */
+export function sseSend(res, event, id) {
+  const head = typeof id === "number" && Number.isFinite(id) ? `id: ${id}\n` : "";
+  return sseWrite(res, `${head}data: ${JSON.stringify(event)}\n\n`);
+}
+
+/**
+ * Open a stream: the headers, the socket options every SSE here wants, the
+ * error listener that keeps a dead client from killing the server, and the
+ * reconnection delay the browser honours on its own.
+ *
+ * @param {import("node:http").ServerResponse} res
+ */
+export function openSseStream(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Content-Type-Options": "nosniff",
+    // tells nginx and friends not to buffer the stream
+    "X-Accel-Buffering": "no",
+  });
+  // These frames are small and latency-sensitive, and the socket must outlive
+  // a long silent turn of the agent or an idle terminal.
+  res.socket?.setNoDelay(true);
+  res.socket?.setTimeout(0);
+  // Half of the rule: the guard above cannot see a socket that dies between
+  // the check and the flush, and that failure surfaces here, asynchronously.
+  res.on("error", () => {});
+  sseWrite(res, "retry: 1000\n\n");
 }
 
 // ---- vendored browser libraries --------------------------------------------
-// marked, highlight.js and DOMPurify are served from node_modules instead of a CDN, so the
-// UI works offline and no third party sees the traffic of a page that drives an
+// marked, highlight.js, DOMPurify and xterm.js are served from node_modules instead of a CDN, so
+// the UI works offline and no third party sees the traffic of a page that drives an
 // agent. Only the sub-trees listed here are reachable.
 const VENDOR_PREFIX = "/vendor/";
 const VENDOR_ROOT = path.join(__dirname, "node_modules");
-const VENDOR_ALLOWED = ["marked/lib/", "highlight.js/es/", "highlight.js/styles/", "dompurify/dist/"];
+// highlight.js comes from @highlightjs/cdn-assets, not from the `highlight.js`
+// package: the latter ships only CommonJS under lib/ and ES shims that re-import
+// it, which no browser can load. The cdn-assets build is the browser one.
+const VENDOR_ALLOWED = [
+  "marked/lib/",
+  "@highlightjs/cdn-assets/highlight.min.js",
+  "@highlightjs/cdn-assets/styles/",
+  "dompurify/dist/",
+  // the integrated terminals: the UMD builds (globals `Terminal` and
+  // `FitAddon`), not the .mjs ones — the page has no bundler.
+  "@xterm/xterm/lib/",
+  "@xterm/xterm/css/",
+  "@xterm/addon-fit/lib/",
+];
 const VENDOR_TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",

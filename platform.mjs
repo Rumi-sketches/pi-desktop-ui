@@ -219,12 +219,96 @@ export async function openTerminal(dir, command) {
   return (await open(dir, command)) ? { ok: true } : UNAVAILABLE;
 }
 
+/* --------------------- type a command without running it ------------------- */
+
+// Typed into the new shell's own console input buffer. There is no supported
+// way to pre-fill a prompt from outside the process (PSReadLine's Insert()
+// throws while no ReadLine loop is active), but a process may inject keystrokes
+// into its own input buffer: they land at the prompt exactly as if typed by
+// hand, with no trailing Return.
+const PS_TYPER = `
+$src = @"
+using System;
+using System.Runtime.InteropServices;
+public class PiWebUiTyper {
+  [StructLayout(LayoutKind.Explicit)]
+  public struct INPUT_RECORD {
+    [FieldOffset(0)] public ushort EventType;
+    [FieldOffset(4)] public bool bKeyDown;
+    [FieldOffset(8)] public ushort wRepeatCount;
+    [FieldOffset(10)] public ushort wVirtualKeyCode;
+    [FieldOffset(12)] public ushort wVirtualScanCode;
+    [FieldOffset(14)] public char UnicodeChar;
+    [FieldOffset(16)] public uint dwControlKeyState;
+  }
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern IntPtr GetStdHandle(int nStdHandle);
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  static extern bool WriteConsoleInput(IntPtr h, INPUT_RECORD[] b, uint len, out uint written);
+  public static void Type(string text) {
+    IntPtr h = GetStdHandle(-10);
+    var recs = new INPUT_RECORD[text.Length * 2];
+    int i = 0;
+    foreach (char c in text) {
+      recs[i++] = new INPUT_RECORD { EventType = 1, bKeyDown = true, wRepeatCount = 1, UnicodeChar = c };
+      recs[i++] = new INPUT_RECORD { EventType = 1, bKeyDown = false, wRepeatCount = 1, UnicodeChar = c };
+    }
+    uint w;
+    WriteConsoleInput(h, recs, (uint)recs.Length, out w);
+  }
+}
+"@
+Add-Type -TypeDefinition $src
+`;
+
+/** Single-quoted PowerShell literal: inside it, only the quote itself escapes. */
+const psLiteral = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+
+/**
+ * Open a PowerShell window in `dir` with `command` already typed at the prompt,
+ * waiting for the user to press Enter. The command is never executed by us.
+ *
+ * The script travels as -EncodedCommand (UTF-16LE base64): `command` comes from
+ * model output, and this way it never has to survive cmd.exe *and* PowerShell
+ * quoting on the way in. If the injection fails the window still prints the
+ * command, so the user is never left staring at a blank shell.
+ */
+function typeInTerminalWindows(dir, command) {
+  const script = [
+    `Set-Location -LiteralPath ${psLiteral(dir)}`,
+    PS_TYPER,
+    `$cmd = ${psLiteral(command)}`,
+    'Write-Host "Command ready below - press Enter to run it, or edit it first." -ForegroundColor DarkCyan',
+    'try { [PiWebUiTyper]::Type($cmd) } catch { Write-Host $cmd }',
+  ].join("\n");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  // Same reason as openTerminalWindows: `cmd /c start` is what guarantees a new
+  // console window, whatever console the server itself was started from.
+  return detach("cmd.exe", ["/c", "start", "", "powershell.exe", "-NoExit", "-EncodedCommand", encoded], {
+    cwd: dir,
+    windowsHide: false,
+  });
+}
+
+/**
+ * Type `command` into a fresh terminal in `dir` without running it.
+ * Windows only: neither Terminal.app nor the Linux emulators can leave a
+ * command pending at the prompt, and silently running it instead would be
+ * exactly the surprise this feature exists to avoid.
+ * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
+ */
+export async function typeInTerminal(dir, command) {
+  if (process.platform !== WINDOWS) return UNAVAILABLE;
+  if (!(await canOpenTerminal())) return UNAVAILABLE;
+  return (await typeInTerminalWindows(dir, command)) ? { ok: true } : UNAVAILABLE;
+}
+
 /* ------------------------------- capabilities ----------------------------- */
 
 /**
  * Which native operations this machine can actually perform. The UI hides the
  * buttons that would fail, so the answer must never throw.
- * @returns {Promise<{os: string, osName: string, pickFolder: boolean, openFolder: boolean, openTerminal: boolean}>}
+ * @returns {Promise<{os: string, osName: string, pickFolder: boolean, openFolder: boolean, openTerminal: boolean, typeInTerminal: boolean}>}
  */
 export async function platformCapabilities() {
   const [folderPicker, fileBrowser, terminal] = await Promise.all([
@@ -238,5 +322,6 @@ export async function platformCapabilities() {
     pickFolder: folderPicker,
     openFolder: fileBrowser,
     openTerminal: terminal,
+    typeInTerminal: process.platform === WINDOWS && terminal,
   };
 }

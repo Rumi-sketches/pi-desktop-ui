@@ -1,17 +1,12 @@
 // Page logic of pi desktop ui, extracted from index.html so the page can ship
 // a CSP without 'unsafe-inline'. ES module: it runs deferred, after parsing.
 
-// highlight.js ships only as ES modules; syntax highlighting kicks in as soon
-// as this module runs, and every call site already guards on win.hljs.
-// @ts-expect-error the specifier is a server route, not a path the checker can
-// resolve on disk: /vendor/ is served from node_modules at runtime.
-import hljs from "/vendor/highlight.js/es/common.js";
-
-// The vendored libraries (marked, DOMPurify) load as classic scripts and land
-// on `window` with no declarations of their own; hljs is put there for them.
-// One untyped view of the global object, instead of a cast per call site.
+// The vendored libraries (marked, DOMPurify, highlight.js) load as classic
+// scripts and land on `window` with no declarations of their own. One untyped
+// view of the global object, instead of a cast per call site.
+// Nothing here imports them: an ES import of a library that is not real ESM
+// fails, and a failed import kills this whole module — with it, every button.
 const win = /** @type {any} */ (window);
-win.hljs = hljs;
 
 // Untyped on purpose: the page reads `.value`, `.checked`, `.dataset` off ids
 // whose markup it owns, and threading a cast through every call site would
@@ -162,6 +157,7 @@ function setupDd(ddId, btnId) {
     const open = dd.classList.contains('open');
     closeFlyouts();
     document.querySelectorAll('.dd.open').forEach((d) => d.classList.remove('open'));
+    $('usageDot')?.classList.remove('open');
     if (!open) dd.classList.add('open');
   });
   dd.querySelector('.dd-menu').addEventListener('click', (e) => e.stopPropagation());
@@ -179,6 +175,7 @@ const modelDd = setupDd('modelDd', 'modelBtn');
 const thinkDd = setupDd('thinkDd', 'thinkBtn');
 const cwdDd = setupDd('cwdDd', 'cwdChip');
 setupDd('statsDd', 'stats');
+const termsDd = setupDd('termsDd', 'termsChip');
 const filterDd = setupDd('filterDd', 'filterBtn');
 function renderFilterMenu() {
   $('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
@@ -213,13 +210,14 @@ function renderMarkdown(div) {
   div.innerHTML = win.marked && win.DOMPurify
     ? win.DOMPurify.sanitize(win.marked.parse(div.dataset.raw ?? ''))
     : esc(div.dataset.raw ?? '');
-  if (win.hljs) $$('pre code', div).forEach((el) => hljs.highlightElement(el));
+  if (win.hljs) $$('pre code', div).forEach((el) => win.hljs.highlightElement(el));
   addCopyButtons(div);
 }
 
 /* ---- copy-to-clipboard: whole messages and single code/context blocks ---- */
 const ICON_COPY = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
+const ICON_RUN = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
 const ICON_FORK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.3"/><circle cx="6" cy="18" r="2.3"/><circle cx="18" cy="12" r="2.3"/><path d="M6 8.3V15.7M8 7l7.5 3.5M8 17l7.5-3.5"/></svg>';
 async function copyToClipboard(text, btn) {
   try {
@@ -259,7 +257,40 @@ function addCopyButtons(container) {
       copyToClipboard(codeEl ? codeEl.innerText : pre.innerText, btn);
     });
     wrap.appendChild(btn);
+    addRunButton(wrap, pre);
   });
+}
+// ▶ next to the copy button, but only on blocks that really look like a command
+// to paste in a shell: one line, and either no language or a shell one. On a
+// Python snippet or a diff the triangle would be a lie.
+const SHELL_LANGS = ['bash', 'sh', 'shell', 'zsh', 'console', 'powershell', 'ps', 'ps1', 'pwsh', 'cmd', 'bat'];
+function shellCommandOf(pre) {
+  const codeEl = pre.querySelector('code');
+  const text = (codeEl ? codeEl.innerText : pre.innerText).trim();
+  if (!text || text.includes('\n')) return null;
+  if (text.length > 2000) return null;
+  const lang = [...(codeEl?.classList ?? [])]
+    .map((c) => c.replace(/^(language|lang)-/, ''))
+    .find((c) => c !== 'hljs' && c !== '');
+  if (lang && !SHELL_LANGS.includes(lang.toLowerCase())) return null;
+  return text;
+}
+function addRunButton(wrap, pre) {
+  if (!platformCaps?.typeInTerminal) return;
+  const cmd = shellCommandOf(pre);
+  if (!cmd) return;
+  const run = document.createElement('button');
+  run.type = 'button';
+  run.className = 'codeRunBtn';
+  run.title = 'Open a terminal with this command typed in — it is not executed';
+  run.innerHTML = ICON_RUN;
+  run.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const r = await post('/api/type-command', { command: cmd });
+    if (r.error) return;
+    toast('Command typed in a new terminal — press Enter there to run it', true);
+  });
+  wrap.appendChild(run);
 }
 // hover toolbar under a turn: copy the whole message, or fork a new chat that
 // starts from exactly this point (native SessionManager branch extraction).
@@ -311,8 +342,7 @@ function newTurn(role, model = null) {
   t.className = 'turn ' + role;
   if (role === 'user') {
     t.dataset.sig = 'user';
-    t.innerHTML = `<div class="avatar">TU</div>
-      <div class="body"><div class="who">Tu</div></div>`;
+    t.innerHTML = '<div class="body"></div>';
   } else {
     // the assistant turn is labeled with the model that produced it (it can
     // change mid-chat): provider logo as avatar + model name instead of "pi"
@@ -322,10 +352,8 @@ function newTurn(role, model = null) {
     const pretty = m?.name || modelsCache.find((x) => x.provider === pid && x.id === mid)?.name || mid;
     t.dataset.sig = `${pid}/${mid}`;
     t.innerHTML = m
-      ? `<div class="avatar hasLogo" title="${esc(pid)}/${esc(mid)}">${logoHtml(pid, mid)}</div>
-         <div class="body"><div class="who">${esc(pretty)} <span class="mprov">${esc(pid)}</span></div></div>`
-      : `<div class="avatar">π</div>
-         <div class="body"><div class="who">pi</div></div>`;
+      ? `<div class="body"><div class="who" title="${esc(pid)}/${esc(mid)}">${esc(pretty)} <span class="mprov">${esc(pid)}</span></div></div>`
+      : '<div class="body"><div class="who">pi</div></div>';
   }
   chat.appendChild(t);
   return t.querySelector('.body');
@@ -435,7 +463,8 @@ function renderStats(chat, context, byModel) {
     $('ctxFill').style.width = pct + '%';
     $('ctxFill').className = pct > 85 ? 'crit' : pct > 60 ? 'warn' : '';
     $('ctxBar').title = `context: ${fmt(context.used)} / ${fmt(context.window)} tokens (${pct.toFixed(1)}%)`;
-    $('composerCtx').textContent = `${state.model ? state.model.id : 'pi'} · context ${pct.toFixed(0)}%`;
+    // the number moved into the usage popover footer, next to the chat cost
+    lastCtxPct = pct;
   }
 }
 // counter popover: one row per LLM used in this chat
@@ -473,108 +502,107 @@ function fmtCountdown(iso) {
   if (d > 0) return `resets in ${d}d ${h % 24}h`;
   return h > 0 ? `resets in ${h}h ${m}m` : `resets in ${m}m`;
 }
-function setUsageBar(pct, severityOrWarnCrit, barId) {
-  const bar = $(barId ?? 'usageWidgetBar');
-  const i = bar.querySelector('i');
+// One row of the usage popover. `pct` drives both the bar and the colour, which
+// follows the provider's own severity when it sends one.
+function usageRow(name, pct, severity, resetsAt) {
   const p = Math.max(0, Math.min(100, pct ?? 0));
-  i.style.width = p + '%';
-  bar.classList.remove('warn', 'crit');
-  if (severityOrWarnCrit === 'critical' || p > 90) bar.classList.add('crit');
-  else if (severityOrWarnCrit === 'warning' || p > 70) bar.classList.add('warn');
+  const cls = severity === 'critical' || p > 90 ? 'crit' : severity === 'warning' || p > 70 ? 'warn' : '';
+  const rs = resetsAt ? fmtCountdown(resetsAt).replace('resets in ', '').replace('resets shortly', 'now') : '';
+  return `<div class="uRow ${cls}"><span class="nm" title="${esc(name)}">${esc(name)}</span>
+    <span class="bar"><i style="width:${p}%"></i></span>
+    <span class="v">${Math.round(p)}%</span><span class="rs">${esc(rs)}</span></div>`;
 }
-// second widget bar: usage of the long window (weekly/period), hidden when the
-// provider does not expose it
-function setUsageBar2(pct, severityOrWarnCrit, text) {
-  const txt = $('usageWidgetTxt2');
-  $('usageWidgetBar2').classList.remove('hide');
-  txt.classList.remove('hide');
-  setUsageBar(pct, severityOrWarnCrit, 'usageWidgetBar2');
-  txt.textContent = text;
-}
-function hideUsageBar2() {
-  $('usageWidgetBar2').classList.add('hide');
-  $('usageWidgetTxt2').classList.add('hide');
+// The ring itself always shows the short rolling window: that is the limit that
+// actually stops you mid-session.
+function setUsageDot(pct, severity, isError) {
+  const dot = $('usageDot');
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  const C = 43.98; // 2*pi*r with r=7
+  $('usageDotFill').setAttribute('stroke-dashoffset', String(C * (1 - p / 100)));
+  dot.classList.remove('warn', 'crit', 'err');
+  if (isError) dot.classList.add('err');
+  else if (severity === 'critical' || p > 90) dot.classList.add('crit');
+  else if (severity === 'warning' || p > 70) dot.classList.add('warn');
 }
 let usageCache = null;
 async function refreshUsage(force) {
   usageCache = await api('/api/usage' + (force ? '?force=1' : ''));
   renderUsageWidget();
 }
+// Context and chat cost, shown in the popover footer instead of above the input.
+let lastCtxPct = null;
 function renderUsageWidget() {
-  const w = $('usageWidget'), label = $('usageWidgetLabel'), txt = $('usageWidgetTxt');
+  const dot = $('usageDot'), pop = $('usagePop');
   const u = usageCache;
   const provider = state.model?.provider;
-  if (!u || u.error || !provider) { w.classList.remove('show'); return; }
+  if (!u || u.error || !provider) { dot.classList.remove('show'); return; }
+
+  const foot = () => {
+    const cost = lastChat?.cost ? `${fmt(lastChat.tokens)} tok · ${money(lastChat.cost)}` : '';
+    const ctx = lastCtxPct === null ? '' : `context ${lastCtxPct.toFixed(0)}%`;
+    return ctx || cost ? `<div class="foot"><span>${esc(ctx)}</span><span>${esc(cost)}</span></div>` : '';
+  };
 
   if (provider === 'anthropic' && u.anthropic?.configured) {
-    w.classList.add('show');
-    label.textContent = 'Claude';
-    txt.classList.remove('err');
+    dot.classList.add('show');
     if (u.anthropic.error) {
-      txt.textContent = u.anthropic.error; txt.classList.add('err'); setUsageBar(0);
-      hideUsageBar2();
-      w.title = u.anthropic.error;
-    } else {
-      const fh = u.anthropic.fiveHour;
-      const sd = u.anthropic.sevenDay;
-      const sev = u.anthropic.limits?.[0]?.severity;
-      setUsageBar(fh?.percent, sev);
-      txt.textContent = fh ? `${Math.round(fh.percent)}%` : 'n/a';
-      // remaining weekly allowance: claude.ai calls it "seven_day", shown nowhere
-      // else in the official UI
-      if (sd && typeof sd.percent === 'number') {
-        const sevSev = u.anthropic.limits?.find((l) => l.kind === 'seven_day')?.severity;
-        setUsageBar2(sd.percent, sevSev, `week ${Math.round(sd.percent)}%`);
-      } else {
-        hideUsageBar2();
-      }
-      w.title = [
-        fh ? `Claude — 5h: ${Math.round(fh.percent)}% · ${fmtCountdown(fh.resetsAt)}` : 'Claude — 5h data unavailable',
-        sd && typeof sd.percent === 'number' ? `week: ${Math.round(sd.percent)}% · ${fmtCountdown(sd.resetsAt)}` : null,
-      ].filter(Boolean).join('\n');
+      setUsageDot(100, null, true);
+      pop.innerHTML = `<div class="h">Claude</div><div class="err">${esc(u.anthropic.error)}</div>`;
+      dot.title = u.anthropic.error;
+      return;
     }
+    // limits[] is exactly what claude.ai renders: the 5h session, the overall
+    // weekly cap, and a weekly cap scoped to one model (its display name comes
+    // from the API, so it follows Anthropic's naming instead of ours).
+    const limits = u.anthropic.limits ?? [];
+    const NAMES = { session: '5 hours', weekly_all: 'Week', weekly_scoped: 'Week' };
+    const session = limits.find((l) => l.kind === 'session');
+    const fh = session ?? { percent: u.anthropic.fiveHour?.percent, resetsAt: u.anthropic.fiveHour?.resetsAt };
+    setUsageDot(fh?.percent, session?.severity);
+    const rows = limits.length
+      ? limits.map((l) => usageRow(l.label || NAMES[l.kind] || l.kind, l.percent, l.severity, l.resetsAt)).join('')
+      : usageRow('5 hours', u.anthropic.fiveHour?.percent, null, u.anthropic.fiveHour?.resetsAt)
+        + (u.anthropic.sevenDay ? usageRow('Week', u.anthropic.sevenDay.percent, null, u.anthropic.sevenDay.resetsAt) : '');
+    pop.innerHTML = `<div class="h">Claude — account usage</div>${rows}${foot()}`;
+    dot.title = `Claude — 5h: ${Math.round(fh?.percent ?? 0)}% · click for the breakdown`;
     return;
   }
 
   if (provider === 'kimi-coding' && u.kimi?.configured) {
-    w.classList.add('show');
-    label.textContent = 'Kimi';
-    txt.classList.remove('err');
+    dot.classList.add('show');
     if (u.kimi.error) {
-      txt.textContent = u.kimi.error; txt.classList.add('err'); setUsageBar(0);
-      hideUsageBar2();
-      w.title = u.kimi.error;
-    } else {
-      const coding = u.kimi.usages?.find((x) => x.scope === 'FEATURE_CODING') ?? u.kimi.usages?.[0];
-      const win5h = coding?.windows?.find((x) => x.durationMinutes === 300) ?? coding?.windows?.[0];
-      const period = coding?.period;
-      const periodPct = period?.limit ? 100 * period.used / period.limit : null;
-      if (period && Number.isFinite(periodPct)) {
-        setUsageBar2(periodPct, null, `sett ${Math.round(periodPct)}%`);
-      } else {
-        hideUsageBar2();
-      }
-      if (win5h) {
-        const pct = win5h.limit ? 100 * win5h.used / win5h.limit : 0;
-        setUsageBar(pct);
-        txt.textContent = `${Math.round(pct)}%`;
-        const periodTxt = period ? ` · period: ${period.used}/${period.limit} (${fmtCountdown(period.resetsAt)})` : '';
-        w.title = `Kimi — 5h window: ${win5h.used}/${win5h.limit} · ${fmtCountdown(win5h.resetsAt)}${periodTxt}`;
-      } else if (period) {
-        const pct = periodPct ?? 0;
-        setUsageBar(pct);
-        txt.textContent = `${period.used}/${period.limit}`;
-        w.title = `Kimi — ${period.used}/${period.limit} · ${fmtCountdown(period.resetsAt)}`;
-        hideUsageBar2();
-      } else {
-        txt.textContent = 'n/a'; setUsageBar(0); hideUsageBar2(); w.title = 'Kimi — data unavailable';
-      }
+      setUsageDot(100, null, true);
+      pop.innerHTML = `<div class="h">Kimi</div><div class="err">${esc(u.kimi.error)}</div>`;
+      dot.title = u.kimi.error;
+      return;
     }
+    const coding = u.kimi.usages?.find((x) => x.scope === 'FEATURE_CODING') ?? u.kimi.usages?.[0];
+    const win5h = coding?.windows?.find((x) => x.durationMinutes === 300) ?? coding?.windows?.[0];
+    const period = coding?.period;
+    const winPct = win5h?.limit ? 100 * win5h.used / win5h.limit : null;
+    const periodPct = period?.limit ? 100 * period.used / period.limit : null;
+    setUsageDot(winPct ?? periodPct ?? 0);
+    let rows = '';
+    if (win5h) rows += usageRow('5 hours', winPct ?? 0, null, win5h.resetsAt);
+    if (period) rows += usageRow('Period', periodPct ?? 0, null, period.resetsAt);
+    if (!rows) rows = '<div class="err">data unavailable</div>';
+    pop.innerHTML = `<div class="h">Kimi — account usage</div>${rows}${foot()}`;
+    dot.title = `Kimi — 5h: ${Math.round(winPct ?? 0)}% · click for the breakdown`;
     return;
   }
 
-  w.classList.remove('show');
+  dot.classList.remove('show');
 }
+// the popover is opt-in: the bar stays a single dot until you click it
+$('usageDot').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = $('usageDot').classList.contains('open');
+  document.querySelectorAll('.dd.open').forEach((d) => d.classList.remove('open'));
+  $('usageDot').classList.toggle('open', !open);
+  if (!open) renderUsageWidget();
+});
+$('usagePop').addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', () => $('usageDot').classList.remove('open'));
 
 /* ---------------- SSE (with reconnect + refresh fallback) ---------------- */
 let es = null;
@@ -602,6 +630,8 @@ function handleEvent(ev) {
       }
     } else if (ev.kind === 'sessions') {
       loadSessions();
+    } else if (ev.kind === 'terminals') {
+      loadTerminals();   // a terminal was created, died or was closed (here or elsewhere)
     }
     return;
   }
@@ -866,8 +896,10 @@ $('terminalBtn').addEventListener('click', async () => {
 // The three native features do not exist everywhere (no picker without zenity
 // on Linux, and so on): the server says what it can do and we hide the rest, so
 // no button promises something that would end in an error.
+let platformCaps = null;
 function applyPlatformCapabilities(caps) {
   if (!caps) return;
+  platformCaps = caps;
   $('browseBtn').classList.toggle('hide', !caps.pickFolder);
   $('explorerBtn').parentElement.classList.toggle('hide', !caps.openFolder);
   $('terminalBtn').classList.toggle('hide', !caps.openTerminal);
@@ -974,6 +1006,7 @@ async function loadSessions() {
   runningKeys.clear();
   for (const k of res.running ?? []) runningKeys.add(k);
   renderSessions();
+  renderProjTabs();
 }
 // status+period chosen in the icon popover; 'all'/'all' = no active filter
 const isChatDone = (s) => chatArchiving && s.status === 'done';
@@ -988,6 +1021,8 @@ function applyChatArchiving(enabled) {
   renderSessions();
 }
 function passesSessionFilter(s) {
+  // project tabs: with a tab active the sidebar only shows that project's chats
+  if (projState.active && (s.cwd || '').toLowerCase() !== projState.active.toLowerCase()) return false;
   const { status, period } = sessionFilter;
   if (chatArchiving && status === 'active' && s.status === 'done') return false;
   if (chatArchiving && status === 'done' && s.status !== 'done') return false;
@@ -1006,11 +1041,12 @@ function passesSessionFilter(s) {
   }
   return true;
 }
-function renderSessions() {
+// Filtered and ordered chats, shared by the sidebar and by the collapsed-sidebar
+// flyout: the two must never disagree on what "the most recent chats" are.
+function sessionsInOrder() {
   const q = $('sessionSearch').value.trim().toLowerCase();
   const list = allSessions.filter((s) => passesSessionFilter(s) && (!q || `${s.name || ''} ${s.firstMessage || ''} ${s.cwd || ''}`.toLowerCase().includes(q)));
   const sort = $('sortFilter').value;
-  const groupBy = $('groupFilter').value;
   // favorites always sit on top and among themselves are sorted by date (newest
   // first), whatever view/sort is selected; the rest follows the sort.
   // Done chats always sit below active ones, even when more recent.
@@ -1025,22 +1061,76 @@ function renderSessions() {
       : sort === 'old' ? modifiedAt(a) - modifiedAt(b)
       : modifiedAt(b) - modifiedAt(a);
   });
-  $('sessionCount').textContent = list.length;
-  const el = $('sessionList');
-  el.innerHTML = '';
-  if (!list.length) { el.innerHTML = '<div class="sys" style="padding:.8rem">No chat</div>'; return; }
-  // grouping (independent from sorting): day / project / model.
-  // By day the date order is already enough; in the other cases a stable pass is
-  // needed to make the groups contiguous without touching the inner order.
+  return list;
+}
+// Grouping is independent from sorting: by day the date order is already enough,
+// in the other cases a stable pass makes the groups contiguous without touching
+// the inner order.
+function orderForGrouping(list, groupBy) {
+  const isDone = isChatDone;
   if (groupBy === 'project' || groupBy === 'model') {
     list.sort((a, b) => (isDone(a) ? 1 : 0) - (isDone(b) ? 1 : 0)
       || (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)
       || groupOf(a, groupBy).localeCompare(groupOf(b, groupBy)));
   }
+  return list;
+}
+// One chat row. Built once and reused by the sidebar and by the hover switcher,
+// so active state, favourite/done buttons and running dots cannot drift apart
+// between the two.
+function sessionItemEl(s) {
+  const done = isChatDone(s);
+  const div = document.createElement('div');
+  div.className = 'sessionItem' + (s.path === currentSessionPath ? ' active' : '') + (done ? ' done' : '');
+  const label = s.name || s.firstMessage || '(empty)';
+  const proj = (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  const running = runningKeys.has(s.path);
+  div.innerHTML = `<div class="acts">
+    ${chatArchiving ? `<button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Move back to active' : 'Mark as done'}">${done ? '↺' : '✓'}</button>` : ''}
+    <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
+    </div><div class="title">${running ? '<span class="runDot"></span>' : done ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span>
+    ${chatArchiving && s.status === 'reopened' ? '<span class="reopened">reopened</span>' : ''}
+    ${s.favorite ? '<span class="favMark">♥</span>' : ''}</div><div class="meta">
+    ${s.model || s.provider ? `<span title="${esc((s.provider || '') + '/' + (s.model || ''))}">${logoHtml(s.provider || '', s.model || '')}</span>` : ''}
+    ${proj ? `<span class="proj" title="${esc(s.cwd)}">${esc(proj)}</span><span>·</span>` : ''}
+    <span>${s.messageCount} msg</span><span>·</span><span>${fmtDate(s.modified)}</span>
+    ${running ? '<span>·</span><span style="color:var(--teal)">running</span>' : ''}</div>`;
+  div.querySelector('.lbl').textContent = label;
+  div.title = label;
+  // favorite: clicking the heart must not open the chat
+  div.querySelector('.fav').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
+    if (r.error) return;
+    s.favorite = !s.favorite;
+    renderSessions();
+  });
+  // done / reopen: here too the click must not open the chat
+  div.querySelector('.doneBtn')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const next = done ? 'active' : 'done';
+    const r = await post('/api/status', { path: s.path, status: next });
+    if (r.error) return;
+    s.status = r.status ?? next;
+    renderSessions();
+  });
+  // middle click or Ctrl+click = open the chat in a new tab (every tab has its own chat)
+  const openInNewTab = () => window.open(
+    location.origin + location.pathname + '#s=' + encodeURIComponent(s.path), '_blank');
+  div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll
+  div.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openInNewTab(); } });
+  div.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); openInNewTab(); return; }
+    openSession(s);
+  });
+  return div;
+}
+// Rows plus group headers, in the container of the caller.
+function fillSessionList(el, list, groupBy) {
   let lastGroup = null;
   for (const s of list) {
     if (groupBy !== 'none') {
-      const g = isDone(s) ? 'Done' : s.favorite ? 'Favorites' : groupOf(s, groupBy);
+      const g = isChatDone(s) ? 'Done' : s.favorite ? 'Favorites' : groupOf(s, groupBy);
       if (g !== lastGroup) {
         lastGroup = g;
         const h = document.createElement('div');
@@ -1049,52 +1139,18 @@ function renderSessions() {
         el.appendChild(h);
       }
     }
-    const div = document.createElement('div');
-    const done = isDone(s);
-    div.className = 'sessionItem' + (s.path === currentSessionPath ? ' active' : '') + (done ? ' done' : '');
-    const label = s.name || s.firstMessage || '(empty)';
-    const proj = (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
-    const running = runningKeys.has(s.path);
-    div.innerHTML = `<div class="acts">
-      ${chatArchiving ? `<button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Move back to active' : 'Mark as done'}">${done ? '↺' : '✓'}</button>` : ''}
-      <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
-      </div><div class="title">${running ? '<span class="runDot"></span>' : done ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span>
-      ${chatArchiving && s.status === 'reopened' ? '<span class="reopened">reopened</span>' : ''}
-      ${s.favorite ? '<span class="favMark">♥</span>' : ''}</div><div class="meta">
-      ${s.model || s.provider ? `<span title="${esc((s.provider || '') + '/' + (s.model || ''))}">${logoHtml(s.provider || '', s.model || '')}</span>` : ''}
-      ${proj ? `<span class="proj" title="${esc(s.cwd)}">${esc(proj)}</span><span>·</span>` : ''}
-      <span>${s.messageCount} msg</span><span>·</span><span>${fmtDate(s.modified)}</span>
-      ${running ? '<span>·</span><span style="color:var(--teal)">running</span>' : ''}</div>`;
-    div.querySelector('.lbl').textContent = label;
-    div.title = label;
-    // favorite: clicking the heart must not open the chat
-    div.querySelector('.fav').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
-      if (r.error) return;
-      s.favorite = !s.favorite;
-      renderSessions();
-    });
-    // done / reopen: here too the click must not open the chat
-    div.querySelector('.doneBtn')?.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const next = done ? 'active' : 'done';
-      const r = await post('/api/status', { path: s.path, status: next });
-      if (r.error) return;
-      s.status = r.status ?? next;
-      renderSessions();
-    });
-    // middle click or Ctrl+click = open the chat in a new tab (every tab has its own chat)
-    const openInNewTab = () => window.open(
-      location.origin + location.pathname + '#s=' + encodeURIComponent(s.path), '_blank');
-    div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll
-    div.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openInNewTab(); } });
-    div.addEventListener('click', (e) => {
-      if (e.ctrlKey || e.metaKey) { e.preventDefault(); openInNewTab(); return; }
-      openSession(s);
-    });
-    el.appendChild(div);
+    el.appendChild(sessionItemEl(s));
   }
+}
+function renderSessions() {
+  const groupBy = $('groupFilter').value;
+  const list = orderForGrouping(sessionsInOrder(), groupBy);
+  $('sessionCount').textContent = list.length;
+  if ($('quickChats').classList.contains('show')) renderQuickChats();
+  const el = $('sessionList');
+  el.innerHTML = '';
+  if (!list.length) { el.innerHTML = '<div class="sys" style="padding:.8rem">No chat</div>'; return; }
+  fillSessionList(el, list, groupBy);
 }
 // group label of a chat in the sidebar
 function groupOf(s, mode) {
@@ -1131,6 +1187,8 @@ async function newChat() {
   $('input').focus();
 }
 $('newSessionBtn').addEventListener('click', newChat);
+$('openPiTermBtn').addEventListener('click', () => openTerminal('pi'));
+$('openShellTermBtn').addEventListener('click', () => openTerminal('shell'));
 $('sessionSearch').addEventListener('input', renderSessions);
 $('sortFilter').addEventListener('change', renderSessions);
 $('groupFilter').addEventListener('change', () => {
@@ -1153,7 +1211,162 @@ function setSidebarCollapsed(v) {
   $('sidebar').classList.toggle('collapsed', v);
   // with the sidebar closed the chat text gets even wider (see body.sb-closed)
   document.body.classList.toggle('sb-closed', v);
+  // collapsed, the icon's job is the chat list on hover: a "Show sidebar" tooltip
+  // would pop up in front of it
+  $('sidebarShow').title = v ? '' : 'Show sidebar';
+  if (!v) hideQuickChats();
 }
+
+/* ---- quick chat switcher: the chat list on hover, sidebar still collapsed ---- */
+const QUICK_CHATS_MAX = 12;
+function renderQuickChats() {
+  const groupBy = $('groupFilter').value;
+  const full = orderForGrouping(sessionsInOrder(), groupBy);
+  const list = full.slice(0, QUICK_CHATS_MAX);
+  const box = $('quickChats');
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="sys" style="padding:.5rem .55rem">No chat</div>'; return; }
+  // same rows as the sidebar: active chat, favourite/done buttons, grouping and
+  // ordering all come from there, this is only a shorter window on the list
+  fillSessionList(box, list, groupBy);
+  // opening a chat from here must not leave the flyout hanging over the page
+  box.querySelectorAll('.sessionItem').forEach((el) => {
+    el.addEventListener('click', (e) => { if (!e.ctrlKey && !e.metaKey) hideQuickChats(); });
+  });
+  if (full.length > QUICK_CHATS_MAX) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'qcMore';
+    more.textContent = `Open the sidebar — ${full.length - QUICK_CHATS_MAX} more chats`;
+    more.addEventListener('click', () => { hideQuickChats(); setSidebarCollapsed(false); });
+    box.appendChild(more);
+  }
+}
+let quickChatsTimer = null;
+function showQuickChats() {
+  clearTimeout(quickChatsTimer);
+  // it exists to avoid reopening the sidebar: with the sidebar open it is noise
+  if (!$('sidebar').classList.contains('collapsed')) return;
+  renderQuickChats();
+  $('quickChats').classList.add('show');
+}
+function hideQuickChats() {
+  clearTimeout(quickChatsTimer);
+  $('quickChats').classList.remove('show');
+}
+// the delay is what makes the diagonal trip from the icon to the list survivable
+const quickChatsLater = () => { clearTimeout(quickChatsTimer); quickChatsTimer = setTimeout(hideQuickChats, 250); };
+$('sidebarShowWrap').addEventListener('mouseenter', showQuickChats);
+$('sidebarShowWrap').addEventListener('mouseleave', quickChatsLater);
+$('sidebarShow').addEventListener('focus', showQuickChats);
+
+/* ---- project tabs: one browser-style tab per open project (persisted) ---- */
+// { tabs: [cwd, ...], active: cwd | null } — null = no filter, every chat shows
+let projState = { tabs: [], active: null };
+try {
+  const saved = JSON.parse(localStorage.getItem('piProjTabs') || '{}');
+  if (Array.isArray(saved.tabs)) projState = { tabs: saved.tabs.filter((t) => typeof t === 'string'), active: typeof saved.active === 'string' ? saved.active : null };
+} catch {}
+if (projState.active && !projState.tabs.includes(projState.active)) projState.active = null;
+const projName = (cwd) => (cwd || '').split(/[\\/]/).filter(Boolean).pop() || cwd;
+function saveProjTabs() { localStorage.setItem('piProjTabs', JSON.stringify(projState)); }
+function renderProjTabs() {
+  const list = $('projTabList');
+  list.innerHTML = '';
+  const mkTab = (label, cwd) => {
+    const t = document.createElement('button');
+    t.type = 'button';
+    t.className = 'projTab' + ((cwd ?? null) === projState.active ? ' on' : '');
+    t.title = cwd || 'All chats, whatever the project';
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = label;
+    t.appendChild(nm);
+    if (cwd) {
+      const x = document.createElement('span');
+      x.className = 'x';
+      x.textContent = '×';
+      x.title = 'Close this project tab (chats are kept)';
+      x.addEventListener('click', (e) => { e.stopPropagation(); closeProjTab(cwd); });
+      t.appendChild(x);
+    }
+    t.addEventListener('click', () => activateProjTab(cwd ?? null));
+    list.appendChild(t);
+  };
+  mkTab('All', null);
+  for (const cwd of projState.tabs) mkTab(projName(cwd), cwd);
+}
+async function activateProjTab(cwd) {
+  const changed = projState.active !== cwd;
+  projState.active = cwd;
+  saveProjTabs();
+  renderProjTabs();
+  renderSessions();
+  // switching project also lands you in it: open its most recent chat
+  if (changed && cwd) {
+    const latest = allSessions.filter((s) => (s.cwd || '').toLowerCase() === cwd.toLowerCase())
+      .sort((a, b) => modifiedAt(b) - modifiedAt(a))[0];
+    if (latest && latest.path !== currentSessionPath) await openSession(latest);
+  }
+}
+function closeProjTab(cwd) {
+  projState.tabs = projState.tabs.filter((t) => t !== cwd);
+  if (projState.active === cwd) projState.active = null;
+  saveProjTabs();
+  renderProjTabs();
+  renderSessions();
+}
+// "+" menu: every project we know of — the folders of the existing chats plus the
+// recent-folders list — minus the tabs already open
+const projAddDd = setupDd('projAddDd', 'projAddBtn');
+function knownProjects() {
+  const open = new Set(projState.tabs.map((t) => t.toLowerCase()));
+  const seen = new Map(); // lowercased path -> original casing, so C:\X and c:\x are one project
+  for (const cwd of [...allSessions.map((s) => s.cwd), ...recentCwds]) {
+    if (!cwd) continue;
+    const k = cwd.toLowerCase();
+    if (!open.has(k) && !seen.has(k)) seen.set(k, cwd);
+  }
+  return [...seen.values()].sort((a, b) => projName(a).localeCompare(projName(b)));
+}
+function renderProjAddMenu() {
+  const known = knownProjects();
+  const menu = $('projAddMenu');
+  menu.innerHTML = '<div class="dd-group">Open a project tab</div>';
+  if (!known.length) { menu.innerHTML += '<div class="sys" style="padding:.4rem .55rem">No other project in your chats</div>'; return; }
+  for (const cwd of known) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dd-item';
+    b.innerHTML = '<span class="col"></span>';
+    const col = b.querySelector('.col');
+    const nm = document.createElement('span');
+    nm.textContent = projName(cwd);
+    const pth = document.createElement('span');
+    pth.className = 'pth';
+    pth.textContent = cwd;
+    col.append(nm, pth);
+    b.addEventListener('click', () => {
+      projState.tabs.push(cwd);
+      projAddDd.classList.remove('open');
+      activateProjTab(cwd);
+    });
+    menu.appendChild(b);
+  }
+}
+// The strip scrolls, so it clips its own children: the menu is fixed-positioned
+// and anchored to the button here, right after setupDd has toggled it open.
+$('projAddBtn').addEventListener('click', () => {
+  if (!projAddDd.classList.contains('open')) return;
+  renderProjAddMenu();
+  const r = $('projAddBtn').getBoundingClientRect();
+  const menu = $('projAddMenu');
+  menu.style.top = `${Math.round(r.bottom + 6)}px`;
+  // keep it on screen when the button sits near the right edge
+  menu.style.left = `${Math.round(Math.min(r.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+});
+renderProjTabs();
+
 $('sidebarToggle').addEventListener('click', () => setSidebarCollapsed(true));
 $('sidebarShow').addEventListener('click', () => setSidebarCollapsed(!$('sidebar').classList.contains('collapsed')));
 $('sidebarBackdrop').addEventListener('click', () => setSidebarCollapsed(true));
@@ -1369,6 +1582,281 @@ $('tasksClose').addEventListener('click', () => {
   $('navTasks').classList.remove('on');
 });
 
+/* ---------------- integrated terminals (xterm over SSE) ----------------
+   One xterm instance per terminal id, created the first time it is selected
+   and kept alive afterwards: switching to a chat and back must not lose the
+   scrollback. The process itself lives in the server, so a page reload only
+   costs the instance, never the session. */
+const termPanes = new Map();   // id -> { pane, term, fit, es }
+let activeTerminalId = null;
+
+// The colours follow the active web UI theme instead of xterm's defaults, so a
+// terminal does not punch a black hole into a light page.
+function termTheme() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+  const foreground = v('--txt', '#e9edf3');
+  return {
+    background: v('--bg', '#0b0d11'),
+    foreground,
+    cursor: v('--teal', foreground),
+    cursorAccent: v('--bg', '#0b0d11'),
+    selectionBackground: v('--teal-dim', '#2fe0c033'),
+  };
+}
+function refreshTerminalThemes() {
+  const theme = termTheme();
+  for (const entry of termPanes.values()) entry.term.options.theme = theme;
+}
+
+// Keystrokes are the most frequent request the page makes: they go out on a
+// bare fetch, without the toast-on-error wrapper, so a hiccup cannot bury the
+// screen under notifications.
+function sendTerminalInput(id, data) {
+  fetch(`/api/terminals/${encodeURIComponent(id)}/input`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data }),
+  }).catch((e) => console.error('terminal input', e));
+}
+
+// The PTY has to be told the geometry the addon just computed, otherwise the
+// program running inside it keeps wrapping at the old width.
+function fitTerminal(id) {
+  const entry = termPanes.get(id);
+  if (!entry || entry.pane.classList.contains('hide')) return;
+  try { entry.fit.fit(); } catch { return; }
+  const { cols, rows } = entry.term;
+  if (cols === entry.cols && rows === entry.rows) return;
+  entry.cols = cols; entry.rows = rows;
+  fetch(`/api/terminals/${encodeURIComponent(id)}/resize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cols, rows }),
+  }).catch((e) => console.error('terminal resize', e));
+}
+
+// The process behind this pane is gone: say so once, and stop pretending the
+// keyboard goes anywhere. The row stays in the sidebar (and the pane reopens
+// read-only) until the user closes it with ×, so the scrollback is not lost
+// with the process.
+function markTerminalExited(id, code) {
+  const entry = termPanes.get(id);
+  // The frame comes again on every reconnection of the stream: the notice and
+  // the read-only switch must happen once per pane, not once per delivery.
+  if (!entry || entry.exited) return;
+  entry.exited = true;
+  entry.term.options.disableStdin = true;
+  entry.term.options.cursorBlink = false;
+  entry.term.write(`\r\n[process exited (code ${code}) — close this terminal with ×]\r\n`);
+}
+
+function openTerminalPane(id) {
+  const existing = termPanes.get(id);
+  if (existing) return existing;
+  if (!win.Terminal) { toast('xterm.js did not load: the terminal cannot be shown'); return null; }
+  const pane = document.createElement('div');
+  pane.className = 'termPane hide';
+  pane.dataset.id = id;
+  $('termHost').appendChild(pane);
+
+  const css = getComputedStyle(document.documentElement);
+  const term = new win.Terminal({
+    theme: termTheme(),
+    fontFamily: css.getPropertyValue('--font-mono').trim() || 'ui-monospace, monospace',
+    fontSize: 13,
+    cursorBlink: true,
+    scrollback: 5000,
+    convertEol: false,
+  });
+  const fit = new win.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(pane);
+  term.onData((data) => sendTerminalInput(id, data));
+
+  // Scrollback first, then the live output: both arrive as `{ data }` frames,
+  // because a terminal emits raw control bytes SSE framing would eat.
+  // Every frame carries an id (the offset it brings us to), which EventSource
+  // sends back as Last-Event-ID when it reconnects on its own: the server then
+  // replays only what we missed. `reset` means it could not — the output we are
+  // missing has scrolled away — so what follows replaces the screen, it does
+  // not continue it.
+  // `exited` is the death of the process, announced by the server: it is what
+  // turns the pane read-only, and it arrives whether or not anyone typed.
+  const es = new EventSource(`/api/terminals/${encodeURIComponent(id)}/stream`);
+  es.onmessage = (e) => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.reset === true) term.reset();
+    if (typeof ev.data === 'string') term.write(ev.data);
+    if (typeof ev.exited === 'number') markTerminalExited(id, ev.exited);
+  };
+  es.onerror = () => { /* EventSource reconnects on its own */ };
+
+  const entry = { pane, term, fit, es, cols: 0, rows: 0, exited: false };
+  termPanes.set(id, entry);
+  return entry;
+}
+
+// Called when a terminal is gone (killed from the sidebar, or vanished from
+// the server list): the instance has no process to talk to anymore.
+function disposeTerminalPane(id) {
+  const entry = termPanes.get(id);
+  if (!entry) return;
+  try { entry.es.close(); } catch {}
+  try { entry.term.dispose(); } catch {}
+  entry.pane.remove();
+  termPanes.delete(id);
+  if (activeTerminalId === id) activeTerminalId = null;
+}
+
+function showTerminal(id) {
+  const entry = openTerminalPane(id);
+  if (!entry) return;
+  activeTerminalId = id;
+  $('chatView').classList.add('hide');
+  $('settingsView').classList.add('hide');
+  $('termView').classList.remove('hide');
+  $('navChat').classList.remove('on');
+  $('navSettings').classList.remove('on');
+  for (const [paneId, e] of termPanes) e.pane.classList.toggle('hide', paneId !== id);
+  fitTerminal(id);
+  entry.term.focus();
+}
+
+// Leaving the terminal view only hides it: the instances, their SSE streams and
+// their scrollback survive, so coming back is instant.
+function hideTerminalView() {
+  $('termView').classList.add('hide');
+  if (activeTerminalId === null) return;
+  activeTerminalId = null;
+  renderTerminals();   // the sidebar row must lose the highlight with the view
+}
+
+// The window is not the only thing that changes the width: the sidebar folds,
+// the diff panel opens. Re-fitting on every resize event of the window covers
+// the ones that matter without watching the whole layout.
+let termFitTimer = null;
+win.addEventListener('resize', () => {
+  clearTimeout(termFitTimer);
+  termFitTimer = setTimeout(() => { if (activeTerminalId) fitTerminal(activeTerminalId); }, 120);
+});
+
+/* ---------------- terminals in the sidebar ----------------
+   The server owns the list: this is a projection of GET /api/terminals,
+   re-rendered from scratch on every global `terminals` event. Every tab gets
+   that event, so the render has to be idempotent — it is, it rebuilds the rows.
+   The quick-chat flyout deliberately stays out of this: it is a window on the
+   chats, terminals have no business in it. */
+let terminals = [];
+
+// A plain fetch, not api(): the endpoints answer 403 to anything that is not
+// loopback, and a LAN client would eat a toast at every boot for a feature it
+// simply does not have.
+async function loadTerminals() {
+  try {
+    const r = await fetch('/api/terminals');
+    const d = r.ok ? await r.json() : null;
+    terminals = Array.isArray(d?.terminals) ? d.terminals : [];
+  } catch { terminals = []; }
+  renderTerminals();
+}
+
+// `exited` is the exit code, and the ordinary way a shell quits is code 0:
+// only `null` means the process is still alive.
+const hasExited = (t) => t.exited !== null && t.exited !== undefined;
+
+function terminalItemEl(t) {
+  const div = document.createElement('div');
+  const dead = hasExited(t);
+  div.className = 'sessionItem termItem'
+    + (t.id === activeTerminalId ? ' active' : '') + (dead ? ' done' : '');
+  div.innerHTML = `<div class="acts"><button class="killBtn" title="Close this terminal">×</button></div>
+    <div class="title"><span class="termIcon">${t.kind === 'pi' ? 'π' : '▢'}</span>${dead ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span></div>
+    <div class="meta">${dead ? '<span class="exited">exited</span>' : `<span>${t.kind === 'pi' ? 'pi' : 'powershell'}</span>`}</div>`;
+  div.querySelector('.lbl').textContent = projName(t.cwd) || '(no folder)';
+  div.title = t.cwd || '';
+  div.querySelector('.killBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    killTerminal(t.id);
+  });
+  div.addEventListener('click', () => selectTerminal(t.id));
+  return div;
+}
+
+// Header chip: how many terminals are running right now, and a popover to jump
+// to one or close it without opening the sidebar. There is no cap on how many
+// can be open — this is the way to keep an eye on them, not a limit.
+// An exited terminal keeps its sidebar row (its scrollback is still readable)
+// but it is not "running", so it stays out of both the count and the list.
+function renderTermsChip() {
+  const live = terminals.filter((t) => !hasExited(t));
+  const menu = $('termsMenu');
+  termsDd.classList.toggle('hide', live.length === 0);
+  if (live.length === 0) termsDd.classList.remove('open');
+  $('termsCount').textContent = live.length;
+  menu.innerHTML = '<div class="dd-group">Running terminals</div>';
+  for (const t of live) {
+    const row = document.createElement('div');
+    row.className = 'termRow' + (t.id === activeTerminalId ? ' sel' : '');
+    row.innerHTML = `<button class="dd-item go"><span class="termIcon">${t.kind === 'pi' ? 'π' : '▢'}</span><span class="col"><span class="nm"></span><span class="pth"></span></span></button>
+      <button class="btn icon kill" title="Close this terminal">×</button>`;
+    row.querySelector('.nm').textContent = projName(t.cwd) || '(no folder)';
+    row.querySelector('.pth').textContent = t.cwd || '';
+    row.querySelector('.go').addEventListener('click', () => {
+      termsDd.classList.remove('open');
+      selectTerminal(t.id);
+    });
+    // the popover stays open: closing terminals one after the other is the
+    // whole point of having the list here
+    row.querySelector('.kill').addEventListener('click', () => killTerminal(t.id));
+    menu.appendChild(row);
+  }
+}
+
+function renderTerminals() {
+  const list = $('termList');
+  const empty = terminals.length === 0;
+  $('termLabel').classList.toggle('hide', empty);
+  list.classList.toggle('hide', empty);
+  $('termCount').textContent = terminals.length;
+  // a terminal the server no longer knows about has no process to talk to:
+  // its instance goes with the row
+  const alive = new Set(terminals.map((t) => t.id));
+  const activeGone = activeTerminalId !== null && !alive.has(activeTerminalId);
+  for (const id of [...termPanes.keys()]) if (!alive.has(id)) disposeTerminalPane(id);
+  list.innerHTML = '';
+  for (const t of terminals) list.appendChild(terminalItemEl(t));
+  renderTermsChip();
+  if (activeGone) showChat();
+}
+
+// Selecting a terminal only swaps the view: the chat keeps streaming behind it
+// and its xterm instance, if any, is reused as it is.
+function selectTerminal(id) {
+  showTerminal(id);
+  renderTerminals();
+}
+
+// The two buttons next to "New chat". The folder is not ours to choose: the
+// server reads it from the context of the chat this tab is on, which is why
+// this goes through post() (it appends the session key) and why the body only
+// carries the kind. Errors — 403 from a LAN tab, 501 where pty is missing —
+// come back as a toast from api(), like everywhere else.
+async function openTerminal(kind) {
+  const r = await post('/api/terminals', { kind });
+  if (r.error) return;
+  await loadTerminals();
+  selectTerminal(r.id);
+}
+
+async function killTerminal(id) {
+  const r = await api(`/api/terminals/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (r.error) return;
+  terminals = terminals.filter((t) => t.id !== id);
+  disposeTerminalPane(id);   // this clears activeTerminalId if it was the open one
+  renderTerminals();
+}
+
 /* ---------------- web UI themes ---------------- */
 const THEMES = [
   { id: 'noir', name: 'Teal Noir', cols: ['#05070a', '#0e131b', '#2fe0c0'] },
@@ -1376,12 +1864,32 @@ const THEMES = [
   { id: 'ember', name: 'Ember', cols: ['#0a0705', '#17100b', '#fb923c'] },
   { id: 'nord', name: 'Nord Ice', cols: ['#090e15', '#131e2b', '#7dd3fc'] },
   { id: 'rose', name: 'Rosé', cols: ['#0c060f', '#1b1121', '#f472b6'] },
+  { id: 'graphite', name: 'Graphite', cols: ['#101010', '#252527', '#7dd3fc'] },
   { id: 'daylight', name: 'Daylight (light)', cols: ['#f6f7f9', '#e3e7ee', '#0d9488'] },
 ];
+// accent override on top of any theme: only colours the themes already use
+const ACCENTS = [
+  { id: '', name: 'Theme default', col: '' },
+  { id: 'teal', name: 'Teal', col: '#2fe0c0' },
+  { id: 'violet', name: 'Violet', col: '#a78bfa' },
+  { id: 'orange', name: 'Orange', col: '#fb923c' },
+  { id: 'blue', name: 'Blue', col: '#7dd3fc' },
+  { id: 'rose', name: 'Rosé', col: '#f472b6' },
+];
+function applyAccent(id) {
+  const v = ACCENTS.some((a) => a.id === id) ? id : '';
+  if (v) document.documentElement.dataset.accent = v;
+  else delete document.documentElement.dataset.accent;
+  localStorage.setItem('piAccent', v);
+  $$('.accentDot[data-a]').forEach((c) => c.classList.toggle('sel', c.dataset.a === v));
+  refreshTerminalThemes();   // the accent is the cursor colour of the terminals
+}
+applyAccent(localStorage.getItem('piAccent') || '');
 function applyTheme(id) {
   document.documentElement.dataset.theme = THEMES.some((t) => t.id === id) ? id : 'noir';
   localStorage.setItem('piTheme', document.documentElement.dataset.theme);
   $$('.themeCard[data-t]').forEach((c) => c.classList.toggle('sel', c.dataset.t === document.documentElement.dataset.theme));
+  refreshTerminalThemes();   // the open terminals follow the page
 }
 applyTheme(localStorage.getItem('piTheme') || 'noir');
 
@@ -1432,6 +1940,7 @@ $('settingsView').addEventListener('scroll', () => {
 function showChat() {
   $('chatView').classList.remove('hide');
   $('settingsView').classList.add('hide');
+  hideTerminalView();
   $('navChat').classList.add('on');
   $('navSettings').classList.remove('on');
   $('navDiff').classList.remove('hide');
@@ -1441,6 +1950,7 @@ function showChat() {
 function showSettings() {
   $('chatView').classList.add('hide');
   $('settingsView').classList.remove('hide');
+  hideTerminalView();
   $('navChat').classList.remove('on');
   $('navSettings').classList.add('on');
   // in settings the diff/tasks panels make no sense: close them and hide the buttons
@@ -1677,6 +2187,12 @@ async function renderSettings() {
         <button class="themeCard" data-t="${t.id}">
           <span class="sw-row">${t.cols.map((c2) => `<i style="background:${c2}"></i>`).join('')}</span>
           <span class="nm">${esc(t.name)}</span>
+        </button>`).join('')}</div>
+
+      <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Accent colour</h4>
+      <div class="accentRow">${ACCENTS.map((a) => `
+        <button class="accentDot" data-a="${a.id}" title="${esc(a.name)}">
+          ${a.col ? `<i style="background:${a.col}"></i>` : '<i class="none"></i>'}
         </button>`).join('')}</div>
 
       <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
@@ -2008,9 +2524,11 @@ async function renderSettings() {
 
   /* ---- themes ---- */
   body.querySelectorAll('.themeCard[data-t]').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.t)));
+  body.querySelectorAll('.accentDot[data-a]').forEach((b) => b.addEventListener('click', () => applyAccent(b.dataset.a)));
   body.querySelectorAll('.logoStyleCard').forEach((b) => b.addEventListener('click', () => applyLogoStyle(b.dataset.l)));
   applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
   applyTheme(document.documentElement.dataset.theme);
+  applyAccent(localStorage.getItem('piAccent') || '');
 
   /* ---- enabledModels: allow-list per provider and per model ---- */
   // An empty list is pi's default and means "everything enabled": it must not be
@@ -2226,7 +2744,16 @@ function pickCmd(i) {
 
 /* ---------------- composer (Enter = new line, Ctrl+Enter = send) ---------------- */
 const input = $('input');
-function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
+// the composer follows the text instead of scrolling inside a fixed box: the
+// scrollbar only appears once the textarea would eat the chat (40% of viewport)
+function autoGrow() {
+  const cap = Math.round(window.innerHeight * 0.4);
+  input.style.height = 'auto';
+  const h = Math.min(input.scrollHeight, cap);
+  input.style.height = h + 'px';
+  input.classList.toggle('scroll', input.scrollHeight > cap);
+}
+window.addEventListener('resize', autoGrow);
 input.addEventListener('input', () => { autoGrow(); updateCmdMenu(); });
 input.addEventListener('click', updateCmdMenu);
 input.addEventListener('blur', () => setTimeout(closeCmdMenu, 150));
@@ -2403,9 +2930,44 @@ $('quit').addEventListener('click', async () => {
   try { await fetch('/api/shutdown', { method: 'POST' }); } catch {}
   document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi desktop ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
 });
+// POST /api/restart, with the confirmation the server asks for when the
+// restart would close live terminals. Answers `null` when the user backed out
+// — nothing was stopped and the page must stay exactly as it is.
+async function askForRestart() {
+  for (const force of [false, true]) {
+    let payload = {};
+    let status = 0;
+    try {
+      const r = await fetch('/api/restart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
+      status = r.status;
+      payload = await r.json().catch(() => ({}));
+    } catch { /* no answer at all: assume it is coming back, as before */ }
+    // The server counted the terminals it is about to kill: ask before it does.
+    if (status === 409 && payload?.error?.code === 'terminals_open') {
+      const err = errorInfo(payload, 'terminals will be closed by the restart');
+      if (!confirm(`${err.message}.\nContinue?`)) return null;
+      continue;
+    }
+    return payload;
+  }
+  return null;
+}
 $('restartBtn').addEventListener('click', async () => {
   if (!confirm('Restart the pi desktop ui server?\nThe chat stays saved; the page reloads by itself as soon as the server is ready again.')) return;
-  try { await fetch('/api/restart', { method: 'POST' }); } catch {}
+  // Only the desktop shell restarts the server in place. Started from the
+  // terminal it stops for good and says so with `restarting: false`: waiting
+  // for it to come back would leave this page spinning on a dead server.
+  const answer = await askForRestart();
+  if (!answer) return;
+  const restarting = answer.restarting !== false;
+  if (!restarting) {
+    document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi desktop ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
+    return;
+  }
   document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Restarting pi desktop ui…<br><br>The page will reload by itself.</div>';
   // poll until the new process answers, then reload
   const wait = setInterval(async () => {
@@ -2462,6 +3024,7 @@ async function loadState() {
   await loadState();
   await Promise.all([loadModels(), loadFiles(), loadCommands(), loadRecentCwds()]);
   await loadSessions();
+  await loadTerminals();
   await refreshChat();
   await refreshUsage();
 })();

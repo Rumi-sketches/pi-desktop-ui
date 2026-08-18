@@ -24,6 +24,29 @@ Turning the web UI into a desktop app, without giving up the terminal + browser 
   the old name. Persisted names (`web-ui-*.json`, `pi_web_ui_access`, `PI_WEB_UI_*`) stay as they
   are, on purpose.
 
+- **The page loads its libraries as classic scripts.** highlight.js comes from `@highlightjs/cdn-assets`
+  (a real browser build): the `highlight.js` package is CommonJS behind ES shims, so the old
+  `import hljs from "/vendor/highlight.js/es/common.js"` 404'd and aborted all of `app.js` — dead
+  buttons, empty lists, no counters. `npm run verify` now fetches every `/vendor/` URL the page names.
+- **A malformed request target is a 400.** `new URL(req.url, ...)` used to throw out of the request
+  listener and kill the process, taking the desktop window with it.
+
+- **pi-web-ui parity.** Ported the later web-ui work: `POST /api/type-command` (command typed in a
+  terminal, never executed) with a ▶ button on shell code blocks, the usage ring + popover in the
+  composer, the flat chat layout (user pill / no avatars), the quick chat switcher on the collapsed
+  sidebar, per-model weekly limits in the usage tracker.
+- **Desktop chrome.** Browser-style project tabs at the top (one per project/cwd, persisted in
+  localStorage, "+" opens known projects; a tab filters the sidebar and lands on the project's
+  latest chat); the vertical icon rail became a small horizontal bar at the foot of the sidebar;
+  new neutral "Graphite" grey theme plus a selectable accent colour (applies over any theme).
+- **Integrated terminals.** Two buttons next to "New chat" open a real PTY in the folder of the
+  current chat: π starts `pi`, ▢ a bare PowerShell. The processes live in the server (`terminals.mjs`),
+  so they survive a page reload; output travels over SSE, input and resize over POST, and xterm.js is
+  vendorized like the other libraries. They show up in a "Terminals" section above the chat list.
+  The routes answer loopback only, LAN token or not: a shell is not something to hand out over the
+  network. There is no cap on how many can be open: a chip in the header counts the running ones and
+  its popover lists them, one click to jump to a terminal or close it.
+
 **Not done, on purpose**
 
 - No installer and no packaging (`electron-builder` & co.): the app runs from the clone with

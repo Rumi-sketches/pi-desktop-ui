@@ -9,8 +9,9 @@
  * the answer — so the rules live in one place and the HTTP layer in another.
  */
 import path from "node:path";
-import { pickFolder, openFolder, openTerminal, platformCapabilities } from "./platform.mjs";
-import { isNonEmptyString, jsonBody, send, sendError } from "./http.mjs";
+import { pickFolder, openFolder, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
+import { terminateTerminalsForChat } from "./terminals.mjs";
+import { isNonEmptyString, jsonBody, openSseStream, send, sendError } from "./http.mjs";
 import {
   SESSIONS_DIR,
   SESSION_STATUS_INPUTS,
@@ -54,19 +55,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 // ---- the event stream ------------------------------------------------------
 export async function handleEvents({ req, res, sessionKey }) {
   const ctx = await useContext(sessionKey);
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Content-Type-Options": "nosniff",
-    // tells nginx and friends not to buffer the stream
-    "X-Accel-Buffering": "no",
-  });
-  // events are small and latency-sensitive, and the socket must outlive a
-  // long silent turn of the agent
-  res.socket?.setNoDelay(true);
-  res.socket?.setTimeout(0);
-  res.write("retry: 1000\n\n");
+  openSseStream(res);
   req.on("close", attachEventClient(ctx, res));
   return;
 }
@@ -238,6 +227,26 @@ export async function handleOpenTerminal({ res, sessionKey }) {
   return send(res, 200, { ok: true, cwd: ctx.cwd });
 }
 
+// The command shown in a chat, handed to a shell *without* being run. It is
+// model-authored text, so it never reaches a shell as something to execute:
+// it is only typed at the prompt, and the user presses Enter (or not).
+export async function handleTypeCommand({ req, res, sessionKey }) {
+  const { command } = await jsonBody(req);
+  if (typeof command !== "string" || !command.trim()) {
+    return send(res, 400, { error: "missing command" });
+  }
+  // A newline would be typed as a Return, running everything before it: the
+  // one thing this endpoint promises never to do.
+  if (/[\r\n\u2028\u2029]/.test(command)) {
+    return send(res, 400, { error: "a command spanning multiple lines cannot be typed safely" });
+  }
+  if (command.length > 2000) return send(res, 400, { error: "command too long" });
+  const ctx = await useContext(sessionKey);
+  const typed = await typeInTerminal(ctx.cwd, command);
+  if (!typed.ok) return send(res, 501, { error: "typing into a terminal is not available on this system" });
+  return send(res, 200, { ok: true, cwd: ctx.cwd });
+}
+
 export async function handleSetFavorite({ req, res }) {
   const { path: favPath, favorite } = await jsonBody(req);
   if (!favPath || typeof favPath !== "string") {
@@ -256,6 +265,11 @@ export async function handleSetSessionStatus({ req, res }) {
     return send(res, 400, { error: `invalid status, expected one of: ${SESSION_STATUS_INPUTS.join(", ")}` });
   }
   await setSessionStatus(chatPath, status);
+  // Concluding a chat concludes its consoles: the processes opened from it have
+  // nothing left to run. They are switched off, not dropped — the rows stay in
+  // the list and the panes reopen read-only, scrollback and all. The registry
+  // announces the change on its own (a global `terminals` event per exit).
+  if (status === "done") terminateTerminalsForChat(chatPath);
   broadcastGlobal({ kind: "sessions" });
   return send(res, 200, { ok: true, status: sessionStatusOf(chatPath) });
 }
