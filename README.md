@@ -143,19 +143,25 @@ not as a web page.
 - Every request goes through an origin check. Requests whose `Host` is not loopback, and unsafe
   methods (`POST`, `DELETE`, …) coming from a foreign `Origin`, are rejected with **403**. This
   blocks CSRF from any page you may have open and DNS-rebinding attempts.
+- The **integrated terminals** (`/api/terminals*`) are served to the local machine only. They are a
+  real shell with your privileges, so the check there is the TCP peer itself, hard-coded: enabling
+  local network access does *not* extend to them, and no token opens them from another device.
 
 If you do want to open a chat from your phone or another machine, enable **Local network access** in
 Settings:
 
 1. Turn the toggle on. The server generates a fresh token
    (32 random bytes) and shows a URL like `http://192.168.1.20:3777/?k=<token>`.
-2. The server restarts and binds to all interfaces.
+2. Restart the server so it binds to all interfaces: in the desktop app the **Restart** button
+   does it in place; started from the terminal, stop it (Ctrl+C) and run `npm start` again.
 3. Open that URL once on the other device. The token is verified in constant time, stored in an
    `HttpOnly; SameSite=Strict` cookie, and the browser is redirected to the clean URL — the token
    never stays in the address bar or in a log.
 4. Requests from non-loopback hosts without that cookie get a 403.
 
-Turning the toggle off drops the token (old URLs stop working) and rebinds to loopback.
+Turning the toggle off drops the token (old URLs stop working) and every request from another
+device is refused with a 403 straight away. The socket itself stays bound to all interfaces until
+you restart the server, the same way turning the toggle on needs a restart to reach them.
 **Regenerate token** invalidates every device at once.
 
 Anyone on your LAN who obtains the URL controls the agent with your permissions. Only enable this on
@@ -206,6 +212,10 @@ sidebar, dimmed but still clickable, and reopening one marks it as *reopened*.
 | Windows | **Tested.** All features, including folder picker, file manager and terminal helpers. |
 | macOS | **Not verified.** Implemented with `osascript` / `open`; expected to work, untested. |
 | Linux | **Not verified.** Implemented with `zenity` / `xdg-open` / common terminals; expected to work, untested. |
+
+The **integrated terminals** (the π and ▢ buttons) are Windows-only for now: they spawn a real
+PowerShell through a PTY. On macOS and Linux `POST /api/terminals` answers `501` and the button
+shows the reason in a toast; everything else works as described above.
 
 The three native helpers detect whether the required command exists. When it does not, the server
 answers `501` instead of crashing and the UI hides the button — the folder path can always be typed

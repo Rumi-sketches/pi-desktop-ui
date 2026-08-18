@@ -18,6 +18,8 @@ import { checkNoItalianStrings, checkOneProductName, collectFiles } from "./chec
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SMOKE_HOST = "127.0.0.1";
 const BOOT_TIMEOUT_MS = 30_000;
+// Counted during the smoke test, reported with the other smoke-test lines.
+let vendorAssets = 0;
 const POLL_INTERVAL_MS = 250;
 
 function run(command, args, options = {}) {
@@ -71,6 +73,10 @@ async function checkApiDocumented() {
   ]);
   const collect = (re, text) => new Set([...text.matchAll(re)].map(([, method, p]) => `${method} ${p}`));
   const table = collect(TABLE_ROUTE_RE, source);
+  // Before comparing: no route at all means the table changed shape and the
+  // regex above stopped seeing it. Said here, it names the real cause instead
+  // of reporting every documented route as stale.
+  if (table.size === 0) throw new Error("no route found in server.mjs: the check is reading the wrong shape");
   const documented = collect(DOC_ROUTE_RE, doc);
   const missing = [...table].filter((route) => !documented.has(route));
   const stale = [...documented].filter((route) => !table.has(route));
@@ -84,7 +90,6 @@ async function checkApiDocumented() {
         .join("\n"),
     );
   }
-  if (table.size === 0) throw new Error("no route found in server.mjs: the check is reading the wrong shape");
   return table.size;
 }
 
@@ -252,6 +257,43 @@ async function checkPageAssets(port) {
   }
 }
 
+// A request-target the URL parser refuses used to throw out of the 'request'
+// listener and kill the process — in the desktop app, the whole window with it.
+// It has to be a 400, and the server has to still be there afterwards.
+async function checkMalformedTargetRejected(port) {
+  const res = await fetch(`http://${SMOKE_HOST}:${port}//`);
+  if (res.status !== 400) throw new Error(`GET // returned ${res.status}, expected 400`);
+  const after = await fetch(`http://${SMOKE_HOST}:${port}/api/state`);
+  if (after.status !== 200) {
+    throw new Error(`GET /api/state after a malformed target returned ${after.status}: the server did not survive it`);
+  }
+}
+
+// Every /vendor/ URL the page names must actually be served. A missing one is
+// silent in the network tab but fatal in the page: a library that never loads
+// takes the whole UI down with it (a failed ES import aborts its module, and a
+// missing global strands every call site that needs it).
+async function checkVendorAssets(port) {
+  const sources = await Promise.all(
+    ["public/index.html", "public/app.js"].map(async (rel) => ({
+      rel,
+      text: await readFile(path.join(ROOT, rel), "utf8"),
+    })),
+  );
+  let count = 0;
+  for (const { rel, text } of sources) {
+    for (const [url] of text.matchAll(/\/vendor\/[\w@./-]+/g)) {
+      const res = await fetch(`http://${SMOKE_HOST}:${port}${url}`);
+      if (res.status !== 200) {
+        throw new Error(`${rel} asks for ${url}, which the server answers with ${res.status}`);
+      }
+      count += 1;
+    }
+  }
+  if (count === 0) throw new Error("no /vendor/ asset found in the page: the scan is broken, not the page");
+  return count;
+}
+
 // A fake apiKey planted in the temporary agent dir's models.json must never
 // come back from /api/config: its value has to be redacted server-side.
 const SMOKE_FAKE_API_KEY = "sk-verify-fake-secret-000";
@@ -357,6 +399,8 @@ async function smokeTest() {
     await checkSecurityHeaders(port);
     await checkHtmlCsp(port);
     await checkPageAssets(port);
+    vendorAssets = await checkVendorAssets(port);
+    await checkMalformedTargetRejected(port);
     await checkLanHostRejected(port);
     await checkConfigSecretsRedacted(port);
     await checkMalformedJsonRejected(port);
@@ -455,7 +499,9 @@ async function main() {
   console.log("✓ smoke test: responses carry nosniff and no-store");
   console.log("✓ smoke test: GET / carries a restrictive Content-Security-Policy");
   console.log("✓ smoke test: /app.js and /app.css are served with their own Content-Type");
+  console.log(`✓ smoke test: ${vendorAssets} /vendor/ asset(s) named by the page are served`);
   console.log("✓ smoke test: POST with a malformed JSON body -> 400");
+  console.log("✓ smoke test: GET with a malformed request target -> 400, server still serving");
   console.log("✓ smoke test: POST /api/status with a value outside the whitelist -> 400");
   console.log("✓ smoke test: GET with a LAN Host (lanAccess off) -> 403");
   console.log("✓ smoke test: secret values are redacted from /api/config");

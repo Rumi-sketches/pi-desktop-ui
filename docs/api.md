@@ -60,8 +60,9 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `DELETE /api/recent-cwds` | `?path=…` | `{ recent[] }` without that entry | – |
 | `POST /api/open-explorer` *[s]* | – | `{ ok, cwd }`, folder revealed in the system file manager | `501` not available on this system |
 | `POST /api/open-terminal` *[s]* | – | `{ ok, cwd }`, terminal opened in the folder running `pi` | `501` not available on this system |
+| `POST /api/type-command` *[s]* | `{ command }` — single line, ≤ 2000 chars | `{ ok, cwd }`, terminal opened with the command typed at the prompt, **not** executed | `400` missing/multi-line/too long command · `501` not available on this system (Windows only) |
 | `POST /api/favorites` | `{ path, favorite }` | `{ ok, favorites[] }` | `400` missing path |
-| `POST /api/status` | `{ path, status }` with status `done` / `reopened` / `active` | `{ ok, status }` | `400` missing path or status outside the whitelist |
+| `POST /api/status` | `{ path, status }` with status `done` / `reopened` / `active` | `{ ok, status }`; `done` also switches off the integrated terminals opened from that chat — the rows stay, read-only | `400` missing path or status outside the whitelist |
 | `GET /api/archiving` | – | `{ enabled, lastSweep }` | – |
 | `PUT /api/archiving` | `{ enabled }` | archiving state | `400` `enabled` is not a boolean |
 | `POST /api/archiving/sweep` | – | archiving state plus `archived` (chats idle for more than 24h) | – |
@@ -82,9 +83,32 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `DELETE /api/usage/credentials/:provider` | `:provider` = `anthropic` or `kimi` | `{ ok, status }` | `400` unknown provider |
 | `GET /api/analytics` | – | cost/token history aggregated from the session files under the agent dir | – |
 
+## Terminals
+
+The integrated PTY terminals (a PowerShell, bare or with `pi` started in it).
+The process lives in the server, so a reload of the page never kills it.
+**Every route here answers the local machine only**: a request whose TCP peer is
+not loopback gets a `403` even with LAN access on and a valid token — a terminal
+is an unrestricted shell, and no token buys it. The folder is never sent by the
+client: it is the cwd of the chat the tab is attached to.
+
+| Route | Request | Response | Errors |
+| --- | --- | --- | --- |
+| `GET /api/terminals` | – | `{ terminals: [{ id, kind, cwd, chatKey, exited, createdAt }] }`, oldest first; `exited` is the exit code once the process died, else `null`; `chatKey` is the chat it was opened from | `403` non-loopback peer |
+| `POST /api/terminals` *[s]* | `{ kind: "pi" \| "shell" }` | `{ id, kind, cwd }` for a terminal opened in the chat's folder | `400` kind outside the whitelist · `403` non-loopback peer · `501` not Windows (the terminals are a PowerShell) |
+| `GET /api/terminals/:id/stream` | – | SSE stream of the output: the scrollback (capped at 200KB) in the first frame, then the live chunks, each as `{ data }`. Every frame carries an `id:` (the offset it brings the viewer to); on reconnection `Last-Event-ID` resumes from there, and an offset that scrolled out of the 200KB window answers with the whole window as `{ data, reset: true }`. When the process dies the stream sends `{ exited: <code> }`, and a viewer attaching to an already dead terminal gets that frame at once: it is what turns a pane read-only | `403` non-loopback peer · `404` unknown id |
+| `POST /api/terminals/:id/input` | `{ data }` — what was typed, raw | `{ ok }`; `ok` is false when the process has already exited | `400` `data` is not a string · `403` non-loopback peer · `404` unknown id |
+| `POST /api/terminals/:id/resize` | `{ cols, rows }` | `{ ok }`; `ok` is false when the process has already exited | `400` cols/rows not positive integers · `403` non-loopback peer · `404` unknown id |
+| `DELETE /api/terminals/:id` | – | `{ ok }` after killing the process and dropping the row | `403` non-loopback peer · `404` unknown id |
+
+Creating, closing or losing a terminal pushes a global `{ kind: "terminals" }`
+event on `GET /api/events`: the sidebar reloads the list when it arrives.
+A terminal that exits keeps its row — and its scrollback — until someone closes
+it with `DELETE`: an exited console stays readable.
+
 ## Lifecycle
 
 | Route | Request | Response | Errors |
 | --- | --- | --- | --- |
 | `POST /api/shutdown` | – | `{ ok, stopping: true }`, then the server exits gracefully | – |
-| `POST /api/restart` | – | embedded (Electron): `{ ok, restarting: true }` and the host restarts the server in place. From the CLI: `{ ok, stopping: true, restarting: false, message }` and the server stops for good | – |
+| `POST /api/restart` | `{ force? }` | embedded (Electron): `{ ok, restarting: true }` and the host restarts the server in place. From the CLI: `{ ok, stopping: true, restarting: false, message }` and the server stops for good | `409` `terminals_open` when live terminals would be closed — the error carries `terminals` (how many) and the call is repeated with `{ force: true }` once the user confirms |

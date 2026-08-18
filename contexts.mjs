@@ -31,6 +31,7 @@ import {
   DefaultResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import { PRODUCT_ID } from "./product.mjs";
+import { SSE_PING, SSE_PING_MS, sseSend, sseWrite } from "./http.mjs";
 import { AGENT_DIR, isAgentDirPath, readSessionRecords, resolveFile } from "./session-store.mjs";
 
 // ---- thinking levels -------------------------------------------------------
@@ -51,17 +52,9 @@ export function supportedThinkingLevels(model) {
 // Each browser tab attaches to exactly ONE agent context and only receives that
 // context's events. A handful of events (running badges, session list) are
 // global and go to every connected tab, tagged with `scope:"global"`.
+// Every write goes through the SSE helpers of http.mjs: a client that vanished
+// must never be written to (DECISIONS.md).
 const allClients = new Set();
-// SSE comment line: ignored by EventSource, enough to keep the socket alive.
-const SSE_PING = ": ping\n\n";
-const SSE_PING_MS = 15_000;
-function sseSend(res, event) {
-  try {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
-  } catch {
-    /* client vanished mid-write */
-  }
-}
 export function broadcast(ctx, event) {
   if (!ctx) return;
   for (const res of ctx.clients) sseSend(res, event);
@@ -87,7 +80,7 @@ export function attachEventClient(ctx, res) {
   allClients.add(res);
   ctx.clients.add(res);
   sseSend(res, { kind: "attached", key: ctx.key, cwd: ctx.cwd, running: ctx.running });
-  const ping = setInterval(() => res.write(SSE_PING), SSE_PING_MS);
+  const ping = setInterval(() => sseWrite(res, SSE_PING), SSE_PING_MS);
   ping.unref();
   return () => {
     clearInterval(ping);

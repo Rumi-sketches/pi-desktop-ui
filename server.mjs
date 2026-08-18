@@ -20,6 +20,7 @@
  *   `network.mjs`       the listening address and the LAN access token
  *   `api-chat.mjs`      the endpoints of a chat
  *   `api-settings.mjs`  the endpoints of the settings and analytics screens
+ *   `api-terminals.mjs` the endpoints of the integrated PTY terminals (loopback only)
  *   `lifecycle.mjs`     stopping: signals, /api/shutdown, /api/restart
  */
 import http from "node:http";
@@ -78,7 +79,16 @@ import {
   handleSetModel,
   handleSetSessionStatus,
   handleSetThinkingLevel,
+  handleTypeCommand,
 } from "./api-chat.mjs";
+import {
+  handleCreateTerminal,
+  handleDeleteTerminal,
+  handleListTerminals,
+  handleTerminalInput,
+  handleTerminalResize,
+  handleTerminalStream,
+} from "./api-terminals.mjs";
 import {
   handleDeleteUsageCredentials,
   handleGetAnalytics,
@@ -125,6 +135,7 @@ const ROUTES = [
   ["DELETE", "/api/recent-cwds", handleForgetRecentCwd],
   ["POST", "/api/open-explorer", handleOpenExplorer],
   ["POST", "/api/open-terminal", handleOpenTerminal],
+  ["POST", "/api/type-command", handleTypeCommand],
   ["POST", "/api/favorites", handleSetFavorite],
   ["POST", "/api/status", handleSetSessionStatus],
   ["POST", "/api/pick-folder", handlePickFolder],
@@ -139,6 +150,10 @@ const ROUTES = [
   ["GET", "/api/history", handleGetHistory],
   ["POST", "/api/prompt", handlePrompt],
   ["POST", "/api/abort", handleAbort],
+  // The terminals answer the local machine only, whatever LAN access says:
+  // the guard lives in every handler of api-terminals.mjs.
+  ["GET", "/api/terminals", handleListTerminals],
+  ["POST", "/api/terminals", handleCreateTerminal],
   ["POST", "/api/shutdown", handleShutdown],
   ["POST", "/api/restart", handleRestart],
 ];
@@ -149,6 +164,10 @@ const PARAM_ROUTES = [
   ["POST", "/api/sessions/:id/activate", handleActivateSession],
   ["POST", "/api/sessions/:id/fork", handleForkSession],
   ["DELETE", "/api/usage/credentials/:provider", handleDeleteUsageCredentials],
+  ["GET", "/api/terminals/:id/stream", handleTerminalStream],
+  ["POST", "/api/terminals/:id/input", handleTerminalInput],
+  ["POST", "/api/terminals/:id/resize", handleTerminalResize],
+  ["DELETE", "/api/terminals/:id", handleDeleteTerminal],
 ];
 
 // Sub-tree routes, where the pathname is data for the handler instead of a key.
@@ -160,7 +179,13 @@ const matchRoute = createRouter({ routes: ROUTES, paramRoutes: PARAM_ROUTES, pre
 // ---- dispatch --------------------------------------------------------------
 async function handleRequest(req, res) {
   const port = serverPort();
-  const url = new URL(req.url, `http://localhost:${port}`);
+  // A request-target the URL parser refuses (`//`, a stray backslash, a bad
+  // percent-escape) is a malformed request, not a bug: it must end in a 400.
+  // Parsing outside the try below would throw straight through the 'request'
+  // listener and take the whole process down — fatal here, where the server
+  // shares its process with the desktop shell.
+  const url = URL.parse(req.url, `http://localhost:${port}`);
+  if (!url) return send(res, 400, { error: "malformed request target" });
   const verdict = classifyRequest(
     {
       method: req.method,

@@ -18,8 +18,8 @@ test("vendorFilePath: an allowed asset resolves inside node_modules", () => {
 
 test("vendorFilePath: a percent-escape is decoded, not passed through", () => {
   assert.equal(
-    vendorFilePath("/vendor/highlight.js/styles/github%2Ddark.css"),
-    path.join(VENDOR_ROOT, "highlight.js/styles/github-dark.css"),
+    vendorFilePath("/vendor/@highlightjs/cdn-assets/styles/github%2Ddark.css"),
+    path.join(VENDOR_ROOT, "@highlightjs/cdn-assets/styles/github-dark.css"),
   );
 });
 
@@ -30,6 +30,13 @@ test("vendorFilePath: a malformed percent-escape is rejected instead of throwing
 
 test("vendorFilePath: a path outside the allow-list is rejected", () => {
   assert.equal(vendorFilePath("/vendor/express/index.js"), null);
+});
+
+// The `highlight.js` package is CommonJS behind ES shims: serving it would give
+// the page a module that cannot load. Only the cdn-assets build is allowed.
+test("vendorFilePath: the CommonJS highlight.js package stays unreachable", () => {
+  assert.equal(vendorFilePath("/vendor/highlight.js/es/common.js"), null);
+  assert.equal(vendorFilePath("/vendor/highlight.js/lib/common.js"), null);
 });
 
 test("vendorFilePath: an extension outside the served types is rejected", () => {

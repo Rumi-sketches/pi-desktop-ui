@@ -85,6 +85,27 @@
   --composer-bg: linear-gradient(180deg, #291a31, #1f1327);
   --card-bg: linear-gradient(180deg, #24172b, #1d1224);
 }
+[data-theme="graphite"] {
+  color-scheme: dark;
+  /* classic neutral grey dark theme: no colour cast, the accent does the talking */
+  --bg: #161616; --bg-2: #101010; --panel: #1e1e1f; --panel-2: #252527; --panel-3: #303032;
+  --line: #2c2c2e; --line-2: #3c3c40; --hair: #ffffff0d;
+  --txt: #e9e9ec; --txt-dim: #a4a4ad; --txt-faint: #6f6f789a; --faint: #6f6f78;
+  --teal: #7dd3fc; --teal-dim: #7dd3fc1f; --ok: #4ade80; --warn: #fbbf24; --crit: #f87171;
+  --on-accent: #10151a; --code-bg: #111112; --grid: #ffffff04;
+  --chat-bg: radial-gradient(120% 70% at 50% -10%, #20202299, transparent 65%);
+  --side-bg: linear-gradient(180deg, #232324, #1e1e1f 38%, #191919);
+  --head-bg: linear-gradient(180deg, #242426e6, #1d1d1fe6);
+  --composer-bg: linear-gradient(180deg, #262628, #1d1d1f);
+  --card-bg: linear-gradient(180deg, #242425, #1d1d1e);
+}
+/* accent override: the accent colours already used by the other themes,
+   applicable on top of any theme ("theme" = no override, keep the theme's own) */
+[data-accent="teal"]   { --teal: #2fe0c0; --teal-dim: #2fe0c01f; --on-accent: #04211c; }
+[data-accent="violet"] { --teal: #a78bfa; --teal-dim: #a78bfa22; --on-accent: #150c2b; }
+[data-accent="orange"] { --teal: #fb923c; --teal-dim: #fb923c1f; --on-accent: #241204; }
+[data-accent="blue"]   { --teal: #7dd3fc; --teal-dim: #7dd3fc1f; --on-accent: #06202e; }
+[data-accent="rose"]   { --teal: #f472b6; --teal-dim: #f472b61f; --on-accent: #2b0a1d; }
 [data-theme="daylight"] {
   color-scheme: light;
   /* in the light theme the logic flips: the chat is the lightest surface */
@@ -136,10 +157,11 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  margin: 0; background: var(--bg); color: var(--txt); display: flex; overflow: hidden;
+  margin: 0; background: var(--bg); color: var(--txt); display: flex; flex-direction: column; overflow: hidden;
   font: 14.5px/1.65 var(--font-ui); letter-spacing: -.006em;
   -webkit-font-smoothing: antialiased;
 }
+#appBody { flex: 1; min-height: 0; display: flex; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; touch-action: manipulation; }
 input, textarea, select { font: inherit; color: inherit; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
@@ -180,19 +202,50 @@ input, textarea, select { font: inherit; color: inherit; }
 .badge.ok { color: var(--teal); border-color: var(--accent-line); background: var(--teal-dim); }
 .badge.no { color: var(--crit); border-color: var(--crit-line); }
 
-/* ---------- icon rail ---------- */
-#rail {
-  width: 58px; flex-shrink: 0; background: var(--side-bg); border-right: 1px solid var(--line); box-shadow: inset 0 1px 0 var(--hair);
-  display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: .8rem 0;
+/* ---------- project tabs (browser-style, one per open project) ---------- */
+#projTabs {
+  flex-shrink: 0; display: flex; align-items: center; gap: .3rem; padding: .3rem .5rem 0;
+  background: var(--side-bg); border-bottom: 1px solid var(--line); box-shadow: inset 0 1px 0 var(--hair);
+  overflow-x: auto; scrollbar-width: none;
 }
-#rail .logo-tile {
-  width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; margin-bottom: .8rem;
-  background: var(--accent-grad); color: var(--on-accent); font-weight: 800; font-size: 17px;
+#projTabs::-webkit-scrollbar { display: none; }
+#projTabs .logo-tile {
+  width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; margin: 0 .25rem .3rem 0;
+  background: var(--accent-grad); color: var(--on-accent); font-weight: 800; font-size: 14px; flex-shrink: 0;
   transition: transform .12s, box-shadow .12s;
 }
-#rail .logo-tile:hover { transform: translateY(-1px); box-shadow: 0 6px 18px var(--accent-glow); }
+#projTabs .logo-tile:hover { transform: translateY(-1px); box-shadow: 0 6px 18px var(--accent-glow); }
+#projTabList { display: flex; align-items: flex-end; gap: 2px; min-width: 0; }
+.projTab {
+  display: inline-flex; align-items: center; gap: .4rem; max-width: 190px; padding: .32rem .5rem .32rem .7rem;
+  border-radius: 9px 9px 0 0; border: 1px solid transparent; border-bottom: none;
+  color: var(--txt-dim); font-size: .78rem; cursor: pointer; white-space: nowrap; flex-shrink: 1; min-width: 0;
+}
+.projTab .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.projTab:hover { background: var(--panel-2); color: var(--txt); }
+.projTab.on { background: var(--bg); border-color: var(--line); color: var(--txt); }
+.projTab .x {
+  width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center;
+  font-size: 11px; line-height: 1; color: var(--faint); flex-shrink: 0;
+}
+.projTab .x:hover { background: var(--panel-3); color: var(--txt); }
+.projAdd {
+  width: 24px; height: 24px; margin-bottom: .3rem; border-radius: 7px; display: grid; place-items: center;
+  color: var(--faint); flex-shrink: 0;
+}
+.projAdd:hover { background: var(--panel-3); color: var(--txt); }
+/* the tab strip scrolls horizontally, which clips anything absolutely positioned
+   inside it: the menu is placed in viewport coordinates instead (see openProjAddMenu) */
+#projAddMenu { position: fixed; left: auto; right: auto; top: auto; min-width: 240px; max-width: 340px; }
+#projAddMenu .dd-item .pth { display: block; font-size: .68rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- rail: small horizontal bar at the foot of the sidebar ---------- */
+#rail {
+  flex-shrink: 0; background: none; border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: .2rem; padding: .3rem .5rem;
+}
 .rail-btn {
-  width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--faint);
+  width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--faint);
   position: relative; transition: .15s;
 }
 .rail-btn:hover { background: var(--panel-3); color: var(--txt); box-shadow: inset 0 1px 0 var(--hair); }
@@ -220,6 +273,10 @@ input, textarea, select { font: inherit; color: inherit; }
 body.sb-resizing { cursor: col-resize; user-select: none; }
 body.sb-resizing #sidebar { transition: none; }
 .side-pad { padding: .8rem .75rem .55rem; display: flex; flex-direction: column; gap: .5rem; }
+/* New chat takes the room it needs, the two terminal buttons stay square */
+.new-row { display: flex; gap: .4rem; align-items: stretch; }
+.new-row #newSessionBtn { flex: 1; min-width: 0; }
+.new-row .termBtn { flex: none; width: 2rem; justify-content: center; font-size: .95rem; line-height: 1; }
 .search {
   display: flex; align-items: center; gap: .5rem; background: var(--bg-2);
   border: 1px solid var(--line); border-radius: 10px; padding: .42rem .6rem;
@@ -245,6 +302,14 @@ body.sb-resizing #sidebar { transition: none; }
   font-size: .69rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint);
 }
 #sessionList { flex: 1; overflow-y: auto; padding: 0 .5rem .6rem; }
+/* terminals section: the same rows as the chats, capped so a pile of open
+   terminals can never push the chat list out of the sidebar */
+#termList { flex: none; max-height: 30vh; overflow-y: auto; padding: 0 .5rem .4rem; }
+.termItem .termIcon { flex: none; display: inline-block; width: 1.1em; text-align: center; color: var(--teal); }
+.termItem .liveDot { background: #4ade80; opacity: 1; }
+.termItem .exited { color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-size: .64rem; }
+.termItem .killBtn { font-size: .95rem; line-height: 1; }
+.termItem .killBtn:hover { color: var(--crit); }
 .sessionItem { position: relative; padding: .5rem .6rem; border-radius: 10px; cursor: pointer; margin-bottom: 2px; transition: filter .15s, opacity .15s; }
 .sessionItem:hover { background: var(--panel-2); }
 /* hover: frosted glass over the row + the two buttons (done / favorite) */
@@ -335,6 +400,21 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
   background: var(--teal-dim); color: var(--teal); font: 700 10.5px/1 ui-sans-serif; padding: 0 .3rem;
 }
 #gitChip .count.warn { background: var(--warn-dim); color: var(--warn); }
+/* live terminals chip: same count badge as the git one, plus the popover rows
+   (a row = go to that terminal, × = close it, exactly like the sidebar) */
+#termsChip .count {
+  min-width: 17px; height: 17px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--teal-dim); color: var(--teal); font: 700 10.5px/1 ui-sans-serif; padding: 0 .3rem;
+}
+#termsDd .dd-menu { min-width: 260px; }
+.termRow { display: flex; align-items: center; gap: .25rem; }
+.termRow .go { flex: 1; min-width: 0; }
+.termRow.sel .go { background: var(--teal-dim); }
+.termRow .termIcon { flex: none; width: 1.1em; text-align: center; color: var(--teal); }
+.termRow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termRow .pth { font-size: .71rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termRow .kill { flex: none; width: 22px; height: 22px; border-radius: 7px; color: var(--faint); font-size: .9rem; }
+.termRow .kill:hover { background: var(--panel-3); color: var(--crit); }
 /* settings nav: replaces the chat list inside the sidebar */
 #settingsNav { display: none; flex: 1; overflow-y: auto; padding: .6rem .5rem; flex-direction: column; gap: 2px; }
 #sidebar.mode-settings #settingsNav { display: flex; }
@@ -351,19 +431,52 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); animation: pulse 1.1s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
 
-/* ---------- account usage widget (claude.ai / kimi.com real limits, in composer) ---------- */
-#usageWidget {
-  display: none; align-items: center; gap: .4rem; font-size: .71rem; color: var(--faint);
-  margin-left: auto; padding-right: .2rem;
+/* ---------- account usage dot (claude.ai / kimi.com real limits, in composer) ----------
+   one small ring = the short rolling window (5h); the full breakdown lives in
+   the popover, so the bar stays quiet until you ask for it */
+#usageDot { display: none; position: relative; width: 26px; height: 26px; border-radius: 8px; place-items: center; }
+#usageDot.show { display: grid; }
+#usageDot:hover { background: var(--panel-2); }
+#usageDot > svg { transform: rotate(-90deg); }
+#usageDot .track { stroke: var(--line-2); }
+#usageDot .fill { stroke: var(--teal); transition: stroke-dashoffset .3s, stroke .2s; }
+#usageDot.warn .fill { stroke: var(--warn); }
+#usageDot.crit .fill { stroke: var(--crit); }
+#usageDot.err .fill { stroke: var(--crit); }
+.usagePop {
+  position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 50; min-width: 236px; padding: .5rem;
+  background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 12px;
+  box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); display: none; cursor: default;
 }
-#usageWidget.show { display: flex; }
-#usageWidget b { color: var(--txt-dim); font-weight: 600; }
-#usageWidget .bar { width: 46px; height: 5px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
-#usageWidget .bar > i { display: block; height: 100%; width: 0; background: var(--teal); transition: width .3s; }
-#usageWidget .bar.warn > i { background: var(--warn); }
-#usageWidget .bar.crit > i { background: var(--crit); }
-#usageWidget .txt { font: 400 11px var(--font-mono); }
-#usageWidget .err { color: var(--crit); }
+#usageDot.open .usagePop { display: block; }
+.usagePop .h { font-size: .64rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); padding: .15rem .35rem .35rem; }
+.uRow { display: flex; align-items: center; gap: .5rem; padding: .3rem .35rem; font-size: .76rem; color: var(--txt-dim); }
+.uRow .nm { min-width: 66px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uRow .bar { flex: 1; height: 4px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
+.uRow .bar > i { display: block; height: 100%; width: 0; background: var(--teal); transition: width .3s; }
+.uRow.warn .bar > i { background: var(--warn); }
+.uRow.crit .bar > i { background: var(--crit); }
+.uRow .v { font: 400 10.5px var(--font-mono); color: var(--txt); min-width: 30px; text-align: right; }
+.uRow .rs { font: 400 10px var(--font-mono); color: var(--faint); min-width: 46px; text-align: right; }
+.usagePop .err { color: var(--crit); font-size: .76rem; padding: .3rem .35rem; }
+.usagePop .foot {
+  border-top: 1px solid var(--line); margin-top: .3rem; padding: .4rem .35rem .15rem;
+  font-size: .71rem; color: var(--faint); display: flex; justify-content: space-between; gap: .6rem;
+}
+
+/* ---------- quick chat switcher (sidebar collapsed, on hover) ---------- */
+#sidebarShowWrap { position: relative; display: inline-flex; }
+#quickChats {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 70; width: 290px; max-height: 60vh;
+  overflow-y: auto; padding: .35rem; background: var(--panel-2); border: 1px solid var(--line-2);
+  border-radius: 14px; box-shadow: var(--elev-3), inset 0 1px 0 var(--hair); display: none;
+}
+#quickChats.show { display: block; }
+/* the rows are the sidebar's own .sessionItem: only the first group header
+   needs its top margin trimmed, being flush against the panel edge */
+#quickChats .sessGroup:first-child { margin-top: .1rem; }
+.qcMore { width: 100%; text-align: left; padding: .4rem .55rem; border-radius: 9px; font-size: .76rem; color: var(--faint); border-top: 1px solid var(--line); margin-top: .2rem; }
+.qcMore:hover { background: var(--panel-3); color: var(--txt); }
 
 /* ---------- dropdown ---------- */
 .dd { position: relative; }
@@ -443,28 +556,24 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
   content: ''; position: absolute; inset: 0 0 auto 0; height: 420px; pointer-events: none;
   background: var(--chat-bg);
 }
-#chat { max-width: 960px; margin: 0 auto; padding: 1.6rem 1.2rem 2rem; display: flex; flex-direction: column; gap: 1.5rem; position: relative; transition: max-width .18s; }
+#chat { max-width: 900px; margin: 0 auto; padding: 1.1rem 1.2rem 1.6rem; display: flex; flex-direction: column; gap: 1.05rem; position: relative; transition: max-width .18s; }
 /* with the sidebar closed the text gets even more room */
-body.sb-closed #chat { max-width: 1150px; }
-/* every turn is left-aligned: chat feel without boxes */
-.turn { display: grid; grid-template-columns: 30px 1fr; gap: .7rem; }
-.avatar {
-  width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
-  font-size: 12px; font-weight: 700; margin-top: .1rem;
-}
-.turn.user .avatar { background: var(--panel-3); color: var(--txt-dim); border: 1px solid var(--line-2); box-shadow: inset 0 1px 0 var(--hair); }
-.turn.pi .avatar { background: var(--accent-grad); color: var(--on-accent); }
-/* assistant turn with a real provider logo instead of the π tile */
-.turn.pi .avatar.hasLogo { background: none; border: 1px solid var(--line-2); padding: 0; }
-.turn.pi .avatar .logo { width: 20px; height: 20px; }
-.turn.pi .avatar .logo svg { width: 20px; height: 20px; }
-.who { display: flex; align-items: center; gap: .35rem; }
-.who .mprov { color: var(--txt-faint); }
+body.sb-closed #chat { max-width: 1100px; }
+/* assistant: flat and full width, no avatar tile — only the model name above */
+.turn.pi { display: block; }
 .turn .body { min-width: 0; }
-.who { font: 600 .72rem var(--font-ui); color: var(--faint); text-transform: uppercase; letter-spacing: .1em; margin-bottom: .2rem; }
-.turn.user .who { color: var(--txt-dim); }
-.msg { white-space: pre-wrap; line-height: 1.68; }
-.turn.user .msg { color: var(--txt); }
+.who { display: flex; align-items: center; gap: .35rem; font: 600 .66rem var(--font-ui); color: var(--faint); text-transform: uppercase; letter-spacing: .09em; margin-bottom: .15rem; }
+.who .mprov { color: var(--txt-faint); }
+/* user: right-aligned pill, no avatar and no name — the shape alone says who spoke */
+.turn.user { display: flex; justify-content: flex-end; }
+.turn.user .body { display: flex; flex-direction: column; align-items: flex-end; max-width: 74%; }
+.turn.user .who { display: none; }
+.turn.user .msg {
+  background: var(--panel-3); border: 1px solid var(--line-2); border-radius: 14px;
+  padding: .45rem .75rem; color: var(--txt); line-height: 1.5;
+}
+.turn.user .msgActions { justify-content: flex-end; }
+.msg { white-space: pre-wrap; line-height: 1.62; }
 .msg.md { white-space: normal; }
 .msg.md > *:first-child { margin-top: 0; }
 .msg.md > *:last-child { margin-bottom: 0; }
@@ -476,11 +585,11 @@ body.sb-closed #chat { max-width: 1150px; }
 .msg.md th, .msg.md td { border: 1px solid var(--line); padding: .3rem .65rem; }
 .msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
 .msg.md a { color: var(--teal); }
-.msg img { max-width: 240px; border-radius: 10px; display: block; margin: .4rem 0; border: 1px solid var(--line); }
+.msg img { max-width: 220px; border-radius: 10px; display: block; margin: .4rem 0; border: 1px solid var(--line); }
 /* attached images: compact thumbnails ABOVE the message text */
 .media { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .45rem; }
 .media img {
-  height: 96px; width: auto; max-width: 160px; object-fit: cover; margin: 0;
+  height: 72px; width: auto; max-width: 140px; object-fit: cover; margin: 0;
   border-radius: 9px; border: 1px solid var(--line-2); cursor: zoom-in; transition: border-color .12s, transform .12s;
 }
 .media img:hover { border-color: var(--teal); transform: translateY(-1px); }
@@ -495,6 +604,13 @@ body.sb-closed #chat { max-width: 1150px; }
 .msgActionBtn.copied { color: var(--teal); }
 /* copy button floating over any <pre> block (code fences, tool request/output) */
 .codeBox { position: relative; }
+.codeRunBtn {
+  position: absolute; top: .45rem; right: 2.1rem; padding: .3rem .38rem; border-radius: 7px;
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--txt-dim); opacity: 0;
+  transition: opacity .12s, color .12s, border-color .12s;
+}
+.codeBox:hover .codeRunBtn { opacity: 1; }
+.codeRunBtn:hover { color: var(--teal); border-color: var(--teal); }
 .codeCopyBtn {
   position: absolute; top: .45rem; right: .45rem; padding: .3rem .35rem; border-radius: 7px;
   background: var(--panel-2); border: 1px solid var(--line-2); color: var(--txt-dim); opacity: 0;
@@ -525,9 +641,9 @@ body.sb-closed #chat { max-width: 1150px; }
 .sugg .d { font-size: .78rem; color: var(--faint); }
 
 /* ---------- composer ---------- */
-#composerWrap { padding: 0 1.2rem 1.1rem; }
+#composerWrap { padding: 0 1.2rem .9rem; }
 #composer {
-  position: relative; max-width: 960px; margin: 0 auto; padding: .7rem .8rem .6rem; border-radius: 18px;
+  position: relative; max-width: 900px; margin: 0 auto; padding: .55rem .7rem .45rem; border-radius: 16px;
   background: var(--composer-bg); border: 1px solid var(--line-2);
   box-shadow: var(--elev-2), inset 0 1px 0 var(--hair); transition: border-color .15s, box-shadow .15s, max-width .18s;
 }
@@ -540,14 +656,25 @@ body.sb-closed #chat { max-width: 1150px; }
 .cmdMenu.show { display: block; }
 .cmdItem { width: 100%; }
 .cmdItem .col > span:first-child { font: 12.5px ui-monospace, monospace; color: var(--teal); }
-body.sb-closed #composer { max-width: 1150px; }
+body.sb-closed #composer { max-width: 1100px; }
 #composer:focus-within { border-color: color-mix(in srgb, var(--teal) 42%, var(--line-2)); box-shadow: var(--elev-2), inset 0 1px 0 var(--hair), 0 0 0 3px var(--teal-dim); }
-.composer-top { display: flex; align-items: center; gap: .4rem; color: var(--teal); font-size: .74rem; margin-bottom: .1rem; }
-#input { width: 100%; resize: none; background: none; border: none; outline: none; padding: .35rem .1rem; max-height: 240px; min-height: 40px; }
+/* the textarea grows with the text: overflow stays hidden until the cap, so no
+   scrollbar ever shows up while writing a normal message */
+#input { width: 100%; resize: none; background: none; border: none; outline: none; padding: .3rem .1rem; min-height: 34px; overflow-y: hidden; }
+#input.scroll { overflow-y: auto; }
 #input::placeholder { color: var(--faint); }
-.composer-bar { display: flex; align-items: center; gap: .4rem; margin-top: .35rem; }
-.composer-hint { margin-left: auto; margin-right: .3rem; font-size: .71rem; color: var(--faint); display: flex; gap: .55rem; }
-#sendBtn { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; }
+.composer-bar { display: flex; align-items: center; gap: .35rem; margin-top: .2rem; }
+.composer-bar .spacer { flex: 1; }
+/* model + effort: bare text, no chip border — they must not compete with the message */
+.cmeta { display: inline-flex; align-items: center; gap: .3rem; padding: .22rem .45rem; border-radius: 8px; font-size: .76rem; color: var(--txt-dim); }
+.cmeta:hover { background: var(--panel-2); color: var(--txt); }
+.cmeta .logo { display: none; }
+.cmeta svg.caret { display: none; }
+#thinkBtn.cmeta { color: var(--faint); }
+#thinkBtn.cmeta svg { display: none; }
+/* dropdowns living in the composer open upwards and hug the right edge */
+.dd.up .dd-menu { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; }
+#sendBtn { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; }
 #attachments { display: flex; gap: .5rem; flex-wrap: wrap; padding: .1rem 0 .35rem; }
 #attachments:empty { display: none; }
 .thumb { position: relative; }
@@ -556,6 +683,15 @@ body.sb-closed #composer { max-width: 1150px; }
 .thumb .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thumb .x { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel-3); border: 1px solid var(--line-2); font-size: 11px; line-height: 1; display: grid; place-items: center; }
 .thumb .x:hover { background: var(--danger-bg); }
+
+/* ---------- terminal view ----------
+   One xterm per open terminal lives inside #termHost: only the selected one is
+   visible, the others keep their DOM (and their scrollback) hidden. */
+#termView { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+#termHost { flex: 1; min-height: 0; position: relative; padding: .5rem .6rem; }
+.termPane { position: absolute; inset: .5rem .6rem; }
+.termPane.hide { display: none !important; }
+.termPane .xterm { height: 100%; }
 
 /* ---------- settings view ---------- */
 #settingsView { flex: 1; overflow-y: auto; }
@@ -627,6 +763,13 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .saved { font-size: .72rem; color: var(--teal); opacity: 0; transition: opacity .2s; }
 .saved.show { opacity: 1; }
 .themeGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; }
+/* accent swatches: small round dots, one per available accent colour */
+.accentRow { display: flex; gap: .5rem; flex-wrap: wrap; }
+.accentDot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); padding: 2px; display: grid; place-items: center; }
+.accentDot i { width: 100%; height: 100%; border-radius: 50%; display: block; }
+.accentDot i.none { background: conic-gradient(var(--panel-3), var(--line-2), var(--panel-3)); }
+.accentDot:hover { border-color: var(--line-2); }
+.accentDot.sel { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-dim); }
 .themeCard { padding: .6rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card-bg); box-shadow: var(--elev-1), inset 0 1px 0 var(--hair); text-align: left; }
 .themeCard.sel { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-dim); }
 .themeCard .sw-row { display: flex; gap: .25rem; margin-bottom: .45rem; }
@@ -740,19 +883,18 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 @media (max-width: 768px) {
   body { overflow: hidden; }
 
-  /* icon rail: stay narrow, always visible */
-  #rail { width: 50px; padding: .6rem 0; }
-  #rail .logo-tile { width: 30px; height: 30px; margin-bottom: .5rem; }
-  .rail-btn { width: 34px; height: 34px; }
+  /* project tabs: keep the strip compact and scrollable */
+  #projTabs { padding: .25rem .4rem 0; }
+  .projTab { max-width: 130px; }
 
   /* sidebar becomes a slide-over drawer above content */
   #sidebar {
-    position: fixed; top: 0; left: 50px; height: 100dvh; z-index: 150;
+    position: fixed; top: 0; left: 0; height: 100dvh; z-index: 150;
     width: min(84vw, 300px); box-shadow: var(--elev-3); transition: transform .2s, width 0s;
   }
   #sidebar.collapsed { width: min(84vw, 300px); transform: translateX(-110%); border-right: 1px solid var(--line); }
   #sidebarBackdrop {
-    position: fixed; inset: 0; left: 50px; background: var(--scrim); z-index: 140; display: none;
+    position: fixed; inset: 0; background: var(--scrim); z-index: 140; display: none;
   }
   #sidebar:not(.collapsed) ~ #sidebarBackdrop { display: block; }
 
@@ -767,9 +909,8 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   #ctxBar { display: none; }
 
   /* chat area */
-  #chat { padding: 1.1rem .8rem 1rem; gap: 1.1rem; }
-  .turn { grid-template-columns: 26px 1fr; gap: .55rem; }
-  .avatar { width: 26px; height: 26px; font-size: 10px; }
+  #chat { padding: .9rem .8rem 1rem; gap: .9rem; }
+  .turn.user .body { max-width: 86%; }
   #hero { padding: 1.6rem 0 .6rem; }
   #hero h1 { font-size: 1.6rem; }
   .cards { grid-template-columns: 1fr; }
@@ -779,12 +920,13 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   #composerWrap { padding: 0 .6rem .7rem; }
   #composer { padding: .55rem .6rem .5rem; border-radius: 16px; }
   #input { font-size: 16px; min-height: 38px; }
-  .composer-hint { display: none; }
-  #attachBtn span, #attachBtn { font-size: .78rem; }
-  #usageWidget { display: none !important; }
+  #modelName { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* dropdown menus: keep on-screen on narrow viewports */
   .dd-menu { position: fixed; left: .5rem; right: .5rem; top: auto; min-width: 0; width: auto; max-height: 70vh; }
+  .usagePop { position: fixed; left: .5rem; right: .5rem; bottom: 4.2rem; min-width: 0; }
+  /* no hover on touch: there the icon just opens the sidebar */
+  #quickChats { display: none !important; }
   #cwdMenu { width: auto; }
   #cwdMenu input, .search input { font-size: 16px; }
 

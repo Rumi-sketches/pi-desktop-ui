@@ -15,8 +15,9 @@
  * was a lot of machinery for the secondary way of running the app.
  */
 import { PRODUCT_ID } from "./product.mjs";
-import { send } from "./http.mjs";
+import { jsonBody, send, sendError } from "./http.mjs";
 import { disposeAllContexts } from "./contexts.mjs";
+import { closeAllTerminals, countLiveTerminals } from "./terminals.mjs";
 
 // The listening socket, handed over by startServer() once it is bound.
 let server = null;
@@ -47,11 +48,16 @@ function afterResponse(res, fn) {
 }
 
 // Everything this process owns and must give back: the idle sweep, the agent
-// sessions (each one a child process), the SSE sockets and the port itself.
+// sessions (each one a child process), the integrated terminals (each one a
+// PowerShell), the SSE sockets and the port itself.
 // Idempotent: calling it twice, or before a successful start, is a no-op.
 export async function stopServer() {
   restartHandler = null;
   await disposeAllContexts();
+  // The terminals die with the server, exactly like the agent sessions above:
+  // without this a quit leaves one orphan powershell.exe per open terminal,
+  // and on Windows their conout pipes can keep the event loop alive.
+  closeAllTerminals();
   const listening = server;
   server = null;
   if (!listening) return;
@@ -79,14 +85,33 @@ export async function shutdown(reason = "signal") {
 }
 
 // What the CLI user has to do by hand, now that nothing restarts for them.
-const CLI_RESTART_HINT = "restart pi-desktop-ui to apply";
+const CLI_RESTART_HINT = `restart ${PRODUCT_ID} to apply`;
+
+/** @param {number} count */
+const terminalsWording = (count) => (count === 1 ? "1 terminal" : `${count} terminals`);
 
 export async function handleShutdown({ res }) {
   send(res, 200, { ok: true, stopping: true });
   return shutdown("api");
 }
 
-export async function handleRestart({ res }) {
+export async function handleRestart({ req, res }) {
+  // A restart takes every integrated terminal down with it — whatever is
+  // running in them, a build, an ssh session, an agent halfway through a task.
+  // The count comes from the registry, the only place that knows which
+  // processes are still alive, and never from the page. `force` is the caller
+  // saying the user has seen the warning and chose to go ahead.
+  const { force } = await jsonBody(req);
+  const live = countLiveTerminals();
+  if (live > 0 && force !== true) {
+    return sendError(
+      res,
+      409,
+      "terminals_open",
+      `${terminalsWording(live)} will be closed by the restart`,
+      { terminals: live },
+    );
+  }
   // Embedded (Electron): this process is the app, not a disposable wrapper
   // around the server — replacing it would take the window down with it.
   // The host restarts the server in place instead, once this response has

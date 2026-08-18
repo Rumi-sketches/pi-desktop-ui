@@ -276,8 +276,14 @@ export async function fetchAnthropicUsage({ force = false } = {}) {
           resetsAt: fiveHour.resets_at ?? null,
         },
         sevenDay: j.seven_day && { percent: j.seven_day.utilization ?? null, resetsAt: j.seven_day.resets_at ?? null },
+        // limits[] is what claude.ai actually renders: session (5h), weekly_all
+        // and weekly_scoped (a per-model weekly cap — the model name lives in
+        // scope.model.display_name, e.g. "Fable", and can change over time, so
+        // we carry the label instead of hardcoding it in the UI).
         limits: (j.limits ?? []).map((l) => ({
           kind: l.kind,
+          group: l.group ?? null,
+          label: l.scope?.model?.display_name ?? null,
           percent: l.percent,
           severity: l.severity,
           resetsAt: l.resets_at,
