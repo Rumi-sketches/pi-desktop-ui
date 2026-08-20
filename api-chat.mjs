@@ -12,14 +12,17 @@ import path from "node:path";
 import { pickFolder, openFolder, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
 import { terminateTerminalsForChat } from "./terminals.mjs";
 import { isNonEmptyString, jsonBody, openSseStream, send, sendError } from "./http.mjs";
+import { titleFor } from "./titles.mjs";
 import {
   SESSIONS_DIR,
   SESSION_STATUS_INPUTS,
   forgetCwd,
   isArchivingEnabled,
   isFavorite,
+  isFullSearchEnabled,
   isInsideDir,
   listFavorites,
+  readSessionRecords,
   recentCwdList,
   redactSecrets,
   rememberCwd,
@@ -299,41 +302,145 @@ export async function handleGetGitStatus({ res, sessionKey }) {
   return send(res, 200, await gitStatus(ctx.cwd));
 }
 
+// One chat as the sidebar wants it. Written once because two routes answer
+// with it (`/api/sessions` and `/api/search`): a field added to a list the
+// page renders the same way must never exist in one of the two only.
+async function sessionEntry(s) {
+  // last model used in that chat, so the sidebar can show its logo
+  // (scanSessionFile is mtime-cached: repeated calls are free)
+  const scan = await scanSessionFile(s.path).catch(() => null);
+  const last = scan?.lastModel ?? null;
+  return {
+    path: s.path,
+    id: s.id,
+    cwd: s.cwd ?? "",
+    name: s.name ?? "",
+    firstMessage: s.firstMessage ?? "",
+    // Summary of the first message when one has been generated, the
+    // truncation of it otherwise: titles.mjs never makes this wait. The
+    // creation date travels with it because listing a chat older than the
+    // title switch must not summarize it.
+    title: await titleFor(s.path, s.firstMessage ?? "", s.created),
+    messageCount: s.messageCount ?? 0,
+    modified: s.modified,
+    favorite: isFavorite(s.path),
+    status: sessionStatusOf(s.path),
+    provider: last?.provider ?? "",
+    model: last?.model ?? "",
+  };
+}
+
+const byNewestFirst = (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime();
+
+// scope=all → sessions of every project, scope=cwd (default) → current dir only
+function sessionsOfScope(scope, cwd) {
+  return scope === "all" ? SessionManager.listAll() : SessionManager.list(cwd);
+}
+
 export async function handleListSessions({ res, url, sessionKey }) {
-  // scope=all → sessions of every project, scope=cwd (default) → current dir only
   const scope = url.searchParams.get("scope") ?? "cwd";
   const ctx = await useContext(sessionKey);
-  const list =
-    scope === "all" ? await SessionManager.listAll() : await SessionManager.list(ctx.cwd);
+  const list = await sessionsOfScope(scope, ctx.cwd);
   return send(res, 200, {
     current: ctx.sessionFile ?? null,
     cwd: ctx.cwd,
     scope,
     running: runningContextKeys(),
     open: openContextKeys(),
-    sessions: await Promise.all(
-      list
-        .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
-        .map(async (s) => {
-          // last model used in that chat, so the sidebar can show its logo
-          // (scanSessionFile is mtime-cached: repeated calls are free)
-          const scan = await scanSessionFile(s.path).catch(() => null);
-          const last = scan?.lastModel ?? null;
-          return {
-            path: s.path,
-            id: s.id,
-            cwd: s.cwd ?? "",
-            name: s.name ?? "",
-            firstMessage: s.firstMessage ?? "",
-            messageCount: s.messageCount ?? 0,
-            modified: s.modified,
-            favorite: isFavorite(s.path),
-            status: sessionStatusOf(s.path),
-            provider: last?.provider ?? "",
-            model: last?.model ?? "",
-          };
-        }),
-    ),
+    sessions: await Promise.all(list.sort(byNewestFirst).map(sessionEntry)),
+  });
+}
+
+// ---- deep search: the words inside the messages -----------------------------
+// The sidebar search only sees titles. This is the other half: the text of the
+// chats themselves, read from the session files.
+const SEARCH_MAX_RESULTS = 50;
+// The other half of the budget: results are capped, but a query nobody matches
+// would still read every chat on the disk. Newest first, so what is dropped is
+// always the oldest. The "full search" switch in Settings lifts it.
+const SEARCH_MAX_FILES = 300;
+
+// The visible text of a message: what the user wrote and what the assistant
+// answered. Thinking blocks and tool calls are deliberately out — nobody
+// searches for a chat by the arguments of a grep it ran.
+function messageText(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((c) => c?.type === "text" && typeof c.text === "string")
+    .map((c) => c.text)
+    .join(" ");
+}
+
+// True when every word shows up somewhere in the chat, each one possibly in a
+// different message. The file is read line by line (a chat can be megabytes)
+// and abandoned as soon as the last word is found; a malformed line is skipped
+// by readSessionRecords, an unreadable file is simply not a match.
+async function chatContainsWords(file, words) {
+  const missing = new Set(words);
+  try {
+    for await (const rec of readSessionRecords(file)) {
+      if (rec?.type !== "message") continue;
+      const role = rec.message?.role;
+      if (role !== "user" && role !== "assistant") continue;
+      const text = messageText(rec.message).toLowerCase();
+      if (!text) continue;
+      for (const word of missing) {
+        if (text.includes(word)) missing.delete(word);
+      }
+      if (missing.size === 0) return true;
+    }
+  } catch {
+    return false;
+  }
+  return missing.size === 0;
+}
+
+export async function handleSearchMessages({ req, res, url, sessionKey }) {
+  const words = (url.searchParams.get("q") ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // Without words every chat matches: that is the whole list, not a search.
+  if (words.length === 0) return sendError(res, 400, "missing_query", "q must not be empty");
+  const scope = url.searchParams.get("scope") ?? "cwd";
+  // The page aborts the search still scanning when it starts another one: from
+  // that moment the answer has no reader, so reading more files is pure waste.
+  // Listener registered before the first await, so a request already gone is
+  // seen even if it dies while the context is being resolved.
+  let dropped = false;
+  req?.once?.("close", () => { dropped = true; });
+  const gone = () => dropped || res.destroyed;
+  const ctx = await useContext(sessionKey);
+  const list = (await sessionsOfScope(scope, ctx.cwd)).sort(byNewestFirst);
+  // Newest first and one file at a time: the cap then keeps the 50 most recent
+  // matches, and a query that hits everything stops after 50 files instead of
+  // reading every chat on the disk.
+  const fileCap = isFullSearchEnabled() ? Infinity : SEARCH_MAX_FILES;
+  const hits = [];
+  let scanned = 0;
+  // True only when chats were left unread: reaching the cap on the very last
+  // file has hidden nothing.
+  let capped = false;
+  for (const s of list) {
+    if (gone()) return;
+    if (hits.length >= SEARCH_MAX_RESULTS) break;
+    if (scanned >= fileCap) {
+      capped = true;
+      break;
+    }
+    scanned += 1;
+    if (await chatContainsWords(s.path, words)) hits.push(s);
+  }
+  // Nothing is written on a dead response (see DECISIONS.md).
+  if (gone()) return;
+  return send(res, 200, {
+    query: words.join(" "),
+    scope,
+    cwd: ctx.cwd,
+    scanned,
+    // `capped` tells the two apart: 50 matches found, or chats left unread.
+    capped,
+    truncated: hits.length >= SEARCH_MAX_RESULTS || capped,
+    sessions: await Promise.all(hits.map(sessionEntry)),
   });
 }
 

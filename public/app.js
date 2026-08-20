@@ -33,12 +33,36 @@ try {
 } catch { sessionKey = null; }
 function setSessionKey(k, { reconnect = true } = {}) {
   if (!k || k === sessionKey) { if (k) currentSessionPath = k; return; }
+  stashComposerDraft(sessionKey);   // the text typed here stays here
   sessionKey = k;
   currentSessionPath = k;
   resetTasks();                    // background tasks are per-chat
   try { sessionStorage.setItem('piSessionKey', k); } catch {}
   history.replaceState(null, '', '#s=' + encodeURIComponent(k));
+  restoreComposerDraft(k);
   if (reconnect) connect();
+}
+
+/* ---- composer drafts: unsent text belongs to its chat ----
+   A message half written is part of the chat it was written for, not of the
+   tab: switching chat parks it and brings back whatever was pending on the
+   other side. sessionStorage like the session key itself — per tab, and it
+   survives a reload. */
+let composerDrafts = {};
+try { composerDrafts = JSON.parse(sessionStorage.getItem('piComposerDrafts') || '{}'); } catch {}
+function saveComposerDrafts() {
+  try { sessionStorage.setItem('piComposerDrafts', JSON.stringify(composerDrafts)); } catch {}
+}
+// Park the composer under `key` (empty text = no draft, so sending clears it).
+function stashComposerDraft(key) {
+  if (!key) return;
+  const v = $('input').value;
+  if (v.trim()) composerDrafts[key] = v; else delete composerDrafts[key];
+  saveComposerDrafts();
+}
+function restoreComposerDraft(key) {
+  $('input').value = composerDrafts[key] ?? '';
+  autoGrow();
 }
 
 if (win.marked) win.marked.setOptions({ breaks: true, gfm: true });
@@ -48,6 +72,14 @@ const fmt = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixe
 const money = (n) => { const v = n ?? 0; return '$' + (v < 1 ? v.toFixed(4) : v.toFixed(2)); };
 const atBottom = () => chatWrap.scrollHeight - chatWrap.scrollTop - chatWrap.clientHeight < 90;
 const scrollDown = () => { chatWrap.scrollTop = chatWrap.scrollHeight; };
+
+// Desktop app or plain browser tab. It decides the modifier of every shortcut:
+// in Electron we own the whole keyboard and Ctrl is the natural key, in a
+// browser tab Ctrl+T/N/W/P belong to the browser and never reach the page, so
+// there Shift stays.
+const IS_ELECTRON = /electron\//i.test(navigator.userAgent);
+const MOD = IS_ELECTRON ? 'Ctrl' : 'Shift';
+const hasMod = (e) => (IS_ELECTRON ? e.ctrlKey && !e.shiftKey && !e.metaKey : e.shiftKey && !e.ctrlKey && !e.metaKey) && !e.altKey;
 
 const TOAST_LIFETIME_MS = 6000;
 function toast(msg, ok = false) {
@@ -83,6 +115,9 @@ async function api(url, opts, { quiet = [] } = {}) {
     if (d.key) setSessionKey(d.key, { reconnect: d.key !== sessionKey && !!sessionKey });
     return d;
   } catch (e) {
+    // An aborted request is not a failure: whoever aborted it knows why, and a
+    // toast about it would be noise (see runDeepSearch).
+    if (e.name === 'AbortError') return { error: 'aborted', code: 'aborted' };
     toast(`${url}: ${e.message}`);
     return { error: e.message, code: '' };
   }
@@ -171,12 +206,19 @@ let sessionFilter = { status: 'all', period: 'all' };
 // disappears from the UI (saved statuses stay on the server)
 let chatArchiving = true;
 try { sessionFilter = { ...sessionFilter, ...JSON.parse(localStorage.getItem('piSessionFilter') || '{}') }; } catch {}
+// sort and grouping: state lives here (the old <select>s became icon dropdowns),
+// grouping keeps the same localStorage key as before. All three sidebar controls
+// are remembered: a filter you have to set again at every start is not a filter.
+let sessionSort = localStorage.getItem('piSortBy') || 'recent';
+let sessionGroup = localStorage.getItem('piGroupBy') || 'none';
 const modelDd = setupDd('modelDd', 'modelBtn');
 const thinkDd = setupDd('thinkDd', 'thinkBtn');
 const cwdDd = setupDd('cwdDd', 'cwdChip');
 setupDd('statsDd', 'stats');
 const termsDd = setupDd('termsDd', 'termsChip');
 const filterDd = setupDd('filterDd', 'filterBtn');
+const sortDd = setupDd('sortDd', 'sortBtn');
+const groupDd = setupDd('groupDd', 'groupBtn');
 function renderFilterMenu() {
   $('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
     b.classList.toggle('sel', sessionFilter[b.dataset.filter] === b.dataset.val);
@@ -195,9 +237,46 @@ $('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
     renderFilterMenu();
     renderSessions();
     filterDd.classList.remove('open');
+    syncChatToList();
   });
 });
 renderFilterMenu();
+// sort / group icons: selected option highlighted in the menu, icon lit up when
+// the control is off its default (same "on" pattern as the filter icon)
+function renderSortMenu() {
+  $('sortMenu').querySelectorAll('[data-sort]').forEach((b) => {
+    b.classList.toggle('sel', b.dataset.sort === sessionSort);
+  });
+  $('sortBtn').classList.toggle('on', sessionSort !== 'recent');
+}
+function renderGroupMenu() {
+  $('groupMenu').querySelectorAll('[data-group]').forEach((b) => {
+    b.classList.toggle('sel', b.dataset.group === sessionGroup);
+  });
+  $('groupBtn').classList.toggle('on', sessionGroup !== 'none');
+}
+$('sortMenu').querySelectorAll('[data-sort]').forEach((b) => {
+  b.addEventListener('click', () => {
+    sessionSort = b.dataset.sort;
+    localStorage.setItem('piSortBy', sessionSort);
+    renderSortMenu();
+    renderSessions();
+    sortDd.classList.remove('open');
+    syncChatToList();
+  });
+});
+$('groupMenu').querySelectorAll('[data-group]').forEach((b) => {
+  b.addEventListener('click', () => {
+    sessionGroup = b.dataset.group;
+    localStorage.setItem('piGroupBy', sessionGroup);
+    renderGroupMenu();
+    renderSessions();
+    groupDd.classList.remove('open');
+    syncChatToList();
+  });
+});
+renderSortMenu();
+renderGroupMenu();
 document.addEventListener('click', () => {
   closeFlyouts();
   document.querySelectorAll('.dd.open').forEach((d) => d.classList.remove('open'));
@@ -329,6 +408,7 @@ async function forkFrom(entryId) {
 }
 function newTurn(role, model = null) {
   $('hero')?.remove();
+  setHeroMode(false);
   // Consecutive messages from the same speaker (same model, for the assistant)
   // stay in the same turn: avatar and name show up once, until the other side
   // answers.
@@ -420,28 +500,51 @@ function renderTool(ev) {
   }
 }
 
-const SUGG = [
-  { t: 'Explore', c: '#2fe0c0', d: 'Give me an overview of this project', p: 'Give me an overview of this project structure and of what it does.' },
-  { t: 'Debug', c: '#f8a5a5', d: 'Find and fix a bug', p: 'Analyse the code and point out possible bugs or problems.' },
-  { t: 'Refactor', c: '#a5b4fc', d: 'Improve the existing code', p: 'Suggest a refactoring of the main files of this project.' },
-];
+// Home screen: a single question naming the project, and the composer right
+// below as the only thing to do. The old suggestion cards are gone: they were
+// noise on top of an empty prompt.
+function projectName() {
+  const parts = (state.cwd || '').split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
 function showHero() {
   if (chat.children.length) return;
   const h = document.createElement('div');
   h.id = 'hero';
-  h.innerHTML = `<h1>Hi 👋<br><span class="dim">What are we building today?</span></h1>
-    <p>Working folder: <code>${esc(state.cwd || '…')}</code></p>
-    <div class="cards">${SUGG.map((s, i) => `
-      <button class="sugg" data-i="${i}">
-        <span class="tag" style="background:${s.c}22;color:${s.c}">${s.t}</span>
-        <div class="d">${esc(s.d)}</div>
-      </button>`).join('')}</div>`;
+  const name = projectName();
+  h.innerHTML = name
+    ? `<h1>What should we build in <span class="proj">${esc(name)}</span>?</h1>`
+    : '<h1>What should we build today?</h1>';
   chat.appendChild(h);
-  $$('.sugg', h).forEach((b) => b.addEventListener('click', () => {
-    $('input').value = SUGG[+b.dataset.i].p;
-    autoGrow(); $('input').focus();
-  }));
+  setHeroMode(true);
 }
+/* The checkout tray hangs under the composer and belongs to the new-chat screen
+   only: as soon as the chat starts the folder is frozen, so showing it would be
+   a lie. One class on #chatView drives both the hero layout and the tray. */
+function setHeroMode(on) {
+  $('chatView').classList.toggle('hero', !!on);
+  if (on) renderTray();
+}
+function renderTray() {
+  $('trayPath').textContent = state.cwd || '…';
+  $('checkoutTray').title = 'Working folder of the next chat: ' + (state.cwd || '—');
+  const gb = $('trayGit');
+  if (!gitInfo?.repo) { gb.classList.add('hide'); return; }
+  gb.classList.remove('hide');
+  $('trayBranch').textContent = gitInfo.branch;
+  const n = gitInfo.changed ?? 0;
+  const count = $('trayCount');
+  count.textContent = n;
+  count.classList.toggle('hide', !n);
+}
+/* The tray is a second trigger for the folder menu that lives in the header.
+   stopPropagation is not optional: the synthetic click on #cwdChip stops only
+   itself, while this one would keep bubbling to the document listener that
+   closes every open dropdown — the menu would shut in the same tick it opens. */
+$('checkoutTray').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('cwdChip').click();
+});
 // Counter shows *this chat only*: fresh tokens per turn (prompt + cache writes +
 // output). Cache reads are excluded because they re-count context already paid for.
 let lastByModel = {};   // provider/model -> {tokens,cost,requests,...} for this chat
@@ -609,7 +712,7 @@ let es = null;
 function connect() {
   if (es) { try { es.close(); } catch {} }
   es = new EventSource(withKey('/api/events'));
-  es.onopen = () => { $('conn').classList.remove('off'); $('connTxt').textContent = 'connesso'; };
+  es.onopen = () => { $('conn').classList.remove('off'); $('connTxt').textContent = 'connected'; };
   es.onerror = () => { $('conn').classList.add('off'); $('connTxt').textContent = 'reconnecting…'; };
   es.onmessage = (e) => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
@@ -620,13 +723,15 @@ function handleEvent(ev) {
   // global events: they are about the OTHER open chats, not this one
   if (ev.scope === 'global') {
     if (ev.kind === 'running') {
+      // "finished" only means something for a chat we had seen working. An end
+      // of run for a key we never saw start (a context re-keyed mid-turn, a
+      // window on another chat, a leftover from before this page loaded) is
+      // noise, and it used to pop up as a toast out of nowhere.
+      const wasRunning = runningKeys.has(ev.key);
       if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
       if (ev.key !== sessionKey) {
         renderSessions();
-        if (!ev.running) {
-          const s = allSessions.find((x) => x.path === ev.key);
-          toast('Chat finished: ' + (s?.name || s?.firstMessage || '(background chat)'), true);
-        }
+        if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true);
       }
     } else if (ev.kind === 'sessions') {
       loadSessions();
@@ -671,6 +776,19 @@ function handleEvent(ev) {
         refreshGit();  // the agent may have touched files / branches
       }
       setRunning(ev.status === 'running'); break;
+    case 'rekey': {
+      // the draft we are on just got its session file: same chat, same stream,
+      // only the key changes — no reconnect and no reset of the running turn
+      const old = sessionKey;
+      // the chat did not change, so neither does what is typed in the composer:
+      // it moves to the new key instead of being parked under the dead one
+      composerDrafts[ev.key] = $('input').value;
+      setSessionKey(ev.key, { reconnect: false });
+      delete composerDrafts[old];
+      saveComposerDrafts();
+      renderSessions();          // the row can finally be marked as the active one
+      break;
+    }
     case 'cwd':
       state.cwd = ev.path; setCwdLabel(ev.path);
       activeFile = null; refreshAll(); break;
@@ -712,7 +830,7 @@ async function selectModel(provider, id) {
   if (!$('settingsView').classList.contains('hide')) renderSettings();
   toast(`Model: ${id}`, true);
 }
-// Shift+M: cycle through the available/authenticated models
+// MOD+M: cycle through the available/authenticated models
 async function cycleModel() {
   if (!modelsCache.length) { toast('No model available'); return; }
   let idx = modelsCache.findIndex((m) => state.model && m.provider === state.model.provider && m.id === state.model.id);
@@ -819,7 +937,7 @@ function renderThinking() {
     menu.appendChild(b);
   }
 }
-// Shift+T: cycle through the reasoning effort levels of the current model
+// MOD+E: cycle through the reasoning effort levels of the current model
 async function cycleThinking() {
   const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
   if (levels.length <= 1) { toast('No other effort level available for this model'); return; }
@@ -838,6 +956,10 @@ function setCwdLabel(p) {
   $('cwdLabel').textContent = parts.slice(-2).join('/') || p || '—';
   $('cwdChip').title = 'Working folder: ' + p;
   $('cwdInput').value = p;
+  renderTray();
+  // the hero names the project: a folder change has to rewrite it
+  const hero = $('hero');
+  if (hero) { hero.remove(); showHero(); }
 }
 /* An "empty" chat does not exist: it is just the home screen, a chat is born
    with its first prompt. While we are there the folder can be changed freely;
@@ -863,6 +985,10 @@ async function changeCwd(p) {
   $('cwdMsg').textContent = '';
   if (r.error) return; // toast already shown, chat untouched
   cwdDd.classList.remove('open');
+  // changing folder means another chat: the server answers with the key of the
+  // context that owns it, and the tab has to follow it (staying on the old
+  // draft would send every later request to the previous folder)
+  if (r.key) setSessionKey(r.key);
   state.cwd = r.cwd ?? p;
   setCwdLabel(state.cwd);
   await refreshAll();               // reload sessions and projects for the new folder
@@ -887,13 +1013,7 @@ $('explorerBtn').addEventListener('click', async () => {
   const r = await post('/api/open-explorer');
   if (!r.error) cwdDd.classList.remove('open');
 });
-// opens a terminal in the working folder and runs "pi" there
-$('terminalBtn').addEventListener('click', async () => {
-  const r = await post('/api/open-terminal');
-  if (!r.error) toast('Terminal opened: starting pi…', true);
-});
-
-// The three native features do not exist everywhere (no picker without zenity
+// The native features do not exist everywhere (no picker without zenity
 // on Linux, and so on): the server says what it can do and we hide the rest, so
 // no button promises something that would end in an error.
 let platformCaps = null;
@@ -902,7 +1022,6 @@ function applyPlatformCapabilities(caps) {
   platformCaps = caps;
   $('browseBtn').classList.toggle('hide', !caps.pickFolder);
   $('explorerBtn').parentElement.classList.toggle('hide', !caps.openFolder);
-  $('terminalBtn').classList.toggle('hide', !caps.openTerminal);
   // without a native picker the text field is the only way to choose the folder
   if (!caps.pickFolder) $('cwdInput').placeholder = 'Paste the folder path here';
 }
@@ -989,6 +1108,22 @@ const runningKeys = new Set();   // chats currently working (also in other tabs)
 // Chat lists sort on `modified`, an ISO string: parsed once and compared as a
 // number, which is what subtracting two Dates was already doing.
 const modifiedAt = (s) => new Date(s.modified).getTime();
+// How a chat is named everywhere: the server's summary first, then the payload's
+// own fallbacks. `title` used to be missing here and there, which is how a toast
+// ended up shouting a whole first message across the screen.
+const sessionLabel = (s) => s?.title || s?.name || s?.firstMessage || '';
+// The same name, cut to notification size: one line, never a transcript.
+function chatLabel(key, max = 70) {
+  const raw = sessionLabel(allSessions.find((s) => s.path === key)).replace(/\s+/g, ' ').trim();
+  if (!raw) return '(background chat)';
+  return raw.length > max ? raw.slice(0, max - 1).trimEnd() + '\u2026' : raw;
+}
+// Second half of the header breadcrumb: the chat you are in, named exactly as
+// the sidebar names it. A chat that has not been born yet has no name at all.
+function renderChatTitle() {
+  const s = allSessions.find((x) => x.path === currentSessionPath);
+  $('chatTitle').textContent = sessionLabel(s).replace(/\s+/g, ' ').trim() || 'New chat';
+}
 function fmtDate(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -1041,12 +1176,26 @@ function passesSessionFilter(s) {
   }
   return true;
 }
+// Scattered-words search: every word of the query must appear somewhere in the
+// searchable text, in any order, so "docker fix" finds "Fix del container docker".
+// A single word behaves exactly like the old substring match.
+function matchesSessionSearch(s, words) {
+  if (!words.length) return true;
+  const hay = `${s.title || ''} ${s.name || ''} ${s.firstMessage || ''} ${s.cwd || ''}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
 // Filtered and ordered chats, shared by the sidebar and by the collapsed-sidebar
 // flyout: the two must never disagree on what "the most recent chats" are.
 function sessionsInOrder() {
-  const q = $('sessionSearch').value.trim().toLowerCase();
-  const list = allSessions.filter((s) => passesSessionFilter(s) && (!q || `${s.name || ''} ${s.firstMessage || ''} ${s.cwd || ''}`.toLowerCase().includes(q)));
-  const sort = $('sortFilter').value;
+  const words = $('sessionSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // deep search results take the place of the list: the server has already
+  // decided what matches, and only the project tab still narrows it down —
+  // filters and title search could only take rows away from an answer the user
+  // explicitly asked for.
+  const list = deepResults
+    ? deepResults.filter((s) => !projState.active || (s.cwd || '').toLowerCase() === projState.active.toLowerCase())
+    : allSessions.filter((s) => passesSessionFilter(s) && matchesSessionSearch(s, words));
+  const sort = sessionSort;
   // favorites always sit on top and among themselves are sorted by date (newest
   // first), whatever view/sort is selected; the rest follows the sort.
   // Done chats always sit below active ones, even when more recent.
@@ -1082,19 +1231,18 @@ function sessionItemEl(s) {
   const done = isChatDone(s);
   const div = document.createElement('div');
   div.className = 'sessionItem' + (s.path === currentSessionPath ? ' active' : '') + (done ? ' done' : '');
-  const label = s.name || s.firstMessage || '(empty)';
-  const proj = (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  // `title` is the server's summary of the chat, already falling back to the
+  // truncated first message; the other two cover a payload without it.
+  const label = sessionLabel(s) || '(empty)';
   const running = runningKeys.has(s.path);
+  // one line only: title and date. Model, project, message count and status
+  // badges stay in the payload but out of sight; the per-row actions (favorite,
+  // done) live in the hover panel as before.
   div.innerHTML = `<div class="acts">
     ${chatArchiving ? `<button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Move back to active' : 'Mark as done'}">${done ? '↺' : '✓'}</button>` : ''}
     <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
-    </div><div class="title">${running ? '<span class="runDot"></span>' : done ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span>
-    ${chatArchiving && s.status === 'reopened' ? '<span class="reopened">reopened</span>' : ''}
-    ${s.favorite ? '<span class="favMark">♥</span>' : ''}</div><div class="meta">
-    ${s.model || s.provider ? `<span title="${esc((s.provider || '') + '/' + (s.model || ''))}">${logoHtml(s.provider || '', s.model || '')}</span>` : ''}
-    ${proj ? `<span class="proj" title="${esc(s.cwd)}">${esc(proj)}</span><span>·</span>` : ''}
-    <span>${s.messageCount} msg</span><span>·</span><span>${fmtDate(s.modified)}</span>
-    ${running ? '<span>·</span><span style="color:var(--teal)">running</span>' : ''}</div>`;
+    </div><div class="title">${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
+    <span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
   div.title = label;
   // favorite: clicking the heart must not open the chat
@@ -1143,7 +1291,8 @@ function fillSessionList(el, list, groupBy) {
   }
 }
 function renderSessions() {
-  const groupBy = $('groupFilter').value;
+  renderChatTitle();
+  const groupBy = sessionGroup;
   const list = orderForGrouping(sessionsInOrder(), groupBy);
   $('sessionCount').textContent = list.length;
   if ($('quickChats').classList.contains('show')) renderQuickChats();
@@ -1178,34 +1327,114 @@ async function openSession(s) {
   setSessionKey(r.key ?? s.path);   // reattach the SSE to the new chat
   await refreshAll();               // never rely on the SSE event alone
 }
+// A project tab pins the folder: a chat started while it is active is born in
+// that project, whatever folder the chat we are leaving happened to use.
 async function newChat() {
   showChat();
   const r = await post('/api/sessions');
   if (r.error) return;
   setSessionKey(r.key);
+  const want = projState.active;
+  if (want && (r.cwd || '').toLowerCase() !== want.toLowerCase()) {
+    // the folder of an unstarted chat is a new context: follow its key
+    const c = await post('/api/cwd', { path: want });
+    if (!c.error) {
+      if (c.key) setSessionKey(c.key);
+      state.cwd = c.cwd ?? want;
+    }
+  }
   await refreshAll();
   $('input').focus();
 }
-$('newSessionBtn').addEventListener('click', newChat);
+// wrapped: the click event must not be read as the chat's folder
+$('newSessionBtn').addEventListener('click', () => newChat());
+// What the sidebar shows just changed (project tab, filters, sort, grouping):
+// the chat on screen follows it and becomes the first of the new list. Nothing
+// left to show means there is no chat to land on: the new-chat screen takes over.
+async function syncChatToList() {
+  const first = orderForGrouping(sessionsInOrder(), sessionGroup)[0];
+  if (!first) return newChat();
+  if (first.path === currentSessionPath) { showChat(); return; }
+  await openSession(first);
+}
 $('openPiTermBtn').addEventListener('click', () => openTerminal('pi'));
 $('openShellTermBtn').addEventListener('click', () => openTerminal('shell'));
-$('sessionSearch').addEventListener('input', renderSessions);
-$('sortFilter').addEventListener('change', renderSessions);
-$('groupFilter').addEventListener('change', () => {
-  localStorage.setItem('piGroupBy', $('groupFilter').value);
+
+/* ---- deep search: the words inside the messages, not just the titles ---- */
+// null = off (the sidebar shows the normal list); an array = the server's answer
+let deepResults = null;
+let deepSearching = false;
+// The deep search in flight, and the number of the search that owns it: an
+// older answer must not touch the sidebar nor the button.
+let deepSearchAbort = null;
+let deepSearchSeq = 0;
+// The button has three faces: working, showing an answer, ready to search.
+function deepBtnFace() {
+  if (deepSearching) return '<span class="deepSpin"></span>Searching in messages…';
+  if (deepResults) return 'Back to the chat list';
+  return 'Search in messages';
+}
+function updateDeepBtn() {
+  const btn = $('deepSearchBtn');
+  const query = $('sessionSearch').value.trim();
+  // nothing typed and no results on screen: there is nothing to search or undo
+  btn.classList.toggle('hide', !query && !deepResults);
+  btn.disabled = deepSearching || (!query && !deepResults);
+  btn.innerHTML = deepBtnFace();
+}
+function exitDeepSearch() {
+  deepResults = null;
+  updateDeepBtn();
+  renderSessions();
+}
+async function runDeepSearch() {
+  const query = $('sessionSearch').value.trim();
+  if (!query) return;
+  // Starting a search gives up the one still scanning: the server sees the
+  // request die and stops reading files instead of answering nobody.
+  deepSearchAbort?.abort();
+  const ctrl = new AbortController();
+  deepSearchAbort = ctrl;
+  const seq = ++deepSearchSeq;
+  deepSearching = true;
+  updateDeepBtn();
+  // scope=all like the chat list itself: the project tab, if any, filters the
+  // results client-side, exactly as it does for the normal list
+  const res = await api('/api/search?scope=all&q=' + encodeURIComponent(query), { signal: ctrl.signal });
+  // aborted, or overtaken by a newer search: the one running now owns the state
+  if (seq !== deepSearchSeq) return;
+  deepSearching = false;
+  deepSearchAbort = null;
+  // typing during the request has already put the sidebar back on the titles:
+  // these results answer a question the user has moved on from.
+  const stale = $('sessionSearch').value.trim() !== query;
+  if (!stale && !res.error) {
+    deepResults = res.sessions ?? [];
+    // Two ways a search can come back short: 50 matches found, or the scan
+    // stopped before the end of the list (the file budget, off with the
+    // "full search" option in Settings).
+    if (res.capped) toast(`Search stopped at the most recent ${res.scanned} chats`);
+    else if (!deepResults.length) toast('No chat contains those words');
+    else if (res.truncated) toast(`Showing the ${deepResults.length} most recent matches`);
+  }
+  updateDeepBtn();
+  renderSessions();
+}
+$('deepSearchBtn').addEventListener('click', () => (deepResults ? exitDeepSearch() : runDeepSearch()));
+$('sessionSearch').addEventListener('input', () => {
+  // typing again is leaving the results behind: back to searching the titles
+  deepResults = null;
+  updateDeepBtn();
   renderSessions();
 });
-$('groupFilter').value = localStorage.getItem('piGroupBy') || 'none';
-// Shift+P: cycle through projects, opening the latest chat of each
-async function cycleProject() {
-  const opts = [...new Set(allSessions.map((s) => s.cwd).filter(Boolean))].sort();
-  if (opts.length < 2) { toast('No other project available'); return; }
-  let idx = opts.indexOf(state.cwd);
-  idx = (idx + 1) % opts.length;
-  const proj = opts[idx];
-  const sessions = allSessions.filter((s) => s.cwd === proj).sort((a, b) => modifiedAt(b) - modifiedAt(a));
-  if (sessions.length) await openSession(sessions[0]);
-  else toast('No chat for project: ' + proj);
+$('sessionSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') runDeepSearch(); });
+// MOD+P: cycle through the chats the sidebar is showing right now — the same
+// list, in the same order, filters and search included — wrapping around.
+async function cycleChat() {
+  const list = sessionsInOrder();
+  if (list.length < 2) { toast('No other chat in the sidebar'); return; }
+  const idx = list.findIndex((s) => s.path === currentSessionPath);
+  await openSession(list[(idx + 1) % list.length]);
 }
 function setSidebarCollapsed(v) {
   $('sidebar').classList.toggle('collapsed', v);
@@ -1220,7 +1449,7 @@ function setSidebarCollapsed(v) {
 /* ---- quick chat switcher: the chat list on hover, sidebar still collapsed ---- */
 const QUICK_CHATS_MAX = 12;
 function renderQuickChats() {
-  const groupBy = $('groupFilter').value;
+  const groupBy = sessionGroup;
   const full = orderForGrouping(sessionsInOrder(), groupBy);
   const list = full.slice(0, QUICK_CHATS_MAX);
   const box = $('quickChats');
@@ -1302,22 +1531,46 @@ async function activateProjTab(cwd) {
   saveProjTabs();
   renderProjTabs();
   renderSessions();
-  // switching project also lands you in it: open its most recent chat
-  if (changed && cwd) {
-    const latest = allSessions.filter((s) => (s.cwd || '').toLowerCase() === cwd.toLowerCase())
-      .sort((a, b) => modifiedAt(b) - modifiedAt(a))[0];
-    if (latest && latest.path !== currentSessionPath) await openSession(latest);
-  }
+  renderTerminals();   // the section follows the tab; the running PTYs are untouched
+  // switching project also lands you in it: the first chat the sidebar now
+  // shows, or a new chat in that project when it has none yet
+  if (changed) await syncChatToList();
 }
-function closeProjTab(cwd) {
+// `sync` off when the caller is about to activate another tab: two chat
+// switches racing each other would leave the view on the loser.
+function closeProjTab(cwd, { sync = true } = {}) {
   projState.tabs = projState.tabs.filter((t) => t !== cwd);
   if (projState.active === cwd) projState.active = null;
   saveProjTabs();
   renderProjTabs();
   renderSessions();
+  renderTerminals();
+  if (sync) syncChatToList();
 }
 // "+" menu: every project we know of — the folders of the existing chats plus the
 // recent-folders list — minus the tabs already open
+// MOD+T: cycle through the open project tabs, "All" included, wrapping around.
+function cycleProjTab() {
+  const tabs = [null, ...projState.tabs];
+  if (tabs.length < 2) { toast('No other project tab'); return; }
+  const idx = tabs.indexOf(projState.active);
+  return activateProjTab(tabs[(idx + 1) % tabs.length]);
+}
+// MOD+W: close the active project tab and land on the next one. On "All" there
+// is no tab to close, so the app itself goes.
+function closeCurrentProjTab() {
+  const cur = projState.active;
+  if (!cur) { quitApp(); return; }
+  const tabs = [null, ...projState.tabs];
+  const next = tabs[(tabs.indexOf(cur) + 1) % tabs.length] ?? null;
+  const land = next && projState.tabs.includes(next) ? next : null;
+  closeProjTab(cur, { sync: !land });       // leaves us on "All"
+  if (land) activateProjTab(land);
+}
+function quitApp() {
+  if (!IS_ELECTRON) { toast('No project tab to close'); return; }
+  window.close();
+}
 const projAddDd = setupDd('projAddDd', 'projAddBtn');
 function knownProjects() {
   const open = new Set(projState.tabs.map((t) => t.toLowerCase()));
@@ -1456,6 +1709,7 @@ async function loadHistory() {
   if (res.streaming && !agentTask) setAgentTask(true, res.turnModel);
   else if (!res.streaming && agentTask && !agentTask.t1) setAgentTask(false);
   if (!chat.children.length) showHero();
+  else setHeroMode(false); // switching to a started chat: no hero, no tray
   scrollDown();
 }
 
@@ -1590,18 +1844,58 @@ $('tasksClose').addEventListener('click', () => {
 const termPanes = new Map();   // id -> { pane, term, fit, es }
 let activeTerminalId = null;
 
+// xterm parses colours itself and only understands hex and `rgb()/rgba()`: a
+// theme token written as `color-mix()` (or any other CSS colour function) is
+// rejected in silence and replaced by an xterm default, which is how the
+// selection turned white. So every value read from CSS is resolved to a plain
+// `rgba()` first, by painting it on a 1x1 canvas and reading the pixel back.
+// Assigning to `fillStyle` is a no-op when the value is unparsable, so two
+// different sentinels tell a rejected value apart from a genuinely painted one.
+let colorProbe;                       // undefined = not tried yet, null = unusable
+function colorProbeCtx() {
+  if (colorProbe === undefined) {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1; canvas.height = 1;
+      colorProbe = canvas.getContext('2d', { willReadFrequently: true }) || null;
+    } catch { colorProbe = null; }
+  }
+  return colorProbe;
+}
+function cssColorToRgba(value, fallback) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const ctx = colorProbeCtx();
+  if (!ctx) return fallback;
+  try {
+    ctx.fillStyle = '#000000';
+    ctx.fillStyle = raw;
+    const onBlack = ctx.fillStyle;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = raw;
+    if (onBlack !== ctx.fillStyle) return fallback;   // both sentinels survived: value refused
+    ctx.globalCompositeOperation = 'copy';            // keep the alpha instead of blending it away
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgba(${r}, ${g}, ${b}, ${Math.round((a / 255) * 1000) / 1000})`;
+  } catch {
+    return fallback;
+  }
+}
+
 // The colours follow the active web UI theme instead of xterm's defaults, so a
 // terminal does not punch a black hole into a light page.
 function termTheme() {
   const css = getComputedStyle(document.documentElement);
-  const v = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
-  const foreground = v('--txt', '#e9edf3');
+  const v = (name, fallback) => cssColorToRgba(css.getPropertyValue(name), fallback);
+  const foreground = v('--txt', 'rgba(233, 237, 243, 1)');
+  const background = v('--bg', 'rgba(11, 13, 17, 1)');
   return {
-    background: v('--bg', '#0b0d11'),
+    background,
     foreground,
     cursor: v('--teal', foreground),
-    cursorAccent: v('--bg', '#0b0d11'),
-    selectionBackground: v('--teal-dim', '#2fe0c033'),
+    cursorAccent: background,
+    selectionBackground: v('--teal-dim', 'rgba(47, 224, 192, 0.2)'),
   };
 }
 function refreshTerminalThemes() {
@@ -1618,6 +1912,41 @@ function sendTerminalInput(id, data) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ data }),
   }).catch((e) => console.error('terminal input', e));
+}
+
+// `navigator.clipboard` only exists in a secure context: served on the LAN over
+// plain http it is undefined, and touching it inside the right-click handler
+// would throw where the browser menu has already been suppressed. Say so with
+// the same toast the copy buttons use, and let the caller give up quietly.
+function clipboardOrWarn() {
+  if (navigator.clipboard) return navigator.clipboard;
+  toast('Clipboard unavailable (the browser only allows it over https or on localhost)');
+  return null;
+}
+
+// Copy the current selection, if there is one, and say whether there was: the
+// caller decides what to do with an empty selection (right-click pastes
+// instead). Clearing after the copy is what makes the next right-click paste.
+function copyTerminalSelection(term) {
+  const sel = term.getSelection();
+  if (!sel) return false;
+  // a selection there was, whether or not the clipboard took it: right-click
+  // must not fall through to pasting
+  clipboardOrWarn()?.writeText(sel)
+    .then(() => term.clearSelection())
+    .catch((e) => console.error('terminal copy', e));
+  return true;
+}
+
+// The clipboard goes in through `term.paste`, the same door keystrokes use
+// (onData -> sendTerminalInput): bracketed paste mode keeps multi-line text as
+// text instead of the shell running every line on arrival. A dead pane takes
+// no input, as with the keyboard.
+function pasteIntoTerminal(id, term) {
+  if (termPanes.get(id)?.exited) return;
+  clipboardOrWarn()?.readText()
+    .then((text) => { if (text) term.paste(text); })
+    .catch((e) => console.error('terminal paste', e));
 }
 
 // The PTY has to be told the geometry the addon just computed, otherwise the
@@ -1673,6 +2002,30 @@ function openTerminalPane(id) {
   term.loadAddon(fit);
   term.open(pane);
   term.onData((data) => sendTerminalInput(id, data));
+
+  // Right-click works like Windows Terminal: with a selection it copies, with
+  // none it pastes. The branch is decided synchronously so the clipboard read
+  // still runs under the user gesture, and the browser menu never opens on a
+  // terminal, where it would only offer things that do not apply.
+  // Without `navigator.clipboard` (LAN over plain http) there is nothing to
+  // offer instead, so the native menu is left alone: it lives outside the page
+  // and can still copy the selection.
+  pane.addEventListener('contextmenu', (e) => {
+    if (!navigator.clipboard) return;
+    e.preventDefault();
+    if (!copyTerminalSelection(term)) pasteIntoTerminal(id, term);
+  });
+
+  // Ctrl+Shift+C/V for the same two actions. Plain Ctrl+C and Ctrl+V are left
+  // to the terminal: they are SIGINT and a literal ^V, and the shell wants
+  // them.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey || e.altKey) return true;
+    const key = e.key.toLowerCase();
+    if (key === 'c') { copyTerminalSelection(term); return false; }
+    if (key === 'v') { pasteIntoTerminal(id, term); return false; }
+    return true;
+  });
 
   // Scrollback first, then the live output: both arrive as `{ data }` frames,
   // because a terminal emits raw control bytes SSE framing would eat.
@@ -1813,19 +2166,30 @@ function renderTermsChip() {
   }
 }
 
+// The sidebar section belongs to the project tab you are on: on "All" it lists
+// everything, on a project only the terminals opened in that folder. The chip in
+// the header stays global on purpose — it is the one place that answers "what is
+// still running anywhere?".
+function terminalsOfActiveProject() {
+  const act = (projState.active || '').toLowerCase();
+  if (!act) return terminals;
+  return terminals.filter((t) => (t.cwd || '').toLowerCase() === act);
+}
+
 function renderTerminals() {
   const list = $('termList');
-  const empty = terminals.length === 0;
+  const shown = terminalsOfActiveProject();
+  const empty = shown.length === 0;
   $('termLabel').classList.toggle('hide', empty);
   list.classList.toggle('hide', empty);
-  $('termCount').textContent = terminals.length;
+  $('termCount').textContent = shown.length;
   // a terminal the server no longer knows about has no process to talk to:
   // its instance goes with the row
   const alive = new Set(terminals.map((t) => t.id));
   const activeGone = activeTerminalId !== null && !alive.has(activeTerminalId);
   for (const id of [...termPanes.keys()]) if (!alive.has(id)) disposeTerminalPane(id);
   list.innerHTML = '';
-  for (const t of terminals) list.appendChild(terminalItemEl(t));
+  for (const t of shown) list.appendChild(terminalItemEl(t));
   renderTermsChip();
   if (activeGone) showChat();
 }
@@ -1858,15 +2222,20 @@ async function killTerminal(id) {
 }
 
 /* ---------------- web UI themes ---------------- */
+// the three swatches of each card are the palette's --bg, --panel-3 and --teal,
+// copied from the [data-theme] blocks in app.css: keep them in sync by hand
 const THEMES = [
-  { id: 'noir', name: 'Teal Noir', cols: ['#05070a', '#0e131b', '#2fe0c0'] },
-  { id: 'violet', name: 'Violet Dusk', cols: ['#07050d', '#120e22', '#a78bfa'] },
-  { id: 'ember', name: 'Ember', cols: ['#0a0705', '#17100b', '#fb923c'] },
-  { id: 'nord', name: 'Nord Ice', cols: ['#090e15', '#131e2b', '#7dd3fc'] },
-  { id: 'rose', name: 'Rosé', cols: ['#0c060f', '#1b1121', '#f472b6'] },
-  { id: 'graphite', name: 'Graphite', cols: ['#101010', '#252527', '#7dd3fc'] },
-  { id: 'daylight', name: 'Daylight (light)', cols: ['#f6f7f9', '#e3e7ee', '#0d9488'] },
+  { id: 'paseo', name: 'Paseo (light)', cols: ['#fdfaf6', '#f0e7da', '#d97757'] },
+  { id: 'noir', name: 'Teal Noir', cols: ['#0b0d11', '#232833', '#2fe0c0'] },
+  { id: 'violet', name: 'Violet Dusk', cols: ['#0b0814', '#292244', '#a78bfa'] },
+  { id: 'ember', name: 'Ember', cols: ['#0e0a06', '#302317', '#fb923c'] },
+  { id: 'nord', name: 'Nord Ice', cols: ['#0a0f17', '#243144', '#7dd3fc'] },
+  { id: 'rose', name: 'Rosé', cols: ['#0f0812', '#2f1f38', '#f472b6'] },
+  { id: 'graphite', name: 'Graphite', cols: ['#161616', '#303032', '#7dd3fc'] },
+  { id: 'daylight', name: 'Daylight (light)', cols: ['#ffffff', '#eaedf3', '#0d9488'] },
 ];
+// applied when localStorage has no theme yet; an already saved theme is left alone
+const DEFAULT_THEME = 'paseo';
 // accent override on top of any theme: only colours the themes already use
 const ACCENTS = [
   { id: '', name: 'Theme default', col: '' },
@@ -1886,12 +2255,12 @@ function applyAccent(id) {
 }
 applyAccent(localStorage.getItem('piAccent') || '');
 function applyTheme(id) {
-  document.documentElement.dataset.theme = THEMES.some((t) => t.id === id) ? id : 'noir';
+  document.documentElement.dataset.theme = THEMES.some((t) => t.id === id) ? id : DEFAULT_THEME;
   localStorage.setItem('piTheme', document.documentElement.dataset.theme);
   $$('.themeCard[data-t]').forEach((c) => c.classList.toggle('sel', c.dataset.t === document.documentElement.dataset.theme));
   refreshTerminalThemes();   // the open terminals follow the page
 }
-applyTheme(localStorage.getItem('piTheme') || 'noir');
+applyTheme(localStorage.getItem('piTheme') || DEFAULT_THEME);
 
 /* ---------------- views ---------------- */
 // settings page sections listed in the sidebar (in place of the chats)
@@ -2296,6 +2665,36 @@ async function renderSettings() {
           </div>
         </div>
       </div>
+
+      <h3 style="margin-top:1.2rem">Chat titles</h3>
+      <div class="card" style="padding:.9rem 1rem">
+        <div class="setRow">
+          <div>
+            <div class="k">titleGeneration <span class="badge">boolean</span></div>
+            <div class="d">The sidebar shows the first message of a chat, cut short. With this on, the title is summarized instead by <code>claude-haiku-4-5</code> using your pi subscription: the first message of the chat leaves your machine and the request is billed to your own quota. With it off nothing is ever sent and the cut stands.</div>
+            <div class="def">default: <code>off</code> — turning it on covers the chats you open from now on, never the ones already there</div>
+          </div>
+          <div class="ctl"><span class="sw" id="titleGenSw" role="switch" tabindex="0"></span></div>
+        </div>
+        <div id="titleGenDetails" class="hide" style="margin-top:.6rem">
+          <div class="row" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+            <button class="btn outline" id="titleGenBackfillBtn">Generate titles for the existing chats</button>
+            <span class="sys" id="titleGenMsg" style="flex:1 0 100%"></span>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin-top:1.2rem">Chat search</h3>
+      <div class="card" style="padding:.9rem 1rem">
+        <div class="setRow">
+          <div>
+            <div class="k">fullSearch <span class="badge">boolean</span></div>
+            <div class="d">Searching the words inside the messages reads the chat files one by one. By default the scan stops at the 300 most recent chats and says so; with this on it reads every chat you have, however long that takes.</div>
+            <div class="def">default: <code>off</code> — the 300 most recent chats per search</div>
+          </div>
+          <div class="ctl"><span class="sw" id="fullSearchSw" role="switch" tabindex="0"></span></div>
+        </div>
+      </div>
     </div>
 
     <div class="sec" id="sec-session">
@@ -2434,6 +2833,49 @@ async function renderSettings() {
     if (r.error) { $('chatArchivingMsg').textContent = r.error; return; }
     drawArchiving(r, `${r.archived} chats archived`);
     loadSessions();
+  });
+
+  /* ---- generated chat titles ---- */
+  let titleGen = false;
+  function drawTitleGen(cfg, msg = '') {
+    if (cfg.error) return;
+    titleGen = cfg.enabled === true;
+    $('titleGenSw').classList.toggle('on', titleGen);
+    // The backfill button lives behind the switch: turning the feature on is
+    // the first consent, clicking the button the second one.
+    $('titleGenDetails').classList.toggle('hide', !titleGen);
+    $('titleGenMsg').textContent = msg;
+  }
+  drawTitleGen(await api('/api/title-generation'));
+  const toggleTitleGen = async () => {
+    drawTitleGen(await sendJson('PUT', '/api/title-generation', { enabled: !titleGen }));
+  };
+  $('titleGenSw').addEventListener('click', toggleTitleGen);
+  $('titleGenSw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTitleGen(); }
+  });
+  $('titleGenBackfillBtn').addEventListener('click', async () => {
+    const r = await post('/api/title-generation/backfill');
+    if (r.error) { $('titleGenMsg').textContent = r.error; return; }
+    drawTitleGen(r, r.queued
+      ? `${r.queued} chats queued — their titles appear as the summaries come back`
+      : 'every chat already has a title');
+  });
+
+  /* ---- full chat search ---- */
+  let fullSearch = false;
+  function drawFullSearch(cfg) {
+    if (cfg.error) return;
+    fullSearch = cfg.enabled === true;
+    $('fullSearchSw').classList.toggle('on', fullSearch);
+  }
+  drawFullSearch(await api('/api/full-search'));
+  const toggleFullSearch = async () => {
+    drawFullSearch(await sendJson('PUT', '/api/full-search', { enabled: !fullSearch }));
+  };
+  $('fullSearchSw').addEventListener('click', toggleFullSearch);
+  $('fullSearchSw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFullSearch(); }
   });
 
   /* ---- usage credentials handlers ---- */
@@ -2784,6 +3226,7 @@ $('composer').addEventListener('submit', async (e) => {
   }
   if (text) bubble('user', text, body);
   input.value = ''; autoGrow();
+  stashComposerDraft(sessionKey);   // sent: nothing is pending on this chat any more
   pending = []; renderAttachments();
   scrollDown();
   const r = await post('/api/prompt', { text: payload, images });
@@ -2867,11 +3310,13 @@ $('lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox')
 const SHORTCUTS = [
   [['Ctrl', 'Enter'], 'Send the message'],
   [['Enter'], 'New line in the message'],
-  [['Shift', 'M'], 'Switch model (cycle)'],
-  [['Shift', 'T'], 'Switch reasoning level'],
-  [['Shift', 'P'], 'Switch project / folder'],
-  [['Shift', 'N'], 'New chat'],
-  [['Shift', 'S'], 'Open settings'],
+  [[MOD, 'M'], 'Switch model (cycle)'],
+  [[MOD, 'E'], 'Switch reasoning level'],
+  [[MOD, 'P'], 'Switch chat (sidebar order)'],
+  [[MOD, 'T'], 'Switch project tab'],
+  [[MOD, 'W'], 'Close project tab'],
+  [[MOD, 'N'], 'New chat'],
+  [[MOD, 'S'], 'Open settings'],
   [['/'], 'Command palette in the composer'],
   [['Ctrl', 'click'], 'Open a chat in a new tab'],
   [['Esc'], 'Close menu, image or panel'],
@@ -2911,17 +3356,21 @@ document.addEventListener('keydown', (e) => {
     if (input.value.trim() || pending.length) { e.preventDefault(); $('composer').requestSubmit(); }
     return;
   }
-  if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!hasMod(e)) return;
   const target = /** @type {any} */ (e.target);
   const tag = (target.tagName || '').toLowerCase();
   const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
-  if (typing) return; // do not steal Shift+letter while the user is typing
+  // Shift+letter types a capital letter, Ctrl+letter does not: only the browser
+  // binding has to keep its hands off the keyboard while you write.
+  if (typing && !IS_ELECTRON) return;
   switch (e.key.toLowerCase()) {
-    case 'm': e.preventDefault(); cycleModel(); break;      // Shift+M: cycle models
-    case 't': e.preventDefault(); cycleThinking(); break;   // Shift+T: cycle effort
-    case 'p': e.preventDefault(); cycleProject(); break;    // Shift+P: cycle projects
-    case 's': e.preventDefault(); showSettings(); break;    // Shift+S: settings
-    case 'n': e.preventDefault(); newChat(); break;         // Shift+N: new chat
+    case 'm': e.preventDefault(); cycleModel(); break;          // cycle models
+    case 'e': e.preventDefault(); cycleThinking(); break;       // cycle effort
+    case 'p': e.preventDefault(); cycleChat(); break;           // cycle sidebar chats
+    case 't': e.preventDefault(); cycleProjTab(); break;        // cycle project tabs
+    case 'w': e.preventDefault(); closeCurrentProjTab(); break; // close project tab
+    case 's': e.preventDefault(); showSettings(); break;        // settings
+    case 'n': e.preventDefault(); newChat(); break;             // new chat
   }
 });
 $('abort').addEventListener('click', () => post('/api/abort'));
@@ -2989,6 +3438,7 @@ async function refreshGit() {
 }
 function renderGit() {
   const chip = $('gitChip');
+  renderTray(); // the tray shows the same branch, also when there is no repo
   if (!gitInfo?.repo) { chip.classList.add('hide'); return; }
   chip.classList.remove('hide');
   $('gitBranch').textContent = gitInfo.branch;

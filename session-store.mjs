@@ -304,6 +304,71 @@ export async function runFirstRunArchiving() {
   }
 }
 
+// ---- title generation (opt-in feature, off by default) ---------------------
+// Summarizing a chat's first message sends it to Anthropic and spends the
+// user's own quota, so the switch starts off and nothing here is retroactive:
+// `enabledAt` is the instant it was last turned on, and titles.mjs only queues
+// chats created after it. The chats that already exist are summarized on an
+// explicit click, never as a side effect of listing them.
+const TITLE_GENERATION_PATH = path.join(AGENT_DIR, "web-ui-title-generation.json");
+const defaultTitleGeneration = () => ({ enabled: false, enabledAt: null });
+const titleGenerationStore = jsonFile(TITLE_GENERATION_PATH, {
+  fallback: defaultTitleGeneration,
+  revive: (raw) =>
+    raw && typeof raw === "object"
+      ? {
+          // `=== true` and not `!== false`: a corrupt file must not turn a paid
+          // feature on.
+          enabled: raw.enabled === true,
+          enabledAt: typeof raw.enabledAt === "string" ? raw.enabledAt : null,
+        }
+      : undefined,
+});
+let titleGeneration = defaultTitleGeneration();
+async function loadTitleGeneration() {
+  titleGeneration = await titleGenerationStore.load();
+}
+// A copy, like archivingState: this is the body of /api/title-generation.
+export const titleGenerationState = () => ({ ...titleGeneration });
+export const isTitleGenerationEnabled = () => titleGeneration.enabled;
+/** When the toggle was last switched on, in ms, or null while it is off. */
+export function titleGenerationEnabledAt() {
+  if (!titleGeneration.enabled || !titleGeneration.enabledAt) return null;
+  const at = Date.parse(titleGeneration.enabledAt);
+  return Number.isFinite(at) ? at : null;
+}
+export async function setTitleGenerationEnabled(enabled) {
+  // The instant is stamped on the off -> on transition only: turning the switch
+  // on twice must not push the boundary forward over the chats it already covers.
+  if (enabled && !titleGeneration.enabled) titleGeneration.enabledAt = new Date().toISOString();
+  titleGeneration.enabled = enabled;
+  await titleGenerationStore.save(titleGeneration);
+}
+
+// ---- deep search budget (opt-out cap, capped by default) -------------------
+// A search reads chat files one by one, so a query typed in a box can ask the
+// disk for every session on the machine. The scan stops at the most recent
+// SEARCH_MAX_FILES chats unless the user asks for the complete one here: the
+// switch buys thoroughness with time, and that is the user's call, not ours.
+const FULL_SEARCH_PATH = path.join(AGENT_DIR, "web-ui-full-search.json");
+const defaultFullSearch = () => ({ enabled: false });
+const fullSearchStore = jsonFile(FULL_SEARCH_PATH, {
+  fallback: defaultFullSearch,
+  // `=== true`, like title generation: a corrupt file must not lift the cap.
+  revive: (raw) => (raw && typeof raw === "object" ? { enabled: raw.enabled === true } : undefined),
+});
+let fullSearch = defaultFullSearch();
+async function loadFullSearch() {
+  fullSearch = await fullSearchStore.load();
+}
+// A copy, like archivingState: this is the body of /api/full-search.
+export const fullSearchState = () => ({ ...fullSearch });
+export const isFullSearchEnabled = () => fullSearch.enabled;
+export async function setFullSearchEnabled(enabled) {
+  fullSearch.enabled = enabled;
+  await fullSearchStore.save(fullSearch);
+}
+
 // ---- recent working directories (quick picker in the cwd dropdown) ---------
 // Most-recent-first, deduplicated, capped: the point is one click to go back to
 // a folder you already used, not a full history.
@@ -335,7 +400,14 @@ export async function forgetCwd(dir) {
 // Every store this module owns, read once at boot. The network store loads
 // separately (see network.mjs): it is the only one whose content is a secret.
 export async function loadPersistedState() {
-  await Promise.all([loadFavorites(), loadSessionStatus(), loadArchiving(), loadRecentCwds()]);
+  await Promise.all([
+    loadFavorites(),
+    loadSessionStatus(),
+    loadArchiving(),
+    loadTitleGeneration(),
+    loadFullSearch(),
+    loadRecentCwds(),
+  ]);
 }
 
 // ---- pi settings (settings.json + the schema documenting it) ---------------
@@ -433,10 +505,8 @@ export const SESSIONS_DIR = path.join(AGENT_DIR, "sessions");
 
 // Yield one parsed JSON record per line, without loading the file in memory.
 export async function* readSessionRecords(file) {
-  const rl = readline.createInterface({
-    input: createReadStream(file, "utf8"),
-    crlfDelay: Infinity,
-  });
+  const input = createReadStream(file, "utf8");
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
@@ -448,6 +518,11 @@ export async function* readSessionRecords(file) {
     }
   } finally {
     rl.close();
+    // Closing the interface does not close the file: a caller that stops
+    // reading early (the deep search abandons a chat as soon as it matches,
+    // sessionCwd reads only the header) would leave the descriptor open until
+    // the garbage collector got to it. Read to the end, this is a no-op.
+    input.destroy();
   }
 }
 

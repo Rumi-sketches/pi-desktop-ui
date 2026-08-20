@@ -9,6 +9,7 @@
  * the live session too, so it takes the tab's key like a chat endpoint does.
  */
 import path from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { PRODUCT_ID } from "./product.mjs";
 import { platformCapabilities } from "./platform.mjs";
 import { provesSameOrigin } from "./access-control.mjs";
@@ -19,14 +20,19 @@ import {
   agentJsonFile,
   archiveStaleChats,
   archivingState,
+  fullSearchState,
   getPath,
   readSettingsFile,
   redactSecrets,
   saveSettingsFile,
   setArchivingEnabled,
+  setFullSearchEnabled,
   setPath,
+  setTitleGenerationEnabled,
   settingsSchema,
+  titleGenerationState,
 } from "./session-store.mjs";
+import { queueMissingTitles } from "./titles.mjs";
 import {
   availableModels,
   broadcastGlobal,
@@ -303,6 +309,39 @@ export async function handleSweepArchive({ res }) {
   const archived = await archiveStaleChats();
   broadcastGlobal({ kind: "sessions" });
   return send(res, 200, { ...archivingState(), archived });
+}
+
+export async function handleGetTitleGeneration({ res }) {
+  return send(res, 200, titleGenerationState());
+}
+
+export async function handleSetTitleGeneration({ req, res }) {
+  const { enabled } = await jsonBody(req);
+  if (typeof enabled !== "boolean") return send(res, 400, { error: "enabled must be a boolean" });
+  await setTitleGenerationEnabled(enabled);
+  return send(res, 200, titleGenerationState());
+}
+
+// The retroactive sweep, like /api/archiving/sweep: its own route because it is
+// its own decision. Switching the feature on covers the chats to come; this is
+// the click that covers the ones already there, and it is the only thing that
+// summarizes them.
+export async function handleBackfillTitles({ res }) {
+  const queued = await queueMissingTitles(await SessionManager.listAll());
+  return send(res, 200, { ...titleGenerationState(), queued });
+}
+
+// The cap on the deep search is the default; this is the switch that lifts it.
+// Its own route, like the other two toggles: one file, one decision.
+export async function handleGetFullSearch({ res }) {
+  return send(res, 200, fullSearchState());
+}
+
+export async function handleSetFullSearch({ req, res }) {
+  const { enabled } = await jsonBody(req);
+  if (typeof enabled !== "boolean") return send(res, 400, { error: "enabled must be a boolean" });
+  await setFullSearchEnabled(enabled);
+  return send(res, 200, fullSearchState());
 }
 
 export async function handleGetNetwork({ res }) {

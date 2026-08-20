@@ -77,8 +77,11 @@ npm run app
 A window opens on the same UI, and that is the whole app: the server runs *inside* the Electron
 process, so closing the window shuts it down — no stray server left behind, nothing to `Ctrl+C`.
 
-- The server takes an **ephemeral port on loopback**, so the app and a `npm start` session on 3777
-  can be open side by side without fighting over the port or the agent's state files.
+- The server takes **port 3778 on loopback** (the CLI's 3777 plus one), so the app and a `npm start`
+  session can be open side by side without fighting over the port or the agent's state files. The
+  port is fixed, not ephemeral, because the page origin is what the UI's saved settings hang on: a
+  new port at every launch would mean an empty `localStorage` and filters, theme and tabs back to
+  their defaults. Busy port → the app still opens, on an ephemeral one.
 - **One instance:** launching it again brings the existing window to the front.
 - **Links out** (docs, provider pages) open in your system browser; the window itself never leaves
   the local server.
@@ -131,7 +134,7 @@ PORT=3778 npm start
 - **Real account limits** for claude.ai and kimi.com, if you store those credentials.
 - **Native helpers**: folder picker, reveal the working folder in the file manager, open a terminal
   there.
-- **Six themes**, light and dark.
+- **Eight themes**, light and dark, plus an accent colour that applies over any of them.
 - **Offline friendly**: libraries and fonts are served locally, nothing is fetched from a CDN.
 
 ## Security and network access
