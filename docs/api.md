@@ -50,6 +50,7 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | Route | Request | Response | Errors |
 | --- | --- | --- | --- |
 | `GET /api/sessions` *[s]* | `?scope=cwd` (default) or `?scope=all` | `{ current, cwd, scope, running[], open[], sessions[] }` | – |
+| `GET /api/search` *[s]* | `?q=<words>` · `?scope=cwd` (default) or `?scope=all` | `{ query, scope, cwd, scanned, capped, truncated, sessions[] }` — chats whose *messages* contain every word of `q`, entries shaped like `/api/sessions`, 50 most recent at most; the scan itself stops at the 300 most recent chats unless `/api/full-search` is on, and `truncated` reports either cap | `400` `missing_query` |
 | `POST /api/sessions` *[s]* | – | `{ ok, key, cwd, running }` for a new chat in the tab's folder | – |
 | `POST /api/sessions/activate` *[s]* | – | `{ ok, key, cwd, running }` for the most recent chat of that folder | – |
 | `POST /api/sessions/:id/activate` *[s]* | `:id` = session file, url-encoded; `{ cwd? }` | `{ ok, key, cwd, running }` | `400` id unresolvable or outside the sessions directory |
@@ -66,6 +67,11 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `GET /api/archiving` | – | `{ enabled, lastSweep }` | – |
 | `PUT /api/archiving` | `{ enabled }` | archiving state | `400` `enabled` is not a boolean |
 | `POST /api/archiving/sweep` | – | archiving state plus `archived` (chats idle for more than 24h) | – |
+| `GET /api/title-generation` | – | `{ enabled, enabledAt }` — the switch in front of the summarized sidebar titles, off by default | – |
+| `PUT /api/title-generation` | `{ enabled }` | title generation state; switching it on covers the chats created from that instant on, never the older ones | `400` `enabled` is not a boolean |
+| `POST /api/title-generation/backfill` | – | title generation state plus `queued` — the explicit click that summarizes the chats already there | – |
+| `GET /api/full-search` | – | `{ enabled }` — off by default: the deep search reads the 300 most recent chats only | – |
+| `PUT /api/full-search` | `{ enabled }` | full search state; on, the scan covers every chat, however long it takes | `400` `enabled` is not a boolean |
 
 ## Settings, network and usage
 

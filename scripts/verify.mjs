@@ -93,6 +93,25 @@ async function checkApiDocumented() {
   return table.size;
 }
 
+// The desktop app must boot on a FIXED loopback port. Everything the UI
+// remembers (filters, sort, grouping, theme, project tabs, sidebar width) lives
+// in localStorage, which the browser engine keys by ORIGIN: back on an
+// ephemeral port, every launch would open a brand-new empty store and the
+// settings would silently reset themselves. Read as text — importing the
+// Electron entry here would need Electron itself.
+async function checkDesktopPortIsFixed() {
+  const source = await readFile(path.join(ROOT, "electron", "main.mjs"), "utf8");
+  const first = /startServer\(\{\s*port:\s*([^,\s]+)/.exec(source);
+  if (!first) throw new Error("no startServer({ port: … }) call found in electron/main.mjs");
+  if (first[1] === "0") {
+    throw new Error("electron/main.mjs boots on an ephemeral port: the UI's saved settings would reset at every launch");
+  }
+  if (!source.includes("DESKTOP_PORT")) {
+    throw new Error("electron/main.mjs no longer names DESKTOP_PORT: the fixed port is what keeps the page origin stable");
+  }
+  return first[1];
+}
+
 async function checkSyntax() {
   const files = await collectFiles(ROOT, (name) => name.endsWith(".mjs"));
   const failures = [];
@@ -483,6 +502,8 @@ async function main() {
   console.log(`✓ naming: no retired product name in ${named} source file(s)`);
   const routes = await checkApiDocumented();
   console.log(`✓ api docs: ${routes} route(s) in server.mjs match docs/api.md`);
+  const desktopPort = await checkDesktopPortIsFixed();
+  console.log(`✓ desktop: the app boots on a fixed port (${desktopPort}), so localStorage survives a restart`);
   await runLint();
   console.log("✓ lint: eslint passed");
   await runTypeCheck();

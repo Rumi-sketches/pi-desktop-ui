@@ -250,6 +250,42 @@ describe("the archiving routes", () => {
   });
 });
 
+// The switch in front of the only feature that spends the user's quota. The
+// default is the whole point of it, so it is the first thing asserted.
+describe("the title generation routes", () => {
+  test("GET answers the state, and it starts off", async () => {
+    const { status, body } = await getJson("/api/title-generation");
+    assert.equal(status, 200);
+    assert.deepEqual(Object.keys(body).sort(), ["enabled", "enabledAt"]);
+    assert.equal(body.enabled, false);
+    assert.equal(body.enabledAt, null);
+  });
+
+  test("PUT { enabled } toggles it and stamps when it was switched on", async () => {
+    const on = await sendJson("PUT", "/api/title-generation", { enabled: true });
+    assert.equal(on.status, 200);
+    assert.equal(on.body.enabled, true);
+    assert.equal(typeof on.body.enabledAt, "string");
+    assert.equal((await getJson("/api/title-generation")).body.enabled, true);
+
+    const off = await sendJson("PUT", "/api/title-generation", { enabled: false });
+    assert.equal(off.body.enabled, false);
+  });
+
+  test("POST /backfill answers how many chats it queued", async () => {
+    const { status, body } = await postJson("/api/title-generation/backfill");
+    assert.equal(status, 200);
+    assert.deepEqual(Object.keys(body).sort(), ["enabled", "enabledAt", "queued"]);
+    assert.equal(typeof body.queued, "number");
+  });
+
+  test("a non-boolean enabled is a 400, like the archiving toggle", async () => {
+    const { status, body } = await sendJson("PUT", "/api/title-generation", { enabled: "yes" });
+    assert.equal(status, 400);
+    assert.match(body.error, /enabled must be a boolean/);
+  });
+});
+
 describe("the usage credentials route", () => {
   test("DELETE /api/usage/credentials/:provider reports the state of both providers", async () => {
     const { status, body } = await sendJson("DELETE", "/api/usage/credentials/kimi");

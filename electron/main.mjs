@@ -1,5 +1,5 @@
-// pi-desktop-ui main process: boots the embedded server on an ephemeral
-// loopback port and shows the very same page `npm start` serves, this time in a
+// pi-desktop-ui main process: boots the embedded server on a loopback port of
+// its own and shows the very same page `npm start` serves, this time in a
 // window of its own. No bundler and no preload script: the UI keeps talking to
 // the server over HTTP, so nothing about it has to know it lives in Electron.
 //
@@ -7,11 +7,12 @@
 // is what makes "close the window, the server is gone" true by construction:
 // there is no second process left to orphan.
 
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, Menu, dialog, shell } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startServer } from "../server.mjs";
+import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -31,7 +32,6 @@ const errorMessage = (err) => err?.message ?? String(err);
 // The running server, or null before boot and once it has been released.
 let running = null;
 // Origin the windows are allowed to stay in; anything else is the web at large.
-// It changes at every restart, because the port is ephemeral.
 let serverOrigin = null;
 // In-flight restart, so a second click cannot start one on top of another.
 let restarting = null;
@@ -55,11 +55,22 @@ async function releaseServer() {
   }
 }
 
-// Port 0: the OS picks a free one, so a session started from the terminal on
-// the default port and the desktop app can coexist. The host is left to the
-// server, which binds every interface when LAN access is on.
+// A port of its own, next to the CLI's: the desktop app and a session started
+// from the terminal on the default port coexist, and the app keeps the SAME
+// origin at every launch. That last part is not cosmetic — everything the UI
+// remembers (filters, sort, grouping, theme, project tabs, sidebar width) lives
+// in localStorage, which the browser engine keys BY ORIGIN: an ephemeral port
+// meant a brand-new empty store at every start, i.e. settings that reset
+// themselves. If the port is taken by something else we still start, on an
+// ephemeral one, rather than refusing to open.
+const DESKTOP_PORT = DEFAULT_PORT + 1;
 async function launchServer() {
-  running = await startServer({ port: 0, onRestart: requestRestart });
+  try {
+    running = await startServer({ port: DESKTOP_PORT, onRestart: requestRestart });
+  } catch (err) {
+    console.warn(`${PRODUCT_ID}: port ${DESKTOP_PORT} is not free (${errorMessage(err)}), falling back to an ephemeral one — saved UI settings will not be found`);
+    running = await startServer({ port: 0, onRestart: requestRestart });
+  }
   serverOrigin = new URL(running.url).origin;
   return running.url;
 }
@@ -167,6 +178,14 @@ function focusExistingWindow() {
   win.focus();
 }
 
+// The default menu binds Ctrl+W to "close window" and eats the key before the
+// page ever sees it; in the app Ctrl+W closes the *project tab*, and only quits
+// when there is none left. Editing and view roles are kept — losing them would
+// cost copy/paste, reload and the devtools.
+function installMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "editMenu" }, { role: "viewMenu" }]));
+}
+
 async function boot() {
   let url;
   try {
@@ -175,6 +194,7 @@ async function boot() {
     fail("The server did not start.", err);
     return;
   }
+  installMenu();
   loadInto(new BrowserWindow(windowOptions()), url);
 }
 

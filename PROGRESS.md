@@ -47,6 +47,23 @@ Turning the web UI into a desktop app, without giving up the terminal + browser 
   network. There is no cap on how many can be open: a chip in the header counts the running ones and
   its popover lists them, one click to jump to a terminal or close it.
 
+- **A draft chat keeps its identity.** The first message creates the session file, and the context
+  now moves from `draft:<cwd>` to that path (`rekey` event to the tab, alias for the requests in
+  flight): the chat shows up in the sidebar, already marked as the active one, instead of appearing
+  only after a detour through another chat. Changing folder follows the key the server answers with.
+- **The sidebar drives the view.** Project tab, filters, sort and grouping all land on the first
+  chat of the list they produce, or on the new-chat screen when it is empty; a new chat opened with
+  a project tab active is born in that project's folder. Toasts moved to the top right, unsent
+  composer text is parked per chat instead of following the tab, and "Chat finished" now needs a run
+  this page actually saw start, with the chat's title (clipped) instead of its whole first message.
+- **The desktop app has a port of its own (3778), not an ephemeral one.** The page origin is what
+  `localStorage` is keyed by, so a fresh port at every launch handed the UI an empty store: filters,
+  sort, grouping, theme and project tabs reset themselves at every start. The proof was on disk —
+  fifteen `http://127.0.0.1:<random>` origins in the Local Storage LevelDB, each with its own copy
+  of the settings. Verified by launching the app twice against a throwaway profile: the filter, the
+  sort and the project tabs come back. Busy port → ephemeral fallback, with a warning; a check in
+  `npm run verify` keeps the port from going back to 0.
+
 **Not done, on purpose**
 
 - No installer and no packaging (`electron-builder` & co.): the app runs from the clone with

@@ -111,6 +111,34 @@ const contexts = new Map();
 // there.
 const draftKey = (cwd) => `draft:${cwd}`;
 
+// A draft becomes a real chat on its first message: the SDK writes the session
+// file and only then does the chat have an identity. Until we move the context
+// from `draft:<cwd>` to that path it stays invisible to everything keyed by
+// file — the sidebar's active row, the status store, a second tab opening the
+// same chat — and the next "New chat" in the same folder would reuse this
+// context, messages and all. Called on every message_end; a no-op once done.
+// `draft:<cwd>` a tab may still be sending -> the context that draft became.
+// It covers the round-trips already in flight when the chat got its file.
+const adoptedDrafts = new Map();
+function adoptSessionFile(ctx) {
+  if (ctx.sessionFile) return;
+  const file = ctx.session.sessionManager?.getSessionFile?.() ?? null;
+  if (!file) return;
+  // Another context already owns that file (rare: the same chat opened
+  // elsewhere): leave the map alone rather than overwrite a live context.
+  if (contexts.get(file) && contexts.get(file) !== ctx) return;
+  const draft = ctx.key;
+  contexts.delete(draft);
+  ctx.sessionFile = file;
+  ctx.key = file;
+  contexts.set(file, ctx);
+  adoptedDrafts.set(draft, file);
+  // The tab is still sending `draft:<cwd>` as `?s=`: tell it its chat has a
+  // name now. Its own SSE stream is untouched (same context object), so this
+  // must not be an `attached` event — the client would reset the turn state.
+  broadcast(ctx, { kind: "rekey", key: ctx.key, cwd: ctx.cwd });
+}
+
 // server-wide cumulative counters (all chats)
 export const totals = { input: 0, output: 0, cost: 0, requests: 0 };
 
@@ -371,9 +399,11 @@ function wireSession(ctx) {
         const message = event.message.errorMessage ?? (stop === "aborted" ? "Response interrupted" : "Unknown provider error");
         broadcast(ctx, { kind: "error", message, aborted: stop === "aborted" });
       }
-      // a brand-new chat only becomes a persisted file on its first message: the
-      // sidebar (this tab and any other) needs to re-list to pick it up, plus
-      // this keeps name/preview/modified date fresh on every turn
+      // a brand-new chat only becomes a persisted file on its first message:
+      // adopt that file as the context's identity, then let the sidebar (this
+      // tab and any other) re-list to pick it up — this also keeps
+      // name/preview/modified date fresh on every turn
+      adoptSessionFile(ctx);
       broadcastGlobal({ kind: "sessions" });
     } else if (event.type === "agent_start") {
       ctx.running = true;
@@ -525,7 +555,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
 // the most recent chat of the default folder.
 export async function useContext(key) {
   if (key) {
-    const known = contexts.get(key);
+    const known = contexts.get(key) ?? contexts.get(adoptedDrafts.get(key));
     if (known) {
       known.lastActive = Date.now();
       return known;
@@ -551,6 +581,7 @@ function disposeContext(ctx) {
     console.warn(`${PRODUCT_ID}: disposing the session of ${ctx.key} failed: ${err?.message ?? err}`);
   }
   contexts.delete(ctx.key);
+  for (const [draft, key] of adoptedDrafts) if (key === ctx.key) adoptedDrafts.delete(draft);
 }
 
 // Idle contexts are dropped after a while, but only if nobody is watching them
