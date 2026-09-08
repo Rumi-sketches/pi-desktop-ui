@@ -430,6 +430,26 @@ header .spacer { flex: 1 1 auto; min-width: 0; }
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--txt); font-weight: var(--w-semi);
 }
+#mainHeader:not([data-view="chat"]) > .crumb,
+#mainHeader:not([data-view="chat"]) > #gitChip,
+#mainHeader:not([data-view="chat"]) > .spacer,
+#mainHeader:not([data-view="chat"]) > #runState,
+#mainHeader:not([data-view="chat"]) > #ctxBar,
+#mainHeader:not([data-view="chat"]) > #statsDd { display: none !important; }
+#mainHeader[data-view="terminal"] > #termsDd { display: none !important; }
+#terminalHeader { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: .45rem; }
+.terminalIdentity { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+.terminalGlyph { flex: none; color: var(--teal); }
+.terminalFolder { color: var(--txt); font-size: var(--fs-sm); font-weight: var(--w-semi); white-space: nowrap; }
+.terminalPath {
+  min-width: 0; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--faint); font: var(--w-normal) 11px var(--font-mono); user-select: text;
+}
+#terminalHeader .terminalKind, #terminalHeader .terminalStatus { flex: none; }
+#terminalHeader .terminalStatus.running { border-color: var(--accent-line); color: var(--teal); }
+#terminalHeader .terminalStatus.exited { border-color: var(--warn-dim); color: var(--warn); }
+#terminalHeader .terminalAction { flex: none; padding: .3rem .6rem; font-size: var(--fs-xs); }
+#terminalHeader .terminalAction:disabled { opacity: .45; cursor: default; }
 #stats { font: var(--w-normal) 11.5px var(--font-mono); color: var(--faint); white-space: nowrap; }
 button#stats { cursor: pointer; padding: .2rem .45rem; border-radius: var(--r-2); border: 1px solid transparent; }
 button#stats:hover { color: var(--txt); background: var(--panel-3); }
@@ -486,8 +506,8 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); animation: pulse 1.1s infinite; flex: none; }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
 
-/* ---------- account usage dot (claude.ai / kimi.com real limits, in composer) ----------
-   one small ring = the short rolling window (5h); the full breakdown lives in
+/* ---------- account usage dot (provider limits, in composer) ----------------
+   one small ring = the shortest returned window; the full breakdown lives in
    the popover, so the bar stays quiet until you ask for it */
 #usageDot { display: none; position: relative; width: 26px; height: 26px; margin-right: .5rem; border-radius: var(--r-2); place-items: center; }
 #usageDot.show { display: grid; }
@@ -498,6 +518,7 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 #usageDot.warn .fill { stroke: var(--warn); }
 #usageDot.crit .fill { stroke: var(--crit); }
 #usageDot.err .fill { stroke: var(--crit); }
+#usageDot.disabled .fill { stroke: var(--faint); }
 .usagePop {
   position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 50; min-width: 236px; padding: .5rem;
   background: var(--panel-2); border: 1px solid var(--line-2); border-radius: var(--r-4);
@@ -514,6 +535,12 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .uRow .v { font: 400 10.5px var(--font-mono); color: var(--txt); min-width: 30px; text-align: right; }
 .uRow .rs { font: 400 10px var(--font-mono); color: var(--faint); min-width: 46px; text-align: right; }
 .usagePop .err { color: var(--crit); font-size: .76rem; padding: .3rem .35rem; }
+.usagePop .note { color: var(--txt-dim); font-size: .76rem; padding: .3rem .35rem; }
+.usagePop .usageRefresh {
+  width: calc(100% - .7rem); margin: .35rem; padding: .3rem .45rem; border: 1px solid var(--line-2);
+  border-radius: var(--r-2); background: transparent; color: var(--txt-dim); font-size: .72rem; cursor: pointer;
+}
+.usagePop .usageRefresh:hover { color: var(--txt); border-color: var(--teal); }
 .usagePop .foot {
   border-top: 1px solid var(--line); margin-top: .3rem; padding: .4rem .35rem .15rem;
   font-size: .71rem; color: var(--faint); display: flex; justify-content: space-between; gap: .6rem;
@@ -549,14 +576,19 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .dd-item .desc, .dd-item .sub { font-size: .71rem; color: var(--faint); }
 .dd-item .sub { margin-left: auto; }
 .logo { width: 17px; height: 17px; border-radius: var(--r-1); flex-shrink: 0; display: grid; place-items: center; overflow: hidden; }
-.logo svg { width: 17px; height: 17px; }
-.logo.lg, .logo.lg svg { width: 23px; height: 23px; border-radius: var(--r-2); }
-/* monochrome logo theme: same glyph, no brand colours */
-/* .logo.fixed = previews inside the picker cards: they stay as they are, they
-   exist to show the difference between the two options and do not follow the
-   active theme */
-[data-logo="mono"] .logo:not(.fixed) { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+.logo-mark { width: 100%; height: 100%; display: grid; place-items: center; }
+.logo svg { display: block; width: 100%; height: 100%; }
+.logo.lg { width: 23px; height: 23px; border-radius: var(--r-2); }
+.logo-neutral { display: none; }
+/* Official marks are never recolored. A restricted mark is replaced wholesale
+   by the neutral symbol in mono mode. `.fixed` previews ignore the active mode;
+   the mono card below still demonstrates the replacement explicitly. */
+[data-logo="mono"] .logo:not(.fixed),
 .logoStyleCard[data-l="mono"] .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+[data-logo="mono"] .logo:not(.fixed)[data-mono="neutral"] .logo-brand,
+.logoStyleCard[data-l="mono"] .logo[data-mono="neutral"] .logo-brand { display: none; }
+[data-logo="mono"] .logo:not(.fixed)[data-mono="neutral"] .logo-neutral,
+.logoStyleCard[data-l="mono"] .logo[data-mono="neutral"] .logo-neutral { display: grid; }
 
 /* model submenu: providers on the left, models in a side flyout */
 .dd-sub { position: relative; }
@@ -644,6 +676,45 @@ body.sb-closed #chat { max-width: 1100px; }
   border-radius: var(--r-2); border: 1px solid var(--line-2); cursor: zoom-in; transition: border-color .12s;
 }
 .media img:hover { border-color: var(--teal); }
+/* Pending prompts remain server-owned. They sit below the response that is
+   growing, and become ordinary user turns only when a dispatch event names
+   their opaque id. */
+.queuedPrompts { display: flex; flex-direction: column; gap: .45rem; margin-top: -.2rem; }
+.queuedCaption {
+  color: var(--txt-faint); font-size: .63rem; text-transform: uppercase;
+  letter-spacing: .1em; text-align: right;
+}
+.queuedPrompt { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: .5rem; margin-left: auto; width: min(76%, 720px); opacity: .9; }
+.queueOrder {
+  display: grid; place-items: center; width: 27px; height: 27px; border: 1px dashed var(--line-2);
+  border-radius: 50%; color: var(--faint); font: 11px var(--font-mono);
+}
+.queueBubble {
+  min-width: 0; padding: .5rem .7rem; border: 1px dashed var(--line-2); border-radius: var(--r-4);
+  background: color-mix(in srgb, var(--panel-3) 62%, transparent); color: var(--txt-dim);
+  line-height: 1.45; white-space: pre-wrap;
+}
+.queuedPrompt[data-type="steer"] .queueBubble { border-color: var(--accent-line); }
+.queueType {
+  display: inline-flex; margin-right: .35rem; padding: .1rem .38rem; border-radius: var(--r-pill);
+  background: var(--teal-dim); color: var(--teal); font: var(--w-semi) .63rem var(--font-ui);
+}
+.queuedPrompt[data-type="followUp"] .queueType { background: var(--panel-2); color: var(--txt-dim); }
+.queueAttachment { color: var(--faint); font-size: .7rem; white-space: nowrap; }
+.queueRemove {
+  width: 27px; height: 27px; display: grid; place-items: center; border-radius: var(--r-2);
+  color: var(--faint); font-size: 1rem;
+}
+.queueRemove:hover { color: var(--crit); background: var(--danger-bg); }
+.turn.user.queuedDelivered .queueType { align-self: flex-start; margin: 0 0 .25rem; }
+/* Skill bodies are model input, not transcript content. Both the optimistic
+   turn and refreshed history render this same compact semantic invocation. */
+.skillInvocation { display: flex; align-items: baseline; gap: .45rem; }
+.skillName {
+  flex: none; color: var(--teal); font: var(--w-semi) .75rem var(--font-mono);
+}
+.skillArguments { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* hover toolbar under each turn: copy the message / fork a new chat from here */
 .msgActions { display: flex; gap: .25rem; margin-top: .3rem; opacity: 0; transition: opacity .12s; }
 .turn:hover .msgActions, .turn:focus-within .msgActions { opacity: 1; }
@@ -694,6 +765,11 @@ body.sb-closed #chat { max-width: 1100px; }
 
 /* ---------- composer ---------- */
 #composerWrap { padding: 0 1.2rem .9rem; }
+#responseSpinner {
+  width: 15px; height: 15px; margin: 0 auto .55rem; border: 2px solid var(--line-2);
+  border-top-color: var(--teal); border-radius: 50%; animation: responseSpin .75s linear infinite;
+}
+@keyframes responseSpin { to { transform: rotate(360deg); } }
 #composer {
   position: relative; z-index: 2; max-width: 900px; margin: 0 auto; padding: .8rem .9rem .5rem; border-radius: var(--r-4);
   background: var(--composer-bg); border: 1px solid var(--line-2);
@@ -754,6 +830,14 @@ body.sb-closed #chatView.hero #checkoutTray { max-width: 1048px; }
 .dd.up .dd-menu { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; }
 /* primary action: circular, filled with the accent */
 #sendBtn { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+#queueActions { display: flex; align-items: center; gap: .35rem; }
+.queueAction {
+  min-height: 34px; padding: .35rem .65rem; border: 1px solid var(--accent-line);
+  border-radius: var(--r-2); background: var(--teal-dim); color: var(--teal);
+  font-size: var(--fs-sm); font-weight: var(--w-semi);
+}
+.queueAction.follow-up { border-color: var(--line-2); background: var(--panel-3); color: var(--txt-dim); }
+.queueAction:hover { filter: brightness(1.12); }
 #attachments { display: flex; gap: .5rem; flex-wrap: wrap; padding: .1rem 0 .45rem; }
 #attachments:empty { display: none; }
 .thumb { position: relative; }

@@ -1,5 +1,24 @@
 // Page logic of pi desktop ui, extracted from index.html so the page can ship
 // a CSP without 'unsafe-inline'. ES module: it runs deferred, after parsing.
+import {
+  RESPONSE_IDLE,
+  RESPONSE_TEXT,
+  RESPONSE_WAITING,
+  VIEW_CHAT,
+  VIEW_SETTINGS,
+  VIEW_TERMINAL,
+  createUiState,
+  projectTabId,
+} from './ui-state.js';
+import { createChatCache } from './chat-cache.js';
+import {
+  chatHeaderState,
+  createNavigationController,
+  createNavigationSynchronizer,
+  terminalHeaderState,
+} from './navigation.js';
+import { createTransport } from './transport.js';
+import { providerIconHtml } from './provider-icons.js';
 
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
 // scripts and land on `window` with no declarations of their own. One untyped
@@ -18,7 +37,59 @@ const $ = (id) => document.getElementById(id);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const chat = $('chat'), chatWrap = $('chatWrap');
 let currentAssistant = null, currentThinking = null, currentTurn = null;
-const state = { cwd: '', model: null, thinking: 'off', thinkingLevels: ['off'], streaming: false, turnModel: null };
+
+/* Text drafts survive a reload in sessionStorage. The bounded cache owns the
+   live composer and view state; its persistence adapter deliberately receives
+   only text, never attachment payloads. */
+let persistedComposerDrafts = {};
+try { persistedComposerDrafts = JSON.parse(sessionStorage.getItem('piComposerDrafts') || '{}'); } catch {}
+function savePersistedComposerDrafts() {
+  try { sessionStorage.setItem('piComposerDrafts', JSON.stringify(persistedComposerDrafts)); } catch {}
+}
+const chatCache = createChatCache({
+  loadDraft: (key) => persistedComposerDrafts[key] ?? '',
+  saveDraft: (key, draft) => {
+    persistedComposerDrafts[key] = draft;
+    savePersistedComposerDrafts();
+  },
+  removeDraft: (key) => {
+    delete persistedComposerDrafts[key];
+    savePersistedComposerDrafts();
+  },
+});
+const uiState = createUiState({ chatCache });
+const navigation = createNavigationController({
+  state: uiState,
+  isAvailable: isNavigationSelectionAvailable,
+  onTransition: renderNavigationSelection,
+});
+const transport = createTransport({
+  fetchImpl: window.fetch.bind(window),
+  createEventSource: (url) => new EventSource(url),
+});
+const navigationSync = createNavigationSynchronizer({
+  showCachedChat: (key) => showChatResource(key),
+  syncSessions: () => loadSessions(),
+  syncChat: ({ key, ticket }) => Promise.all([
+    loadState({ key, ticket }),
+    refreshChat({ key, ticket }),
+  ]),
+  syncProject: ({ key, projectCwd }) => Promise.all([
+    loadFiles({ key, projectCwd }),
+    refreshGit({ key, projectCwd }),
+  ]),
+  reportError: (scope, error) => toast(`Could not synchronize ${scope}: ${error?.message ?? error}`),
+});
+const activeChatKey = () => uiState.selection?.view === VIEW_CHAT ? uiState.selection.resourceId : null;
+const activeTerminalId = () => uiState.selection?.view === VIEW_TERMINAL ? uiState.selection.resourceId : null;
+const activeProjectCwd = () => uiState.projects.get(uiState.activeTabId)?.cwd ?? null;
+const sameCwd = (left, right) => Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+function projectScopeForChat(key = activeChatKey()) {
+  const cwd = key ? uiState.chatState(key).cwd : '';
+  return cwd ? uiState.projectState(cwd) : null;
+}
+const activeProjectScope = () => projectScopeForChat(activeChatKey());
+const isProjectScopeActive = (cwd) => sameCwd(activeProjectScope()?.cwd, cwd);
 
 /* ---------------- per-tab chat binding ----------------
    Every tab is bound to ONE chat (its "session key" = the session file path).
@@ -26,43 +97,33 @@ const state = { cwd: '', model: null, thinking: 'off', thinkingLevels: ['off'], 
    duplicated/reopened on the same chat.
    The server keeps the chat alive even when no tab is watching it: leaving a
    chat no longer interrupts anything. */
-let sessionKey = null;
+let renderedChatKey = null;
 try {
   const h = new URLSearchParams(location.hash.slice(1)).get('s');
-  sessionKey = h || sessionStorage.getItem('piSessionKey') || null;
-} catch { sessionKey = null; }
-function setSessionKey(k, { reconnect = true } = {}) {
-  if (!k || k === sessionKey) { if (k) currentSessionPath = k; return; }
-  stashComposerDraft(sessionKey);   // the text typed here stays here
-  sessionKey = k;
-  currentSessionPath = k;
-  resetTasks();                    // background tasks are per-chat
-  try { sessionStorage.setItem('piSessionKey', k); } catch {}
-  history.replaceState(null, '', '#s=' + encodeURIComponent(k));
-  restoreComposerDraft(k);
-  if (reconnect) connect();
+  renderedChatKey = h || sessionStorage.getItem('piSessionKey') || null;
+} catch { renderedChatKey = null; }
+const activeChatState = () => {
+  const key = activeChatKey() ?? renderedChatKey;
+  return key ? uiState.chatState(key) : uiState.pendingChat;
+};
+// This key owns the DOM currently mounted in #chat. Navigation remains the
+// only owner of selection; this function only parks/restores that view.
+function showChatResource(key, { reconnect = true, park = true } = {}) {
+  if (!key) return;
+  if (key === renderedChatKey) {
+    if (chatCache.peek(key)?.view.snapshot) restoreChatView(key);
+    return;
+  }
+  if (park) parkChatView(renderedChatKey);
+  renderedChatKey = key;
+  try { sessionStorage.setItem('piSessionKey', key); } catch {}
+  history.replaceState(null, '', '#s=' + encodeURIComponent(key));
+  restoreChatView(key);
+  if (reconnect) connect(key);
 }
 
-/* ---- composer drafts: unsent text belongs to its chat ----
-   A message half written is part of the chat it was written for, not of the
-   tab: switching chat parks it and brings back whatever was pending on the
-   other side. sessionStorage like the session key itself — per tab, and it
-   survives a reload. */
-let composerDrafts = {};
-try { composerDrafts = JSON.parse(sessionStorage.getItem('piComposerDrafts') || '{}'); } catch {}
-function saveComposerDrafts() {
-  try { sessionStorage.setItem('piComposerDrafts', JSON.stringify(composerDrafts)); } catch {}
-}
-// Park the composer under `key` (empty text = no draft, so sending clears it).
 function stashComposerDraft(key) {
-  if (!key) return;
-  const v = $('input').value;
-  if (v.trim()) composerDrafts[key] = v; else delete composerDrafts[key];
-  saveComposerDrafts();
-}
-function restoreComposerDraft(key) {
-  $('input').value = composerDrafts[key] ?? '';
-  autoGrow();
+  if (key) chatCache.setDraft(key, $('input').value);
 }
 
 if (win.marked) win.marked.setOptions({ breaks: true, gfm: true });
@@ -72,6 +133,18 @@ const fmt = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixe
 const money = (n) => { const v = n ?? 0; return '$' + (v < 1 ? v.toFixed(4) : v.toFixed(2)); };
 const atBottom = () => chatWrap.scrollHeight - chatWrap.scrollTop - chatWrap.clientHeight < 90;
 const scrollDown = () => { chatWrap.scrollTop = chatWrap.scrollHeight; };
+function addChatListener(target, type, callback, options) {
+  if (renderedChatKey) return chatCache.trackListener(renderedChatKey, target, type, callback, options);
+  target.addEventListener(type, callback, options);
+  return () => target.removeEventListener(type, callback, options);
+}
+function addChatTimer(callback, delay) {
+  const ownerKey = renderedChatKey;
+  let untrack = () => {};
+  const id = setTimeout(() => { untrack(); callback(); }, delay);
+  if (ownerKey) untrack = chatCache.trackTimer(ownerKey, id, clearTimeout);
+  return id;
+}
 
 // Desktop app or plain browser tab. It decides the modifier of every shortcut:
 // in Electron we own the whole keyboard and Ctrl is the natural key, in a
@@ -101,23 +174,50 @@ function errorInfo(payload, fallback) {
 }
 // every call goes through here: errors are always surfaced, never silent —
 // except the codes a caller lists in `quiet`, which it reports its own way.
-const withKey = (url) =>
-  sessionKey ? url + (url.includes('?') ? '&' : '?') + 's=' + encodeURIComponent(sessionKey) : url;
-async function api(url, opts, { quiet = [] } = {}) {
+// Chat-scoped callers pass their captured key and navigation ticket: the
+// transport then rejects both aborted fetches and answers completed too late.
+async function api(url, opts, {
+  quiet = [],
+  followKey = true,
+  key = activeChatKey() ?? renderedChatKey,
+  ticket = null,
+  guardChat = false,
+  guard = null,
+} = {}) {
+  const revision = navigation.currentRevision();
+  const isCurrent = ticket || guardChat || guard
+    ? () => revision === navigation.currentRevision()
+      && (!ticket || navigation.isCurrent(ticket))
+      && (!guardChat || activeChatKey() === key)
+      && (!guard || guard())
+    : null;
   try {
-    const r = await fetch(url.startsWith('/api/') ? withKey(url) : url, opts);
-    const d = await r.json().catch(() => ({}));
+    const result = await transport.request(url, opts, {
+      sessionKey: url.startsWith('/api/') ? key : null,
+      navigationRevision: ticket?.revision ?? navigation.currentRevision(),
+      signal: ticket?.signal ?? opts?.signal,
+      isCurrent,
+    });
+    if (result.aborted) return { error: 'aborted', code: 'aborted', stale: true };
+    if (result.stale) return { error: 'stale', code: 'stale', stale: true };
+    const r = result.response;
+    const d = result.payload;
     if (!r.ok || d.error) {
       const err = errorInfo(d, `${url}: HTTP ${r.status}`);
       if (!quiet.includes(err.code)) toast(err.message);
       return { error: err.message, code: err.code };
     }
-    if (d.key) setSessionKey(d.key, { reconnect: d.key !== sessionKey && !!sessionKey });
+    if (followKey && d.key && (!key || key === renderedChatKey || key === activeChatKey())) {
+      const oldKey = key ?? activeChatKey() ?? renderedChatKey;
+      if (oldKey && oldKey !== d.key && uiState.chats.has(oldKey)) {
+        parkChatView(oldKey);
+        uiState.rekeyChat(oldKey, d.key);
+        renderedChatKey = null;
+      }
+      showChatResource(d.key, { reconnect: d.key !== oldKey, park: false });
+    }
     return d;
   } catch (e) {
-    // An aborted request is not a failure: whoever aborted it knows why, and a
-    // toast about it would be noise (see runDeepSearch).
-    if (e.name === 'AbortError') return { error: 'aborted', code: 'aborted' };
     toast(`${url}: ${e.message}`);
     return { error: e.message, code: '' };
   }
@@ -129,42 +229,6 @@ const post = (url, body, opts) => sendJson('POST', url, body, opts);
 // it can travel inside a URL path.
 const sessionPath = (id, suffix) => `/api/sessions/${encodeURIComponent(id ?? '')}/${suffix}`;
 
-/* ---------------- provider logos ----------------
-   Minimal glyphs on a 24x24 grid, all with the same optical weight.
-   The colour is never baked into the SVG (currentColor + inline background), so
-   the "mono" theme in settings can turn brand colours off via CSS. */
-const LOGOS = {
-  anthropic: { bg: '#d97757', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.6 5h-3.2L5.2 19h2.9l1.1-3.1h5.6L15.9 19h2.9zM10.1 13.4 12 8.2l1.9 5.2z"/></svg>' },
-  // official OpenAI logo (knot), path from Simple Icons
-  openai:    { bg: '#0b0b0b', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>' },
-  google:    { bg: '#f4f6fa', fg: '#4285f4', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2c.6 4.4 4.4 8.2 8.8 8.8-4.4.6-8.2 4.4-8.8 8.8-.6-4.4-4.4-8.2-8.8-8.8 4.4-.6 8.2-4.4 8.8-8.8z"/></svg>' },
-  kimi:      { bg: '#0f0f0f', fg: '#00e5a0', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 5v14"/><path d="M17 5.5 8.6 12 17 18.5"/></svg>' },
-  moonshot:  { bg: '#0f0f0f', fg: '#00e5a0', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.4 14.6A8.4 8.4 0 0 1 9.4 3.6a8.5 8.5 0 1 0 11 11z"/></svg>' },
-  deepseek:  { bg: '#4d6bfe', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12c4 0 6-1.9 7.5-5 1.5 3.1 3.5 5 7.5 5-4 0-6 1.9-7.5 5-1.5-3.1-3.5-5-7.5-5z"/></svg>' },
-  xai:       { bg: '#0b0b0b', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4.5h3.2l9.3 15h-3.2zM5.6 19.5l4.9-6 1.7 2.7-2.2 3.3z"/></svg>' },
-  mistral:   { bg: '#ff7000', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.5 5h3.6v3.6H3.5zm6.7 0h3.6v3.6h-3.6zm6.7 0h3.6v3.6h-3.6zM3.5 10.2h17v3.6h-17zM3.5 15.4h3.6V19H3.5zm13.4 0h3.6V19h-3.6z"/></svg>' },
-  meta:      { bg: '#0866ff', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3.6 15.4c1.2-5.6 3.1-7.8 5-7.8 1.9 0 3 1.9 4.2 4.1 1.2 2.2 2.2 3.7 3.7 3.7 1.6 0 2.6-1.6 2.6-4.1 0-2.5-1-3.9-2.3-3.9"/></svg>' },
-  ollama:    { bg: '#f4f6fa', fg: '#111', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 14c0-3 2.4-5 5.5-5s5.5 2 5.5 5-2.4 5.5-5.5 5.5S6.5 17 6.5 14z"/><path d="M7.3 9.4C6.6 7.2 6.8 4.6 8 4.4c1.2-.2 2.1 1.6 2.2 3.6M16.7 9.4c.7-2.2.5-4.8-.7-5-1.2-.2-2.1 1.6-2.2 3.6"/></svg>' },
-  groq:      { bg: '#f55036', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.4 3 6 13.2h4.6L9.8 21l7.6-10.4h-4.7z"/></svg>' },
-  openrouter:{ bg: '#151515', fg: '#8ab4ff', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12h4l3 5h6.5"/><path d="M3.5 12h4l3-5h6.5"/><path d="M15.5 4.5 19.5 7l-4 2.5zM15.5 14.5 19.5 17l-4 2.5z"/></svg>' },
-  github:    { bg: '#24292e', fg: '#fff', svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.5c.5.1.6-.2.6-.5v-1.8c-2.6.6-3.2-1.2-3.2-1.2-.4-1.1-1-1.4-1-1.4-.9-.6 0-.6 0-.6 1 .1 1.5 1 1.5 1 .8 1.4 2.2 1 2.7.8.1-.6.3-1 .6-1.3-2.1-.2-4.3-1.1-4.3-4.7 0-1 .4-1.9 1-2.6-.1-.2-.4-1.2.1-2.5 0 0 .8-.3 2.6 1a8.9 8.9 0 0 1 4.8 0c1.8-1.3 2.6-1 2.6-1 .5 1.3.2 2.3.1 2.5.6.7 1 1.6 1 2.6 0 3.7-2.2 4.5-4.3 4.7.3.3.6.9.6 1.8v2.7c0 .3.2.6.7.5A9.5 9.5 0 0 0 12 2.5z"/></svg>' },
-  _:         { bg: '#1a2130', fg: '#8d97a8', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7.5"/><path d="M12 8.2v7.6M8.2 12h7.6"/></svg>' },
-};
-function logoFor(provider, id = '') {
-  const k = (provider + ' ' + id).toLowerCase();
-  for (const name of Object.keys(LOGOS)) if (name !== '_' && k.includes(name)) return LOGOS[name];
-  if (k.includes('claude') || k.includes('fable') || k.includes('opus') || k.includes('sonnet') || k.includes('haiku')) return LOGOS.anthropic;
-  if (k.includes('gpt') || k.match(/\bo[34]\b/)) return LOGOS.openai;
-  if (k.includes('gemini')) return LOGOS.google;
-  if (k.includes('k2') || k.includes('k3')) return LOGOS.kimi;
-  if (k.includes('llama')) return LOGOS.meta;
-  if (k.includes('grok')) return LOGOS.xai;
-  return LOGOS._;
-}
-const logoHtml = (p, id, cls = '') => {
-  const l = logoFor(p, id);
-  return `<span class="logo ${cls}" style="background:${l.bg};color:${l.fg}">${l.svg}</span>`;
-};
 // logo theme: 'brand' (provider colours) or 'mono' (monochrome) — the CSS does
 // the override, so switching theme never requires a repaint of the markup
 const LOGO_STYLES = [
@@ -312,7 +376,7 @@ function flashCopied(btn) {
   const prev = btn.innerHTML;
   btn.innerHTML = ICON_CHECK;
   btn.classList.add('copied');
-  setTimeout(() => { btn.innerHTML = prev; btn.classList.remove('copied'); delete btn.dataset.flashing; }, 1200);
+  addChatTimer(() => { btn.innerHTML = prev; btn.classList.remove('copied'); delete btn.dataset.flashing; }, 1200);
 }
 // wrap every <pre> (markdown code fences, tool request/output) in a box with a
 // floating copy button. The wrapper sits *outside* the <pre>, so re-rendering
@@ -330,11 +394,6 @@ function addCopyButtons(container) {
     btn.className = 'codeCopyBtn';
     btn.title = 'Copy';
     btn.innerHTML = ICON_COPY;
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const codeEl = pre.querySelector('code');
-      copyToClipboard(codeEl ? codeEl.innerText : pre.innerText, btn);
-    });
     wrap.appendChild(btn);
     addRunButton(wrap, pre);
   });
@@ -363,12 +422,7 @@ function addRunButton(wrap, pre) {
   run.className = 'codeRunBtn';
   run.title = 'Open a terminal with this command typed in — it is not executed';
   run.innerHTML = ICON_RUN;
-  run.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const r = await post('/api/type-command', { command: cmd });
-    if (r.error) return;
-    toast('Command typed in a new terminal — press Enter there to run it', true);
-  });
+  run.dataset.command = cmd;
   wrap.appendChild(run);
 }
 // hover toolbar under a turn: copy the whole message, or fork a new chat that
@@ -386,7 +440,7 @@ function addMsgActions(body, div, { entryId } = {}) {
   copyBtn.className = 'msgActionBtn';
   copyBtn.title = 'Copy message';
   copyBtn.innerHTML = ICON_COPY;
-  copyBtn.addEventListener('click', () => copyToClipboard(div.dataset.raw ?? div.textContent, copyBtn));
+  addChatListener(copyBtn, 'click', () => copyToClipboard(div.dataset.raw ?? div.textContent, copyBtn));
   bar.appendChild(copyBtn);
   if (entryId) {
     const forkBtn = document.createElement('button');
@@ -394,16 +448,23 @@ function addMsgActions(body, div, { entryId } = {}) {
     forkBtn.className = 'msgActionBtn';
     forkBtn.title = 'New chat from here';
     forkBtn.innerHTML = ICON_FORK;
-    forkBtn.addEventListener('click', () => forkFrom(entryId));
+    addChatListener(forkBtn, 'click', () => forkFrom(entryId));
     bar.appendChild(forkBtn);
   }
   body.appendChild(bar);
 }
 async function forkFrom(entryId) {
-  const r = await post(sessionPath(sessionKey, 'fork'), { entryId });
-  if (r.error) return;
-  setSessionKey(r.key);
-  await refreshAll();
+  const key = activeChatKey();
+  const r = await post(sessionPath(key, 'fork'), { entryId }, { key, guardChat: true, followKey: false });
+  if (r.error || key !== activeChatKey()) return;
+  const fork = uiState.chatState(r.key);
+  fork.cwd = r.cwd ?? uiState.chatState(key).cwd;
+  const ticket = navigation.transition({
+    tabId: uiState.activeTabId,
+    view: VIEW_CHAT,
+    resourceId: r.key,
+  });
+  await loadOpenChat(ticket);
   toast('New chat created from this point', true);
 }
 function newTurn(role, model = null) {
@@ -412,9 +473,10 @@ function newTurn(role, model = null) {
   // Consecutive messages from the same speaker (same model, for the assistant)
   // stay in the same turn: avatar and name show up once, until the other side
   // answers.
-  const last = chat.lastElementChild;
+  const ghosts = chat.querySelector('.queuedPrompts');
+  const last = ghosts ? ghosts.previousElementSibling : chat.lastElementChild;
   if (last?.classList.contains('turn') && last.classList.contains(role)) {
-    const m = role === 'user' ? null : (model ?? state.turnModel ?? state.model);
+    const m = role === 'user' ? null : (model ?? activeChatState().turnModel ?? activeChatState().model);
     const sig = role === 'user' ? 'user' : `${m?.provider ?? ''}/${m?.id ?? m?.model ?? ''}`;
     if (last.dataset.sig === sig) return last.querySelector('.body');
   }
@@ -426,85 +488,118 @@ function newTurn(role, model = null) {
   } else {
     // the assistant turn is labeled with the model that produced it (it can
     // change mid-chat): provider logo as avatar + model name instead of "pi"
-    const m = model ?? state.turnModel ?? state.model;
+    const m = model ?? activeChatState().turnModel ?? activeChatState().model;
     const pid = m?.provider ?? '';
     const mid = m ? (m.id ?? m.model ?? '') : '';
-    const pretty = m?.name || modelsCache.find((x) => x.provider === pid && x.id === mid)?.name || mid;
+    const pretty = m?.name || modelsCache().find((x) => x.provider === pid && x.id === mid)?.name || mid;
     t.dataset.sig = `${pid}/${mid}`;
     t.innerHTML = m
       ? `<div class="body"><div class="who" title="${esc(pid)}/${esc(mid)}">${esc(pretty)} <span class="mprov">${esc(pid)}</span></div></div>`
       : '<div class="body"><div class="who">pi</div></div>';
   }
-  chat.appendChild(t);
+  chat.insertBefore(t, ghosts);
   return t.querySelector('.body');
 }
-function bubble(cls, text = '', body = null) {
-  const stick = atBottom();
+function skillInvocationFromCommand(text, knownCommands = null) {
+  const match = /^\/skill:([^\s]+)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
+  if (!match) return null;
+  if (Array.isArray(knownCommands)
+      && !knownCommands.some((command) => command.source === 'skill' && command.name === `skill:${match[1]}`)) {
+    return null;
+  }
+  return { type: 'skill', name: match[1], arguments: match[2]?.trim() ?? '' };
+}
+function skillInvocationText(skill) {
+  return [`/skill:${skill.name}`, skill.arguments].filter(Boolean).join(' ');
+}
+function skillInvocationElement(skill) {
   const div = document.createElement('div');
-  div.className = 'msg ' + cls;
-  if (cls === 'assistant') { div.classList.add('md'); div.dataset.raw = text; renderMarkdown(div); }
-  else div.textContent = text;
-  (body ?? newTurn(cls === 'user' ? 'user' : 'pi')).appendChild(div);
-  if (stick) scrollDown();
+  div.className = 'msg user skillInvocation';
+  div.dataset.raw = skillInvocationText(skill);
+  const name = document.createElement('span');
+  name.className = 'skillName';
+  name.textContent = `/skill:${skill.name}`;
+  div.appendChild(name);
+  if (skill.arguments) {
+    const args = document.createElement('span');
+    args.className = 'skillArguments';
+    args.textContent = skill.arguments;
+    div.appendChild(args);
+  }
   return div;
 }
-function appendMd(div, delta) {
+// Every live transcript mutation shares one rule: measure before changing the
+// DOM, then follow the new bottom only when the reader was already there.
+function mutateTranscript(mutate) {
   const stick = atBottom();
-  div.dataset.raw = (div.dataset.raw ?? '') + delta;
-  renderMarkdown(div);
+  const result = mutate();
   if (stick) scrollDown();
+  return result;
 }
-// plain-text streaming (thinking): same stickiness rule as markdown, otherwise
-// during reasoning the view stays put and the text scrolls out of sight
+function bubble(cls, text = '', body = null) {
+  return mutateTranscript(() => {
+    const div = document.createElement('div');
+    div.className = 'msg ' + cls;
+    if (cls === 'assistant') { div.classList.add('md'); div.dataset.raw = text; renderMarkdown(div); }
+    else div.textContent = text;
+    (body ?? newTurn(cls === 'user' ? 'user' : 'pi')).appendChild(div);
+    return div;
+  });
+}
+function appendMd(div, delta) {
+  mutateTranscript(() => {
+    div.dataset.raw = (div.dataset.raw ?? '') + delta;
+    renderMarkdown(div);
+  });
+}
 function appendText(div, delta) {
-  const stick = atBottom();
-  div.textContent += delta;
-  if (stick) scrollDown();
+  mutateTranscript(() => { div.textContent += delta; });
 }
 /* ---- tool calls: expandable card showing exactly what the model is doing ---- */
 const toolCards = new Map(); // toolCallId -> element
 function renderTool(ev) {
-  if (!currentTurn) currentTurn = newTurn('pi');
-  let card = ev.id ? toolCards.get(ev.id) : null;
-  if (!card) {
-    const stick = atBottom();
-    card = document.createElement('div');
-    card.className = 'toolCard';
-    card.innerHTML = `<button type="button" class="toolHead">
-        <svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
-        <span class="nm"></span><span class="sm"></span><span class="st">…</span>
-      </button>
-      <div class="toolBody">
-        <h6>Request</h6><pre class="args">…</pre>
-        <h6>Output</h6><pre class="out">(running…)</pre>
-      </div>`;
-    card.querySelector('.toolHead').addEventListener('click', () => card.classList.toggle('open'));
-    currentTurn.appendChild(card);
-    if (ev.id) toolCards.set(ev.id, card);
-    addCopyButtons(card);
-    if (stick) scrollDown();
-  }
-  const q = (s) => card.querySelector(s);
-  if (ev.status === 'start') {
-    q('.nm').textContent = ev.name;
-    q('.sm').textContent = ev.summary || '';
-    q('.sm').title = ev.summary || '';
-    q('.args').textContent = typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {}, null, 2);
-  } else if (ev.status === 'update') {
-    if (ev.output) q('.out').textContent = ev.output;
-  } else {
-    q('.st').textContent = ev.isError ? '✗ error' : '✓';
-    q('.st').classList.toggle('err', !!ev.isError);
-    q('.out').textContent = ev.output || '(no output)';
-    if (ev.isError) card.classList.add('open');
-  }
+  return mutateTranscript(() => {
+    if (!currentTurn) currentTurn = newTurn('pi');
+    let card = ev.id ? toolCards.get(ev.id) : null;
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'toolCard';
+      card.innerHTML = `<button type="button" class="toolHead">
+          <svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+          <span class="nm"></span><span class="sm"></span><span class="st">…</span>
+        </button>
+        <div class="toolBody">
+          <h6>Request</h6><pre class="args">…</pre>
+          <h6>Output</h6><pre class="out">(running…)</pre>
+        </div>`;
+      addChatListener(card.querySelector('.toolHead'), 'click', () => card.classList.toggle('open'));
+      currentTurn.appendChild(card);
+      if (ev.id) toolCards.set(ev.id, card);
+      addCopyButtons(card);
+    }
+    const q = (s) => card.querySelector(s);
+    if (ev.status === 'start') {
+      q('.nm').textContent = ev.name;
+      q('.sm').textContent = ev.summary || '';
+      q('.sm').title = ev.summary || '';
+      q('.args').textContent = typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {}, null, 2);
+    } else if (ev.status === 'update') {
+      if (ev.output) q('.out').textContent = ev.output;
+    } else {
+      q('.st').textContent = ev.isError ? '✗ error' : '✓';
+      q('.st').classList.toggle('err', !!ev.isError);
+      q('.out').textContent = ev.output || '(no output)';
+      if (ev.isError) card.classList.add('open');
+    }
+    return card;
+  });
 }
 
 // Home screen: a single question naming the project, and the composer right
 // below as the only thing to do. The old suggestion cards are gone: they were
 // noise on top of an empty prompt.
 function projectName() {
-  const parts = (state.cwd || '').split(/[\\/]/).filter(Boolean);
+  const parts = (activeChatState().cwd || '').split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || '';
 }
 function showHero() {
@@ -526,13 +621,14 @@ function setHeroMode(on) {
   if (on) renderTray();
 }
 function renderTray() {
-  $('trayPath').textContent = state.cwd || '…';
-  $('checkoutTray').title = 'Working folder of the next chat: ' + (state.cwd || '—');
+  $('trayPath').textContent = activeChatState().cwd || '…';
+  $('checkoutTray').title = 'Working folder of the next chat: ' + (activeChatState().cwd || '—');
   const gb = $('trayGit');
-  if (!gitInfo?.repo) { gb.classList.add('hide'); return; }
+  const git = activeProjectScope()?.git;
+  if (!git?.repo) { gb.classList.add('hide'); return; }
   gb.classList.remove('hide');
-  $('trayBranch').textContent = gitInfo.branch;
-  const n = gitInfo.changed ?? 0;
+  $('trayBranch').textContent = git.branch;
+  const n = git.changed ?? 0;
   const count = $('trayCount');
   count.textContent = n;
   count.classList.toggle('hide', !n);
@@ -545,54 +641,205 @@ $('checkoutTray').addEventListener('click', (e) => {
   e.stopPropagation();
   $('cwdChip').click();
 });
-// Counter shows *this chat only*: fresh tokens per turn (prompt + cache writes +
-// output). Cache reads are excluded because they re-count context already paid for.
-let lastByModel = {};   // provider/model -> {tokens,cost,requests,...} for this chat
-let lastChat = null;    // last known chat totals, to resync without an 'usage' event
-function renderStats(chat, context, byModel) {
-  const c = chat ?? lastChat ?? { tokens: 0, cost: 0, requests: 0 };
-  lastChat = c;
-  if (byModel) lastByModel = byModel;
-  $('stats').textContent = `${fmt(c.tokens)} token · $${(c.cost ?? 0).toFixed(4)}`;
+const EMPTY_CHAT_USAGE = { tokens: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, requests: 0 };
+function usageDetail(usage) {
+  return `input ${fmt(usage.input)} · output ${fmt(usage.output)} · cache read ${fmt(usage.cacheRead)} · cache write ${fmt(usage.cacheWrite)}`;
+}
+function contextPercent(context) {
+  return context?.percent === null || context?.percent === undefined ? null : Math.min(100, context.percent);
+}
+function renderStats(chatState = activeChatState()) {
+  const metrics = chatState.metrics;
+  const c = metrics?.total ?? EMPTY_CHAT_USAGE;
+  const pct = contextPercent(metrics?.context);
+  const pctLabel = pct === null ? '?' : `${pct.toFixed(0)}%`;
+  $('stats').textContent = `${fmt(c.tokens)} token · ${pctLabel} · ${money(c.cost)}`;
   $('stats').title =
     `tokens in this chat: ${fmt(c.tokens)}\n` +
-    `  input: ${fmt(c.input)} · output: ${fmt(c.output)} · cache write: ${fmt(c.cacheWrite)}\n` +
-    `  (cache read excluded: ${fmt(c.cacheRead)}, it is context already counted)\n` +
-    `requests: ${c.requests} · estimated cost: $${(c.cost ?? 0).toFixed(4)}\n` +
+    `${usageDetail(c)}\n` +
+    `context: ${pctLabel}\n` +
+    `requests: ${c.requests} · estimated cost: ${money(c.cost)}\n` +
     `click for the per-model breakdown`;
-  renderStatsMenu(c);
-  if (context?.window > 0) {
-    const pct = Math.min(100, 100 * context.used / context.window);
+  renderStatsMenu(c, metrics?.byModel, metrics?.sessionWork);
+  const context = metrics?.context;
+  if (context?.contextWindow > 0 && pct !== null) {
     $('ctxFill').style.width = pct + '%';
     $('ctxFill').className = pct > 85 ? 'crit' : pct > 60 ? 'warn' : '';
-    $('ctxBar').title = `context: ${fmt(context.used)} / ${fmt(context.window)} tokens (${pct.toFixed(1)}%)`;
-    // the number moved into the usage popover footer, next to the chat cost
-    lastCtxPct = pct;
+    $('ctxBar').title = `context: ${fmt(context.tokens)} / ${fmt(context.contextWindow)} tokens (${context.percent.toFixed(1)}%)`;
+  } else {
+    $('ctxFill').style.width = '0%';
+    $('ctxFill').className = '';
+    $('ctxBar').title = context?.contextWindow > 0
+      ? `context: ? / ${fmt(context.contextWindow)} tokens (?)`
+      : 'context unavailable';
   }
 }
-// counter popover: one row per LLM used in this chat
-// (switching model mid-chat no longer mixes the counts)
-function renderStatsMenu(c) {
-  const rows = Object.entries(lastByModel ?? {}).sort((a, b) => b[1].cost - a[1].cost);
-  let html = '<div class="dd-group">Tokens and cost of this chat, per model</div>';
-  if (!rows.length) html += '<div class="sys" style="padding:.4rem .55rem">no answer yet</div>';
+// Counter popover: one row per model plus SDK work that has no model identity.
+function renderStatsMenu(c, byModel, sessionWork) {
+  const rows = Object.entries(byModel ?? {}).sort((a, b) => b[1].cost - a[1].cost);
+  let html = '<div class="dd-group">All token buckets and cost, per model</div>';
+  if (!rows.length && !sessionWork) html += '<div class="sys" style="padding:.4rem .55rem">no answer yet</div>';
   for (const [key, m] of rows) {
     const slash = key.indexOf('/');
     const p = slash > 0 ? key.slice(0, slash) : '';
     const id = slash > 0 ? key.slice(slash + 1) : key;
-    html += `<div class="statsRow">${logoHtml(p, id)}<span class="nm" title="${esc(key)}">${esc(id)}</span>
+    html += `<div class="statsRow" title="${esc(usageDetail(m))}">${providerIconHtml(p, id)}<span class="nm" title="${esc(key)}">${esc(id)}</span>
       <span class="vals">${fmt(m.tokens)} tok · <b>${money(m.cost)}</b> · ${m.requests} req</span></div>`;
   }
-  if (rows.length > 1) {
-    html += `<div class="statsRow total"><span class="nm">Chat total</span>
+  if (sessionWork) {
+    html += `<div class="statsRow" title="${esc(usageDetail(sessionWork))}"><span class="nm">Session work</span>
+      <span class="vals">${fmt(sessionWork.tokens)} tok · <b>${money(sessionWork.cost)}</b> · ${sessionWork.requests} req</span></div>`;
+  }
+  if (rows.length || sessionWork) {
+    html += `<div class="statsRow total" title="${esc(usageDetail(c))}"><span class="nm">Chat total</span>
       <span class="vals">${fmt(c.tokens)} tok · <b>${money(c.cost)}</b> · ${c.requests} req</span></div>`;
   }
   $('statsMenu').innerHTML = html;
 }
-function setRunning(on) {
-  state.streaming = on;
-  $('runState').classList.toggle('on', on);
+function queueTypeLabel(type) {
+  return type === 'steer' ? 'Reindirizza' : 'Dopo';
+}
+function queueAttachmentLabel(item) {
+  const count = item.attachments?.length ?? 0;
+  return count ? `${count} ${count === 1 ? 'allegato' : 'allegati'}` : '';
+}
+function queuedPromptElement(item, index) {
+  const row = document.createElement('div');
+  row.className = 'queuedPrompt';
+  row.dataset.id = item.id;
+  row.dataset.type = item.type;
+
+  const order = document.createElement('span');
+  order.className = 'queueOrder';
+  order.textContent = String(index + 1);
+
+  const content = document.createElement('div');
+  content.className = 'queueBubble';
+  const type = document.createElement('span');
+  type.className = 'queueType';
+  type.textContent = queueTypeLabel(item.type);
+  content.appendChild(type);
+  if (item.text) content.appendChild(document.createTextNode(item.text));
+  const attachmentLabel = queueAttachmentLabel(item);
+  if (attachmentLabel) {
+    const attachment = document.createElement('span');
+    attachment.className = 'queueAttachment';
+    attachment.textContent = `${item.text ? ' · ' : ''}${attachmentLabel}`;
+    content.appendChild(attachment);
+  }
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'queueRemove';
+  remove.dataset.queueRemove = item.id;
+  remove.title = 'Rimuovi dalla coda';
+  remove.setAttribute('aria-label', 'Rimuovi dalla coda');
+  remove.textContent = '×';
+  row.append(order, content, remove);
+  return row;
+}
+function renderQueuedPrompts(chatState = activeChatState()) {
+  chat.querySelector('.queuedPrompts')?.remove();
+  if (!chatState.queuedPrompts.length) return;
+  const section = document.createElement('section');
+  section.className = 'queuedPrompts';
+  section.setAttribute('aria-label', 'Messaggi preparati, non ancora nel transcript');
+  const caption = document.createElement('div');
+  caption.className = 'queuedCaption';
+  caption.textContent = 'Messaggi preparati, non ancora nel transcript';
+  section.appendChild(caption);
+  chatState.queuedPrompts.forEach((item, index) => section.appendChild(queuedPromptElement(item, index)));
+  chat.appendChild(section);
+}
+function deliveredPromptElement(item) {
+  const turn = document.createElement('div');
+  turn.className = 'turn user queuedDelivered';
+  turn.dataset.queueId = item.id;
+  turn.dataset.sig = 'user';
+  const body = document.createElement('div');
+  body.className = 'body';
+  const type = document.createElement('span');
+  type.className = 'queueType';
+  type.textContent = queueTypeLabel(item.type);
+  const skill = skillInvocationFromCommand(item.text, commandsCache());
+  const message = skill ? skillInvocationElement(skill) : document.createElement('div');
+  if (!skill) {
+    message.className = 'msg user';
+    message.textContent = item.text || queueAttachmentLabel(item);
+  }
+  body.append(type, message);
+  turn.appendChild(body);
+  return turn;
+}
+function applyQueueChange(items, key = activeChatKey()) {
+  if (!key) return [];
+  const queue = uiState.applyQueuedPrompts(key, items);
+  if (key === activeChatKey() && key === renderedChatKey) renderQueuedPrompts(uiState.chatState(key));
+  return queue;
+}
+function handleQueueEvent(ev, key) {
+  const owner = uiState.chatState(key);
+  const previous = new Map(owner.queuedPrompts.map((item) => [item.id, item]));
+  if (ev.action === 'dispatch' && key === activeChatKey() && key === renderedChatKey) {
+    const section = chat.querySelector('.queuedPrompts');
+    for (const id of ev.ids ?? []) {
+      const item = previous.get(id);
+      const alreadyFixed = $$('[data-queue-id]', chat).some((turn) => turn.dataset.queueId === id);
+      if (!item || alreadyFixed) continue;
+      const turn = deliveredPromptElement(item);
+      mutateTranscript(() => {
+        if (section) chat.insertBefore(turn, section); else chat.appendChild(turn);
+      });
+      // The next assistant block belongs below the delivered instruction,
+      // even when steering continues inside the same SDK agent run.
+      currentTurn = currentAssistant = currentThinking = null;
+    }
+  }
+  applyQueueChange(ev.queued ?? [], key);
+}
+async function cancelQueuedPrompt(id) {
+  const key = activeChatKey();
+  if (!key) return;
+  const r = await sendJson('DELETE', `/api/queued-prompts/${encodeURIComponent(id)}`, undefined, {
+    key, guardChat: true, followKey: false,
+  });
+  if (r.error || key !== activeChatKey()) return;
+  applyQueueChange(activeChatState().queuedPrompts.filter((item) => item.id !== id), key);
+}
+function renderComposerState(chatState = activeChatState()) {
+  const running = chatState.streaming;
+  $('runState').classList.toggle('on', running);
+  $('sendBtn').classList.toggle('hide', running);
+  $('queueActions').classList.toggle('hide', !running);
+  $('responseSpinner').classList.toggle('hide', chatState.responsePhase !== RESPONSE_WAITING);
+  input.placeholder = running
+    ? 'Scrivi una nuova istruzione mentre l’agente lavora…'
+    : 'Ask me anything…  (drop files and images here)';
+}
+function setRunning(on, { newResponse = false } = {}) {
+  const key = activeChatKey() ?? renderedChatKey;
+  const state = activeChatState();
+  if (on) {
+    if (key && (newResponse || !state.streaming)) uiState.startResponse(key);
+    else state.streaming = true;
+  } else if (key) {
+    uiState.finishResponse(key);
+  } else {
+    state.streaming = false;
+    state.responsePhase = RESPONSE_IDLE;
+  }
+  renderComposerState(state);
   if (!on) { currentAssistant = currentThinking = currentTurn = null; }
+}
+function markResponseText() {
+  const key = activeChatKey() ?? renderedChatKey;
+  if (key) uiState.markResponseText(key);
+  else activeChatState().responsePhase = RESPONSE_TEXT;
+  renderComposerState();
+}
+function closeResponseSpinner() {
+  activeChatState().responsePhase = RESPONSE_IDLE;
+  renderComposerState();
 }
 
 /* ---------------- account usage widget (real limits, dynamic on active provider) ---------------- */
@@ -607,6 +854,14 @@ function fmtCountdown(iso) {
 }
 // One row of the usage popover. `pct` drives both the bar and the colour, which
 // follows the provider's own severity when it sends one.
+function usageWindowLabel(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return 'Window';
+  if (value % 86400 === 0) return `${value / 86400}d`;
+  if (value % 3600 === 0) return `${value / 3600}h`;
+  if (value % 60 === 0) return `${value / 60}m`;
+  return `${Math.round(value)}s`;
+}
 function usageRow(name, pct, severity, resetsAt) {
   const p = Math.max(0, Math.min(100, pct ?? 0));
   const cls = severity === 'critical' || p > 90 ? 'crit' : severity === 'warning' || p > 70 ? 'warn' : '';
@@ -617,13 +872,14 @@ function usageRow(name, pct, severity, resetsAt) {
 }
 // The ring itself always shows the short rolling window: that is the limit that
 // actually stops you mid-session.
-function setUsageDot(pct, severity, isError) {
+function setUsageDot(pct, severity, isError, isDisabled = false) {
   const dot = $('usageDot');
   const p = Math.max(0, Math.min(100, pct ?? 0));
   const C = 43.98; // 2*pi*r with r=7
   $('usageDotFill').setAttribute('stroke-dashoffset', String(C * (1 - p / 100)));
-  dot.classList.remove('warn', 'crit', 'err');
-  if (isError) dot.classList.add('err');
+  dot.classList.remove('warn', 'crit', 'err', 'disabled');
+  if (isDisabled) dot.classList.add('disabled');
+  else if (isError) dot.classList.add('err');
   else if (severity === 'critical' || p > 90) dot.classList.add('crit');
   else if (severity === 'warning' || p > 70) dot.classList.add('warn');
 }
@@ -633,18 +889,52 @@ async function refreshUsage(force) {
   renderUsageWidget();
 }
 // Context and chat cost, shown in the popover footer instead of above the input.
-let lastCtxPct = null;
 function renderUsageWidget() {
   const dot = $('usageDot'), pop = $('usagePop');
   const u = usageCache;
-  const provider = state.model?.provider;
+  const chatState = activeChatState();
+  const provider = chatState.model?.provider;
   if (!u || u.error || !provider) { dot.classList.remove('show'); return; }
 
   const foot = () => {
-    const cost = lastChat?.cost ? `${fmt(lastChat.tokens)} tok · ${money(lastChat.cost)}` : '';
-    const ctx = lastCtxPct === null ? '' : `context ${lastCtxPct.toFixed(0)}%`;
+    const metrics = chatState.metrics;
+    const cost = metrics?.total.cost ? `${fmt(metrics.total.tokens)} tok · ${money(metrics.total.cost)}` : '';
+    const pct = contextPercent(metrics?.context);
+    const ctx = metrics?.context ? `context ${pct === null ? '?' : `${pct.toFixed(0)}%`}` : '';
     return ctx || cost ? `<div class="foot"><span>${esc(ctx)}</span><span>${esc(cost)}</span></div>` : '';
   };
+
+  if (provider === 'openai-codex') {
+    const refreshControl = '<button type="button" class="usageRefresh" data-usage-refresh>Refresh now</button>';
+    dot.classList.add('show');
+    const openai = u.openai;
+    if (!openai?.enabled) {
+      setUsageDot(0, null, false, true);
+      pop.innerHTML = '<div class="h">OpenAI Codex account usage</div><div class="note">Disabled in Settings</div>';
+      dot.title = 'OpenAI Codex account usage is disabled';
+      return;
+    }
+    if (openai.error || !openai.configured) {
+      setUsageDot(100, null, true);
+      pop.innerHTML = `<div class="h">OpenAI Codex account usage</div><div class="err">${esc(openai.error || 'OAuth unavailable')}</div>${foot()}${refreshControl}`;
+      dot.title = openai.error || 'OpenAI Codex OAuth unavailable';
+      return;
+    }
+    const windows = openai.windows ?? [];
+    const primary = windows[0];
+    setUsageDot(primary?.usedPercent ?? 0);
+    const rows = windows.length
+      ? windows.map((window) => usageRow(
+          usageWindowLabel(window.durationSeconds),
+          window.usedPercent,
+          null,
+          window.resetsAt,
+        )).join('')
+      : '<div class="err">data unavailable</div>';
+    pop.innerHTML = `<div class="h">OpenAI Codex account usage</div>${rows}${foot()}${refreshControl}`;
+    dot.title = `OpenAI Codex ${usageWindowLabel(primary?.durationSeconds)}: ${Math.round(primary?.usedPercent ?? 0)}%, click for the breakdown`;
+    return;
+  }
 
   if (provider === 'anthropic' && u.anthropic?.configured) {
     dot.classList.add('show');
@@ -704,23 +994,26 @@ $('usageDot').addEventListener('click', (e) => {
   $('usageDot').classList.toggle('open', !open);
   if (!open) renderUsageWidget();
 });
-$('usagePop').addEventListener('click', (e) => e.stopPropagation());
+$('usagePop').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (e.target.closest('[data-usage-refresh]')) refreshUsage(true);
+});
 document.addEventListener('click', () => $('usageDot').classList.remove('open'));
 
 /* ---------------- SSE (with reconnect + refresh fallback) ---------------- */
-let es = null;
-function connect() {
-  if (es) { try { es.close(); } catch {} }
-  es = new EventSource(withKey('/api/events'));
-  es.onopen = () => { $('conn').classList.remove('off'); $('connTxt').textContent = 'connected'; };
-  es.onerror = () => { $('conn').classList.add('off'); $('connTxt').textContent = 'reconnecting…'; };
-  es.onmessage = (e) => {
-    let ev; try { ev = JSON.parse(e.data); } catch { return; }
-    try { handleEvent(ev); } catch (err) { console.error(err); toast('UI: ' + err.message); }
-  };
+function connect(key = activeChatKey()) {
+  transport.followDetailed(key, {
+    onOpen: () => { $('conn').classList.remove('off'); $('connTxt').textContent = 'connected'; },
+    onError: () => { $('conn').classList.add('off'); $('connTxt').textContent = 'reconnecting…'; },
+    onEvent: (ev, owner) => {
+      try { handleEvent(ev, owner.sessionKey); } catch (err) { console.error(err); toast('UI: ' + err.message); }
+    },
+  });
 }
-function handleEvent(ev) {
-  // global events: they are about the OTHER open chats, not this one
+window.addEventListener('pagehide', () => transport.closeDetailed());
+function handleEvent(ev, ownerKey) {
+  // global events are broadcast on every detailed stream and identify their
+  // own chat. They may update badges, never the active chat body.
   if (ev.scope === 'global') {
     if (ev.kind === 'running') {
       // "finished" only means something for a chat we had seen working. An end
@@ -729,7 +1022,7 @@ function handleEvent(ev) {
       // noise, and it used to pop up as a toast out of nowhere.
       const wasRunning = runningKeys.has(ev.key);
       if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
-      if (ev.key !== sessionKey) {
+      if (ev.key !== activeChatKey()) {
         renderSessions();
         if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true);
       }
@@ -740,16 +1033,33 @@ function handleEvent(ev) {
     }
     return;
   }
+  // A closing EventSource can still have a queued message. The stream owner
+  // and the event key both have to match the selected chat before touching it.
+  if (ownerKey !== activeChatKey()) return;
+  if (ev.kind !== 'rekey' && ev.kind !== 'attached' && ev.key && ev.key !== ownerKey) return;
   switch (ev.kind) {
     case 'attached':
-      setSessionKey(ev.key, { reconnect: false });
+      if (ev.key !== ownerKey) {
+        parkChatView(ownerKey);
+        uiState.rekeyChat(ownerKey, ev.key);
+        if (runningKeys.delete(ownerKey)) runningKeys.add(ev.key);
+        transport.rekeyDetailed(ownerKey, ev.key);
+        showChatResource(ev.key, { reconnect: false, park: false });
+      } else {
+        showChatResource(ev.key, { reconnect: false });
+      }
+      applyQueueChange(ev.queuedPrompts ?? [], activeChatKey());
       setRunning(!!ev.running);
-      if (ev.running && !agentTask) setAgentTask(true, state.turnModel);
+      if (ev.running && !activeChatState().agentTask) setAgentTask(true, activeChatState().turnModel, activeChatKey());
+      break;
+    case 'queue':
+      handleQueueEvent(ev, ownerKey);
       break;
     case 'text':
       // a new text segment after thinking/tool must be appended AFTER them, in order: drop the
       // stale thinking reference so the next 'thinking' event (if any) starts a fresh bubble below
       currentThinking = null;
+      markResponseText();
       if (!currentAssistant) { if (!currentTurn) currentTurn = newTurn('pi'); currentAssistant = bubble('assistant', '', currentTurn); }
       appendMd(currentAssistant, ev.delta); break;
     case 'thinking':
@@ -763,79 +1073,97 @@ function handleEvent(ev) {
       // tool calls always happen between other segments: whatever comes next (thinking/text)
       // must render as a new element after the tool card, never append into a stale one
       currentThinking = null; currentAssistant = null;
-      renderTool(ev); taskFromTool(ev); break;
-    case 'usage': renderStats(ev.chat, ev.context, ev.chatByModel); break;
+      renderTool(ev); taskFromTool(ev, ownerKey); break;
+    case 'usage':
+      uiState.applyMetricsPayload(ownerKey, ev.metrics);
+      renderStats();
+      break;
     case 'status':
       if (ev.status === 'running') {
         setChatStarted(true);  // it is running ⇒ the chat exists
-        if (ev.model) state.turnModel = ev.model;  // model answering right now (it can change mid-chat)
-        setAgentTask(true, ev.model);
+        if (ev.model) activeChatState().turnModel = ev.model;  // model answering right now (it can change mid-chat)
+        setAgentTask(true, ev.model, ownerKey);
       } else {
-        state.turnModel = null;
-        setAgentTask(false);
+        activeChatState().turnModel = null;
+        setAgentTask(false, null, ownerKey);
         refreshGit();  // the agent may have touched files / branches
       }
-      setRunning(ev.status === 'running'); break;
+      setRunning(ev.status === 'running', { newResponse: ev.status === 'running' }); break;
     case 'rekey': {
-      // the draft we are on just got its session file: same chat, same stream,
-      // only the key changes — no reconnect and no reset of the running turn
-      const old = sessionKey;
-      // the chat did not change, so neither does what is typed in the composer:
-      // it moves to the new key instead of being parked under the dead one
-      composerDrafts[ev.key] = $('input').value;
-      setSessionKey(ev.key, { reconnect: false });
-      delete composerDrafts[old];
-      saveComposerDrafts();
+      // The draft became a persisted session, but remains the same chat. Park
+      // its live DOM/composer first, then move the whole cache entry atomically.
+      const old = ownerKey;
+      parkChatView(old);
+      uiState.rekeyChat(old, ev.key);
+      if (runningKeys.delete(old)) runningKeys.add(ev.key);
+      transport.rekeyDetailed(old, ev.key);
+      showChatResource(ev.key, { reconnect: false, park: false });
+      applyQueueChange(ev.queuedPrompts ?? [], ev.key);
       renderSessions();          // the row can finally be marked as the active one
       break;
     }
     case 'cwd':
-      state.cwd = ev.path; setCwdLabel(ev.path);
-      activeFile = null; refreshAll(); break;
+      activeChatState().cwd = ev.path;
+      renderContextHeader();
+      refreshAll(); break;
     case 'file': loadFiles(); break;
-    case 'error': bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message); toast(ev.message); break;
+    case 'error':
+      closeResponseSpinner();
+      bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message);
+      toast(ev.message);
+      break;
   }
 }
 
 /* ---------------- models + dynamic effort ---------------- */
-let modelsCache = [];
-async function loadModels() {
-  const res = await api('/api/models');
-  if (res.error) return;
-  modelsCache = res.models ?? [];
-  state.model = res.current;
-  state.thinking = res.thinkingLevel ?? 'off';
-  state.thinkingLevels = res.thinkingLevels?.length ? res.thinkingLevels : ['off'];
-  renderModelBtn(); renderModelMenu(); renderThinking();
+let modelsLoaded = false;
+let modelsLoading = null;
+const modelsCache = () => uiState.global.models;
+async function loadModels({ force = false } = {}) {
+  if (!force && modelsLoaded) return uiState.global.models;
+  if (!force && modelsLoading) return modelsLoading;
+  const loading = (async () => {
+    const raw = await api('/api/models', undefined, { key: null, followKey: false });
+    if (raw.error) return null;
+    const res = uiState.applyModelsPayload(raw);
+    modelsLoaded = true;
+    renderModelBtn(); renderModelMenu(); renderThinking();
+    return res.models;
+  })();
+  modelsLoading = loading;
+  try { return await loading; }
+  finally { if (modelsLoading === loading) modelsLoading = null; }
 }
-const modelMeta = () => state.model ? modelsCache.find((m) => m.provider === state.model.provider && m.id === state.model.id) : null;
+const modelMeta = () => activeChatState().model ? modelsCache().find((m) => m.provider === activeChatState().model.provider && m.id === activeChatState().model.id) : null;
 function renderModelBtn() {
-  const m = state.model;
+  const m = activeChatState().model;
   $('modelLogo').outerHTML = m
-    ? logoHtml(m.provider, m.id).replace('class="logo ', 'id="modelLogo" class="logo ')
+    ? providerIconHtml(m.provider, m.id).replace('class="logo"', 'id="modelLogo" class="logo"')
     : '<span class="logo" id="modelLogo"></span>';
   $('modelName').textContent = m ? (modelMeta()?.name || m.id) : 'no model';
   $('modelBtn').title = m ? `${m.provider}/${m.id}` : 'no authenticated model';
 }
 async function selectModel(provider, id) {
-  const r = await post('/api/model', { provider, id });
-  if (r.error) return;
-  state.model = { provider, id };
-  state.thinking = r.thinkingLevel ?? state.thinking;
-  state.thinkingLevels = r.thinkingLevels?.length ? r.thinkingLevels : ['off'];
+  const key = activeChatKey();
+  const r = await post('/api/model', { provider, id }, { key, guardChat: true });
+  if (r.error || key !== activeChatKey()) return;
+  activeChatState().model = { provider, id };
+  activeChatState().thinking = r.thinkingLevel ?? activeChatState().thinking;
+  activeChatState().thinkingLevels = r.thinkingLevels?.length ? r.thinkingLevels : ['off'];
   renderModelBtn(); renderModelMenu(); renderThinking(); renderUsageWidget();
-  // the context window depends on the model: resync bar/composer right away
-  // instead of waiting for the next message (which is when it used to update)
-  if (r.context) renderStats(lastChat, r.context, lastByModel);
+  // The SDK recomputes context window and percentage for the selected model.
+  if (r.metrics) uiState.applyMetricsPayload(key, r.metrics);
+  renderStats();
   if (!$('settingsView').classList.contains('hide')) renderSettings();
   toast(`Model: ${id}`, true);
 }
 // MOD+M: cycle through the available/authenticated models
 async function cycleModel() {
-  if (!modelsCache.length) { toast('No model available'); return; }
-  let idx = modelsCache.findIndex((m) => state.model && m.provider === state.model.provider && m.id === state.model.id);
-  idx = (idx + 1) % modelsCache.length;
-  const m = modelsCache[idx];
+  const models = modelsCache();
+  if (!models.length) { toast('No model available'); return; }
+  let idx = models.findIndex((m) => activeChatState().model && m.provider === activeChatState().model.provider && m.id === activeChatState().model.id);
+  idx = (idx + 1) % models.length;
+  const m = models[idx];
   await selectModel(m.provider, m.id);
 }
 // Two-level menu: providers first, models show up in a side flyout on hover
@@ -844,9 +1172,10 @@ function renderModelMenu() {
   const menu = $('modelMenu');
   menu.innerHTML = '';
   document.querySelectorAll('body > .dd-flyout').forEach((f) => f.remove());  // flyouts of the previous render
-  if (!modelsCache.length) { menu.innerHTML = '<div class="dd-group">no active model</div>'; return; }
+  const models = modelsCache();
+  if (!models.length) { menu.innerHTML = '<div class="dd-group">no active model</div>'; return; }
   const byProv = {};
-  for (const m of modelsCache) (byProv[m.provider] ??= []).push(m);
+  for (const m of models) (byProv[m.provider] ??= []).push(m);
   let closeTimer = null;
   // Flyouts live in <body>, not inside the header: the header has
   // backdrop-filter and would become the containing block of position:fixed
@@ -874,7 +1203,7 @@ function renderModelMenu() {
   };
   const closeSub = (sub) => { sub.classList.remove('open'); sub._fly.classList.remove('on'); };
   for (const [prov, list] of Object.entries(byProv)) {
-    const hasSel = state.model && state.model.provider === prov;
+    const hasSel = activeChatState().model && activeChatState().model.provider === prov;
     // `_fly` below is an expando: the flyout lives in <body>, not inside the
     // sub-menu, so the pairing has to be carried on the node itself.
     const sub = /** @type {any} */ (document.createElement('div'));
@@ -882,18 +1211,18 @@ function renderModelMenu() {
     const head = document.createElement('button');
     head.type = 'button';
     head.className = 'dd-item' + (hasSel ? ' hasSel' : '');
-    head.innerHTML = `${logoHtml(prov, hasSel ? state.model.id : list[0]?.id ?? '')}<span class="col">
+    head.innerHTML = `${providerIconHtml(prov, hasSel ? activeChatState().model.id : list[0]?.id ?? '')}<span class="col">
       <span>${esc(prov)}</span>
       <span class="desc">${list.length} model${list.length === 1 ? '' : 's'}${hasSel ? ' · in use' : ''}</span></span>
       <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>`;
     const fly = document.createElement('div');
     fly.className = 'dd-flyout';
     for (const m of list) {
-      const sel = state.model && state.model.provider === m.provider && state.model.id === m.id;
+      const sel = activeChatState().model && activeChatState().model.provider === m.provider && activeChatState().model.id === m.id;
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'dd-item' + (sel ? ' sel' : '');
-      b.innerHTML = `${logoHtml(m.provider, m.id)}<span class="col">
+      b.innerHTML = `${providerIconHtml(m.provider, m.id)}<span class="col">
         <span>${esc(m.name || m.id)}</span>
         <span class="desc">${esc(m.id)}${m.reasoning ? ' · reasoning' : ''}</span></span>
         ${m.contextWindow ? `<span class="sub">${fmt(m.contextWindow)}</span>` : ''}`;
@@ -916,22 +1245,24 @@ function renderModelMenu() {
 }
 const THINK_DESC = { off: 'No extended reasoning', low: 'Short reasoning', medium: 'Moderate reasoning', high: 'Deep reasoning', xhigh: 'Very deep reasoning', max: 'Maximum reasoning budget' };
 function renderThinking() {
-  const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
-  if (!levels.includes(state.thinking)) state.thinking = levels[0];
+  const levels = activeChatState().thinkingLevels?.length ? activeChatState().thinkingLevels : ['off'];
+  if (!levels.includes(activeChatState().thinking)) activeChatState().thinking = levels[0];
   const only = levels.length === 1;
-  $('thinkName').textContent = only && levels[0] === 'off' ? 'no reasoning' : state.thinking;
+  $('thinkName').textContent = only && levels[0] === 'off' ? 'no reasoning' : activeChatState().thinking;
   $('thinkBtn').style.opacity = only ? '.55' : '1';
   const menu = $('thinkMenu');
-  menu.innerHTML = `<div class="dd-group">Effort levels available for ${esc(state.model?.id ?? 'this model')}</div>`;
+  menu.innerHTML = `<div class="dd-group">Effort levels available for ${esc(activeChatState().model?.id ?? 'this model')}</div>`;
   for (const lv of levels) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'dd-item' + (lv === state.thinking ? ' sel' : '');
+    b.className = 'dd-item' + (lv === activeChatState().thinking ? ' sel' : '');
     b.innerHTML = `<span class="col"><span>${lv}</span><span class="desc">${THINK_DESC[lv] ?? ''}</span></span>`;
     b.addEventListener('click', async () => {
       thinkDd.classList.remove('open');
-      const r = await post('/api/thinking', { level: lv });
-      state.thinking = r.thinkingLevel ?? lv;
+      const key = activeChatKey();
+      const r = await post('/api/thinking', { level: lv }, { key, guardChat: true });
+      if (r.error || key !== activeChatKey()) return;
+      activeChatState().thinking = r.thinkingLevel ?? lv;
       renderThinking();
     });
     menu.appendChild(b);
@@ -939,61 +1270,50 @@ function renderThinking() {
 }
 // MOD+E: cycle through the reasoning effort levels of the current model
 async function cycleThinking() {
-  const levels = state.thinkingLevels?.length ? state.thinkingLevels : ['off'];
+  const levels = activeChatState().thinkingLevels?.length ? activeChatState().thinkingLevels : ['off'];
   if (levels.length <= 1) { toast('No other effort level available for this model'); return; }
-  let idx = levels.indexOf(state.thinking);
+  let idx = levels.indexOf(activeChatState().thinking);
   idx = (idx + 1) % levels.length;
   const lv = levels[idx];
-  const r = await post('/api/thinking', { level: lv });
-  state.thinking = r.thinkingLevel ?? lv;
+  const key = activeChatKey();
+  const r = await post('/api/thinking', { level: lv }, { key, guardChat: true });
+  if (r.error || key !== activeChatKey()) return;
+  activeChatState().thinking = r.thinkingLevel ?? lv;
   renderThinking();
-  toast(`Effort: ${state.thinking}`, true);
+  toast(`Effort: ${activeChatState().thinking}`, true);
 }
 
 /* ---------------- working directory ---------------- */
-function setCwdLabel(p) {
-  const parts = (p || '').split(/[\\/]/).filter(Boolean);
-  $('cwdLabel').textContent = parts.slice(-2).join('/') || p || '—';
-  $('cwdChip').title = 'Working folder: ' + p;
-  $('cwdInput').value = p;
-  renderTray();
-  // the hero names the project: a folder change has to rewrite it
-  const hero = $('hero');
-  if (hero) { hero.remove(); showHero(); }
-}
-/* An "empty" chat does not exist: it is just the home screen, a chat is born
-   with its first prompt. While we are there the folder can be changed freely;
-   as soon as the chat starts the path is part of it and the picker becomes
-   read-only. */
-let chatStarted = false;
-function setChatStarted(v) {
-  v = !!v;
-  if (v === chatStarted) return;
-  chatStarted = v;
-  $('cwdInput').readOnly = v;
-  $('cwdEditRow').style.display = v ? 'none' : '';
-  $('cwdHint').textContent = v
-    ? 'Chat already started: the folder can no longer be changed. Open a new chat to work somewhere else.'
-    : 'Working folder: the agent reads and edits the files inside it. You pick it here before starting the chat.';
+/* An "empty" chat does not exist: it is just the home screen. Once its first
+   prompt starts, folder mutability is permanently owned by that chat state. */
+function setChatStarted(value, key = activeChatKey()) {
+  if (!key) return;
+  uiState.chatState(key).started = Boolean(value);
+  if (key === activeChatKey()) renderContextHeader();
 }
 async function changeCwd(p) {
-  if (chatStarted) { toast('This chat has already started: the folder cannot be changed.'); return; }
+  const owner = activeChatState();
+  if (owner.started) { toast('This chat has already started: the folder cannot be changed.'); return; }
+  const key = activeChatKey();
   p = (p ?? $('cwdInput').value).trim().replace(/^["']|["']$/g, '');
   if (!p) return;
   $('cwdMsg').textContent = 'setting…';
-  const r = await post('/api/cwd', { path: p });
-  $('cwdMsg').textContent = '';
-  if (r.error) return; // toast already shown, chat untouched
+  const r = await post('/api/cwd', { path: p }, { key, guardChat: true, followKey: false });
+  if (key === activeChatKey()) $('cwdMsg').textContent = '';
+  if (r.error || key !== activeChatKey()) return; // toast already shown, chat untouched
   cwdDd.classList.remove('open');
   // changing folder means another chat: the server answers with the key of the
   // context that owns it, and the tab has to follow it (staying on the old
   // draft would send every later request to the previous folder)
-  if (r.key) setSessionKey(r.key);
-  state.cwd = r.cwd ?? p;
-  setCwdLabel(state.cwd);
-  await refreshAll();               // reload sessions and projects for the new folder
+  const target = uiState.chatState(r.key);
+  target.cwd = r.cwd ?? p;
+  const project = activeProjectCwd();
+  let tabId = uiState.activeTabId;
+  if (project && !sameCwd(project, target.cwd)) tabId = projectTabId(null);
+  const ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: target.key });
+  await refreshAll({ key: target.key, ticket });
   loadRecentCwds();
-  toast('Folder set: the chat will start in ' + state.cwd, true);
+  if (navigation.isCurrent(ticket)) toast('Folder set: the chat will start in ' + target.cwd, true);
 }
 $('cwdApply').addEventListener('click', () => changeCwd());
 $('cwdInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); changeCwd(); } });
@@ -1003,15 +1323,19 @@ $('browseBtn').addEventListener('click', async () => {
   try {
     // closing the dialog answers 409 `cancelled`: a choice, not a failure, so
     // it stays silent instead of raising a toast
-    const d = await api('/api/pick-folder', { method: 'POST' }, { quiet: ['cancelled'] });
+    const d = await api('/api/pick-folder', { method: 'POST' }, {
+      quiet: ['cancelled'], key: activeChatKey(), guardChat: true, followKey: false,
+    });
     if (d.error) return;
     if (d.path) await changeCwd(d.path);
   } finally { btn.disabled = false; }
 });
 // opens the working folder in the system file manager (changes neither chat nor folder)
 $('explorerBtn').addEventListener('click', async () => {
-  const r = await post('/api/open-explorer');
-  if (!r.error) cwdDd.classList.remove('open');
+  const key = activeChatKey();
+  if (!key) return;
+  const r = await post('/api/open-explorer', {}, { key, guardChat: true });
+  if (!r.error && key === activeChatKey()) cwdDd.classList.remove('open');
 });
 // The native features do not exist everywhere (no picker without zenity
 // on Linux, and so on): the server says what it can do and we hide the rest, so
@@ -1020,8 +1344,7 @@ let platformCaps = null;
 function applyPlatformCapabilities(caps) {
   if (!caps) return;
   platformCaps = caps;
-  $('browseBtn').classList.toggle('hide', !caps.pickFolder);
-  $('explorerBtn').parentElement.classList.toggle('hide', !caps.openFolder);
+  renderContextHeader();
   // without a native picker the text field is the only way to choose the folder
   if (!caps.pickFolder) $('cwdInput').placeholder = 'Paste the folder path here';
 }
@@ -1041,7 +1364,7 @@ function renderRecentCwds() {
   if (!recentCwds.length) { list.innerHTML = '<div class="sys" style="padding:.35rem .4rem">No recent folder</div>'; return; }
   for (const p of recentCwds) {
     const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
-    const cur = state.cwd && p.toLowerCase() === state.cwd.toLowerCase();
+    const cur = activeChatState().cwd && p.toLowerCase() === activeChatState().cwd.toLowerCase();
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'recentItem' + (cur ? ' cur' : '');
@@ -1103,7 +1426,7 @@ $('sidebarResize').addEventListener('pointerdown', (e) => {
 $('sidebarResize').addEventListener('dblclick', () => setSidebarWidth(230));
 
 /* ---------------- sessions ---------------- */
-let allSessions = [], currentSessionPath = null;
+let allSessions = [];
 const runningKeys = new Set();   // chats currently working (also in other tabs)
 // Chat lists sort on `modified`, an ISO string: parsed once and compared as a
 // number, which is what subtracting two Dates was already doing.
@@ -1118,12 +1441,6 @@ function chatLabel(key, max = 70) {
   if (!raw) return '(background chat)';
   return raw.length > max ? raw.slice(0, max - 1).trimEnd() + '\u2026' : raw;
 }
-// Second half of the header breadcrumb: the chat you are in, named exactly as
-// the sidebar names it. A chat that has not been born yet has no name at all.
-function renderChatTitle() {
-  const s = allSessions.find((x) => x.path === currentSessionPath);
-  $('chatTitle').textContent = sessionLabel(s).replace(/\s+/g, ' ').trim() || 'New chat';
-}
 function fmtDate(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -1131,17 +1448,34 @@ function fmtDate(iso) {
     ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
 }
+let sessionsLoading = null;
 async function loadSessions() {
-  // no per-project filter any more: the sidebar always shows every chat,
-  // "By project" grouping plus search are enough to find your way
-  const res = await api('/api/sessions?scope=all');
-  if (res.error) return;
-  allSessions = res.sessions ?? [];
-  currentSessionPath = sessionKey ?? res.current;
-  runningKeys.clear();
-  for (const k of res.running ?? []) runningKeys.add(k);
-  renderSessions();
-  renderProjTabs();
+  if (sessionsLoading) return sessionsLoading;
+  const loading = (async () => {
+    // no per-project filter any more: the sidebar always shows every chat,
+    // "By project" grouping plus search are enough to find your way
+    const raw = await api('/api/sessions?scope=all', undefined, { key: null, followKey: false });
+    if (raw.error) return;
+    const res = uiState.applySessionsPayload(raw);
+    allSessions = res.sessions;
+    if (!uiState.selection) selectCurrentChatState(renderedChatKey ?? res.current);
+    runningKeys.clear();
+    for (const k of res.running ?? []) runningKeys.add(k);
+    renderSessions();
+    renderProjTabs();
+    if (!uiState.selection) {
+      const tabId = uiState.activeTabId;
+      const ticket = navigation.switchTab(tabId, fallbackSelectionForTab);
+      if (!ticket.selection) await newChat({ tabId, ticket });
+      else if (ticket.selection.view === VIEW_CHAT) {
+        // Do not await a synchronization that includes this in-flight listing.
+        loadOpenChat(ticket);
+      }
+    }
+  })();
+  sessionsLoading = loading;
+  try { return await loading; }
+  finally { if (sessionsLoading === loading) sessionsLoading = null; }
 }
 // status+period chosen in the icon popover; 'all'/'all' = no active filter
 const isChatDone = (s) => chatArchiving && s.status === 'done';
@@ -1155,9 +1489,9 @@ function applyChatArchiving(enabled) {
   renderFilterMenu();
   renderSessions();
 }
-function passesSessionFilter(s) {
+function passesSessionFilter(s, projectCwd = activeProjectCwd()) {
   // project tabs: with a tab active the sidebar only shows that project's chats
-  if (projState.active && (s.cwd || '').toLowerCase() !== projState.active.toLowerCase()) return false;
+  if (projectCwd && (s.cwd || '').toLowerCase() !== projectCwd.toLowerCase()) return false;
   const { status, period } = sessionFilter;
   if (chatArchiving && status === 'active' && s.status === 'done') return false;
   if (chatArchiving && status === 'done' && s.status !== 'done') return false;
@@ -1186,15 +1520,15 @@ function matchesSessionSearch(s, words) {
 }
 // Filtered and ordered chats, shared by the sidebar and by the collapsed-sidebar
 // flyout: the two must never disagree on what "the most recent chats" are.
-function sessionsInOrder() {
+function sessionsInOrder(projectCwd = activeProjectCwd()) {
   const words = $('sessionSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
   // deep search results take the place of the list: the server has already
   // decided what matches, and only the project tab still narrows it down —
   // filters and title search could only take rows away from an answer the user
   // explicitly asked for.
   const list = deepResults
-    ? deepResults.filter((s) => !projState.active || (s.cwd || '').toLowerCase() === projState.active.toLowerCase())
-    : allSessions.filter((s) => passesSessionFilter(s) && matchesSessionSearch(s, words));
+    ? deepResults.filter((s) => !projectCwd || (s.cwd || '').toLowerCase() === projectCwd.toLowerCase())
+    : allSessions.filter((s) => passesSessionFilter(s, projectCwd) && matchesSessionSearch(s, words));
   const sort = sessionSort;
   // favorites always sit on top and among themselves are sorted by date (newest
   // first), whatever view/sort is selected; the rest follows the sort.
@@ -1230,7 +1564,7 @@ function orderForGrouping(list, groupBy) {
 function sessionItemEl(s) {
   const done = isChatDone(s);
   const div = document.createElement('div');
-  div.className = 'sessionItem' + (s.path === currentSessionPath ? ' active' : '') + (done ? ' done' : '');
+  div.className = 'sessionItem' + (s.path === activeChatKey() ? ' active' : '') + (done ? ' done' : '');
   // `title` is the server's summary of the chat, already falling back to the
   // truncated first message; the other two cover a payload without it.
   const label = sessionLabel(s) || '(empty)';
@@ -1257,10 +1591,25 @@ function sessionItemEl(s) {
   div.querySelector('.doneBtn')?.addEventListener('click', async (e) => {
     e.stopPropagation();
     const next = done ? 'active' : 'done';
+    // Marking the chat you are in as done means "I am finished with this one":
+    // the view then has to move on by itself, to the chat right below it in the
+    // sidebar. The list is read BEFORE the change, because after it the chat is
+    // either gone (the Active filter) or parked at the bottom, and in both cases
+    // "the one after" no longer exists to be found.
+    const leaving = next === 'done' && s.path === activeChatKey();
+    const before = leaving ? orderForGrouping(sessionsInOrder(), sessionGroup) : null;
     const r = await post('/api/status', { path: s.path, status: next });
     if (r.error) return;
     s.status = r.status ?? next;
     renderSessions();
+    if (!leaving) return;
+    const after = orderForGrouping(sessionsInOrder(), sessionGroup);
+    const i = before.findIndex((x) => x.path === s.path);
+    // downwards first, then upwards: whatever the filters left on screen
+    const order = i < 0 ? after : [...before.slice(i + 1), ...before.slice(0, i).reverse()];
+    const target = order.find((c) => c.path !== s.path && after.some((x) => x.path === c.path));
+    // nothing left to land on: the new-chat screen, exactly like emptying the list
+    if (target) await openSession(target); else await newChat();
   });
   // middle click or Ctrl+click = open the chat in a new tab (every tab has its own chat)
   const openInNewTab = () => window.open(
@@ -1283,7 +1632,12 @@ function fillSessionList(el, list, groupBy) {
         lastGroup = g;
         const h = document.createElement('div');
         h.className = 'sessGroup';
-        h.textContent = g;
+        if (groupBy === 'model' && !isChatDone(s) && !s.favorite) {
+          h.innerHTML = providerIconHtml(s.provider, s.model);
+          h.append(document.createTextNode(g));
+        } else {
+          h.textContent = g;
+        }
         el.appendChild(h);
       }
     }
@@ -1291,7 +1645,7 @@ function fillSessionList(el, list, groupBy) {
   }
 }
 function renderSessions() {
-  renderChatTitle();
+  renderContextHeader();
   const groupBy = sessionGroup;
   const list = orderForGrouping(sessionsInOrder(), groupBy);
   $('sessionCount').textContent = list.length;
@@ -1320,41 +1674,74 @@ function groupOf(s, mode) {
 
 // Switching chat interrupts nothing: the chat you leave keeps working on the
 // server and you find it again (result included) when you come back.
-async function openSession(s) {
-  showChat();
-  const r = await post(sessionPath(s.path, 'activate'), { cwd: s.cwd || undefined });
-  if (r.error) return;
-  setSessionKey(r.key ?? s.path);   // reattach the SSE to the new chat
-  await refreshAll();               // never rely on the SSE event alone
+async function openSession(s, { tabId = uiState.activeTabId } = {}) {
+  const previous = uiState.selection;
+  const ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
+  const r = await post(
+    sessionPath(s.path, 'activate'),
+    { cwd: s.cwd || undefined },
+    { followKey: false, key: s.path, ticket },
+  );
+  if (!navigation.isCurrent(ticket)) return;
+  if (r.error) {
+    if (previous && isNavigationSelectionAvailable(previous) && uiState.canSelect(previous)) {
+      navigation.transition(previous);
+    } else {
+      navigation.restoreActive(fallbackSelectionForTab);
+    }
+    return;
+  }
+  const key = r.key ?? s.path;
+  let activeTicket = ticket;
+  if (key !== s.path) {
+    uiState.rekeyChat(s.path, key);
+    activeTicket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: key });
+  }
+  showChatResource(key);            // the cached view was already shown by the transition
+  await loadOpenChat(activeTicket); // synchronize independently; never rely on SSE alone
+}
+// The transition has already restored the cached DOM synchronously. Network
+// synchronization starts afterwards and is split by owner: session listing is
+// global, history/state belong to the chat, files/Git to its project. Global
+// model and command catalogs are intentionally absent from ordinary switches.
+async function loadOpenChat(ticket) {
+  if (!navigation.isCurrent(ticket)) return;
+  const key = activeChatKey();
+  await navigationSync.synchronize(ticket, uiState.chatState(key).cwd);
 }
 // A project tab pins the folder: a chat started while it is active is born in
 // that project, whatever folder the chat we are leaving happened to use.
-async function newChat() {
-  showChat();
-  const r = await post('/api/sessions');
-  if (r.error) return;
-  setSessionKey(r.key);
-  const want = projState.active;
-  if (want && (r.cwd || '').toLowerCase() !== want.toLowerCase()) {
+async function newChat({ tabId = uiState.activeTabId, ticket = navigation.begin() } = {}) {
+  const project = uiState.projects.get(tabId);
+  if (!project) return;
+  const want = project.cwd;
+  const ownerKey = activeChatKey() ?? renderedChatKey;
+  const r = await post('/api/sessions', undefined, { followKey: false, key: ownerKey, ticket });
+  if (r.error || !navigation.isCurrent(ticket)) return;
+  let key = r.key;
+  let cwd = r.cwd ?? '';
+  if (want && cwd.toLowerCase() !== want.toLowerCase()) {
     // the folder of an unstarted chat is a new context: follow its key
-    const c = await post('/api/cwd', { path: want });
-    if (!c.error) {
-      if (c.key) setSessionKey(c.key);
-      state.cwd = c.cwd ?? want;
-    }
+    const c = await post('/api/cwd', { path: want }, { followKey: false, key, ticket });
+    if (c.error || !navigation.isCurrent(ticket)) return;
+    key = c.key ?? key;
+    cwd = c.cwd ?? want;
   }
-  await refreshAll();
-  $('input').focus();
+  const chatState = uiState.chatState(key);
+  chatState.cwd = cwd;
+  const committed = navigation.commit({ tabId, view: VIEW_CHAT, resourceId: key }, ticket);
+  if (!committed) return;
+  await loadOpenChat(committed);
+  if (navigation.isCurrent(committed)) $('input').focus();
 }
 // wrapped: the click event must not be read as the chat's folder
 $('newSessionBtn').addEventListener('click', () => newChat());
-// What the sidebar shows just changed (project tab, filters, sort, grouping):
-// the chat on screen follows it and becomes the first of the new list. Nothing
-// left to show means there is no chat to land on: the new-chat screen takes over.
+// What the sidebar shows just changed (filters, sort, grouping): the selected
+// chat follows it. Project-tab changes use their own remembered selection.
 async function syncChatToList() {
   const first = orderForGrouping(sessionsInOrder(), sessionGroup)[0];
   if (!first) return newChat();
-  if (first.path === currentSessionPath) { showChat(); return; }
+  if (first.path === activeChatKey()) { showChat(); return; }
   await openSession(first);
 }
 $('openPiTermBtn').addEventListener('click', () => openTerminal('pi'));
@@ -1433,7 +1820,7 @@ $('sessionSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') r
 async function cycleChat() {
   const list = sessionsInOrder();
   if (list.length < 2) { toast('No other chat in the sidebar'); return; }
-  const idx = list.findIndex((s) => s.path === currentSessionPath);
+  const idx = list.findIndex((s) => s.path === activeChatKey());
   await openSession(list[(idx + 1) % list.length]);
 }
 function setSidebarCollapsed(v) {
@@ -1490,22 +1877,55 @@ $('sidebarShowWrap').addEventListener('mouseleave', quickChatsLater);
 $('sidebarShow').addEventListener('focus', showQuickChats);
 
 /* ---- project tabs: one browser-style tab per open project (persisted) ---- */
-// { tabs: [cwd, ...], active: cwd | null } — null = no filter, every chat shows
-let projState = { tabs: [], active: null };
+// The open-tab list is configuration. The active tab and its view/resource are
+// derived only from uiState.selection, so tab, header and content cannot drift.
+let projState = { tabs: [] };
+let initialProjectCwd = null;
 try {
   const saved = JSON.parse(localStorage.getItem('piProjTabs') || '{}');
-  if (Array.isArray(saved.tabs)) projState = { tabs: saved.tabs.filter((t) => typeof t === 'string'), active: typeof saved.active === 'string' ? saved.active : null };
+  if (Array.isArray(saved.tabs)) projState.tabs = saved.tabs.filter((t) => typeof t === 'string');
+  if (typeof saved.active === 'string' && projState.tabs.includes(saved.active)) initialProjectCwd = saved.active;
 } catch {}
-if (projState.active && !projState.tabs.includes(projState.active)) projState.active = null;
+uiState.replaceProjectTabs(projState.tabs);
+uiState.setActiveTab(projectTabId(initialProjectCwd));
 const projName = (cwd) => (cwd || '').split(/[\\/]/).filter(Boolean).pop() || cwd;
-function saveProjTabs() { localStorage.setItem('piProjTabs', JSON.stringify(projState)); }
+function isNavigationSelectionAvailable(selection) {
+  if (selection.view === VIEW_SETTINGS) return true;
+  if (selection.view === VIEW_CHAT) {
+    return selection.resourceId === renderedChatKey || allSessions.some((s) => s.path === selection.resourceId);
+  }
+  return terminals.some((terminal) => terminal.id === selection.resourceId);
+}
+function fallbackSelectionForTab(tabId) {
+  const project = uiState.projects.get(tabId);
+  if (!project) return null;
+  const firstChat = orderForGrouping(sessionsInOrder(project.cwd), sessionGroup)[0];
+  if (firstChat) return { tabId, view: VIEW_CHAT, resourceId: firstChat.path };
+  const firstTerminal = terminals.find((terminal) => !project.cwd
+    || terminal.cwd.toLowerCase() === project.cwd.toLowerCase());
+  return firstTerminal ? { tabId, view: VIEW_TERMINAL, resourceId: firstTerminal.id } : null;
+}
+function selectCurrentChatState(key = renderedChatKey) {
+  if (!key || !uiState.chats.has(key)) return null;
+  if (uiState.selection && uiState.selection.view !== VIEW_CHAT) return null;
+  const tabId = uiState.activeTabId;
+  if (uiState.selection?.tabId === tabId && uiState.selection.resourceId === key) return null;
+  const project = uiState.projects.get(tabId);
+  const chatState = uiState.chats.get(key);
+  if (!project || (project.cwd !== null && (!chatState.cwd || project.cwd.toLowerCase() !== chatState.cwd.toLowerCase()))) return null;
+  return navigation.transition({ tabId, view: VIEW_CHAT, resourceId: key });
+}
+function saveProjTabs() {
+  localStorage.setItem('piProjTabs', JSON.stringify({ tabs: projState.tabs, active: activeProjectCwd() }));
+}
 function renderProjTabs() {
   const list = $('projTabList');
   list.innerHTML = '';
+  const active = activeProjectCwd();
   const mkTab = (label, cwd) => {
     const t = document.createElement('button');
     t.type = 'button';
-    t.className = 'projTab' + ((cwd ?? null) === projState.active ? ' on' : '');
+    t.className = 'projTab' + ((cwd ?? null) === active ? ' on' : '');
     t.title = cwd || 'All chats, whatever the project';
     const nm = document.createElement('span');
     nm.className = 'nm';
@@ -1526,26 +1946,30 @@ function renderProjTabs() {
   for (const cwd of projState.tabs) mkTab(projName(cwd), cwd);
 }
 async function activateProjTab(cwd) {
-  const changed = projState.active !== cwd;
-  projState.active = cwd;
-  saveProjTabs();
-  renderProjTabs();
-  renderSessions();
-  renderTerminals();   // the section follows the tab; the running PTYs are untouched
-  // switching project also lands you in it: the first chat the sidebar now
-  // shows, or a new chat in that project when it has none yet
-  if (changed) await syncChatToList();
+  if (cwd) uiState.registerProject(cwd);
+  const tabId = projectTabId(cwd);
+  const ticket = navigation.switchTab(tabId, fallbackSelectionForTab);
+  if (!ticket.selection) return newChat({ tabId, ticket });
+  if (ticket.selection.view !== VIEW_CHAT) return;
+  await loadOpenChat(ticket);
 }
-// `sync` off when the caller is about to activate another tab: two chat
-// switches racing each other would leave the view on the loser.
-function closeProjTab(cwd, { sync = true } = {}) {
-  projState.tabs = projState.tabs.filter((t) => t !== cwd);
-  if (projState.active === cwd) projState.active = null;
+async function closeProjTab(cwd, { landingCwd = null } = {}) {
+  const closingTabId = projectTabId(cwd);
+  const wasActive = uiState.activeTabId === closingTabId;
+  projState.tabs = projState.tabs.filter((tab) => tab !== cwd);
+  const landingTabId = wasActive ? projectTabId(landingCwd) : uiState.activeTabId;
+  const ticket = navigation.closeTab({
+    tabId: closingTabId,
+    projectCwds: projState.tabs,
+    landingTabId,
+    fallback: fallbackSelectionForTab,
+  });
   saveProjTabs();
   renderProjTabs();
-  renderSessions();
-  renderTerminals();
-  if (sync) syncChatToList();
+  if (!wasActive) return;
+  if (!ticket.selection) return newChat({ tabId: landingTabId, ticket });
+  if (ticket.selection.view !== VIEW_CHAT) return;
+  await loadOpenChat(ticket);
 }
 // "+" menu: every project we know of — the folders of the existing chats plus the
 // recent-folders list — minus the tabs already open
@@ -1553,19 +1977,18 @@ function closeProjTab(cwd, { sync = true } = {}) {
 function cycleProjTab() {
   const tabs = [null, ...projState.tabs];
   if (tabs.length < 2) { toast('No other project tab'); return; }
-  const idx = tabs.indexOf(projState.active);
+  const idx = tabs.indexOf(activeProjectCwd());
   return activateProjTab(tabs[(idx + 1) % tabs.length]);
 }
 // MOD+W: close the active project tab and land on the next one. On "All" there
 // is no tab to close, so the app itself goes.
 function closeCurrentProjTab() {
-  const cur = projState.active;
+  const cur = activeProjectCwd();
   if (!cur) { quitApp(); return; }
   const tabs = [null, ...projState.tabs];
   const next = tabs[(tabs.indexOf(cur) + 1) % tabs.length] ?? null;
   const land = next && projState.tabs.includes(next) ? next : null;
-  closeProjTab(cur, { sync: !land });       // leaves us on "All"
-  if (land) activateProjTab(land);
+  closeProjTab(cur, { landingCwd: land });
 }
 function quitApp() {
   if (!IS_ELECTRON) { toast('No project tab to close'); return; }
@@ -1634,28 +2057,96 @@ if (window.matchMedia('(max-width: 768px)').matches) {
 }
 
 /* ---------------- refresh helpers ---------------- */
-async function refreshChat() {
-  chat.innerHTML = '';
-  toolCards.clear();
-  currentAssistant = currentThinking = currentTurn = null;
-  await loadHistory();
+function disposeChatSnapshot(snapshot) {
+  snapshot.fragment.replaceChildren();
+  snapshot.toolCards.length = 0;
+  snapshot.currentAssistant = snapshot.currentThinking = snapshot.currentTurn = null;
 }
-let refreshing = false;
-async function refreshAll() {
-  if (refreshing) return;
-  refreshing = true;
-  try {
-    await loadState();
-    await Promise.all([loadModels(), loadFiles(), loadCommands()]);
-    await loadSessions();
-    await refreshChat();
-  } finally { refreshing = false; }
+function parkChatView(key) {
+  if (!key || chatCache.peek(key)?.view.snapshot) return;
+  stashComposerDraft(key);
+  const entry = uiState.chatViewState(key);
+  entry.composer.attachments = pending;
+  const fragment = document.createDocumentFragment();
+  chatCache.captureView(key, {
+    readScrollTop: () => chatWrap.scrollTop,
+    detachSnapshot: () => {
+      fragment.append(...chat.childNodes);
+      return {
+        fragment,
+        currentAssistant,
+        currentThinking,
+        currentTurn,
+        toolCards: [...toolCards],
+      };
+    },
+    disposeSnapshot: disposeChatSnapshot,
+  });
+  currentAssistant = currentThinking = currentTurn = null;
+  toolCards.clear();
+}
+function restoreChatView(key) {
+  const entry = uiState.chatViewState(key);
+  input.value = entry.composer.draft;
+  pending = entry.composer.attachments;
+  renderAttachments();
+  autoGrow();
+  const snapshot = chatCache.takeSnapshot(key);
+  chat.replaceChildren();
+  currentAssistant = currentThinking = currentTurn = null;
+  toolCards.clear();
+  if (snapshot) {
+    chat.append(snapshot.fragment);
+    currentAssistant = snapshot.currentAssistant;
+    currentThinking = snapshot.currentThinking;
+    currentTurn = snapshot.currentTurn;
+    for (const [id, card] of snapshot.toolCards) toolCards.set(id, card);
+  }
+  renderContextHeader();
+  if (entry.view.scrollTop !== null) chatWrap.scrollTop = entry.view.scrollTop;
+}
+async function refreshChat({ key = activeChatKey() ?? renderedChatKey, ticket = null } = {}) {
+  if (!key || (ticket && !navigation.isCurrent(ticket)) || activeChatKey() !== key) return;
+  const entry = uiState.chatViewState(key);
+  const preserveScroll = entry.view.scrollTop !== null || chat.children.length > 0;
+  await loadHistory({ key, ticket, replace: true, preserveScroll });
+}
+async function refreshAll({ key = activeChatKey() ?? renderedChatKey, ticket = null } = {}) {
+  if (!key) return;
+  const stateSync = loadState({ key, ticket });
+  await stateSync;
+  if (ticket && (!navigation.isCurrent(ticket) || activeChatKey() !== key)) return;
+  const projectCwd = uiState.chatState(key).cwd;
+  const results = await Promise.allSettled([
+    loadFiles({ key, projectCwd }),
+    refreshGit({ key, projectCwd }),
+    loadSessions(),
+    refreshChat({ key, ticket }),
+  ]);
+  for (const result of results) {
+    if (result.status === 'rejected') toast('Could not refresh the active scopes: ' + result.reason?.message);
+  }
 }
 
 /* ---------------- history ---------------- */
-async function loadHistory() {
-  const res = await api('/api/history');
-  if (res.error) return;
+async function loadHistory({
+  key = activeChatKey() ?? renderedChatKey,
+  ticket = null,
+  replace = false,
+  preserveScroll = false,
+} = {}) {
+  const res = await api('/api/history', undefined, { key, ticket, guardChat: Boolean(key) });
+  if (res.error || key !== activeChatKey()) return;
+  // Read this after HTTP completes: restoring the value captured when the
+  // request started would undo scrolling the user did while syncing.
+  const savedScrollTop = preserveScroll ? chatWrap.scrollTop : null;
+  if (replace) {
+    resetTasks(key);
+    chatCache.clearView(key);
+    chat.replaceChildren();
+    toolCards.clear();
+    currentAssistant = currentThinking = currentTurn = null;
+  }
   for (const m of res.messages ?? []) {
     const blocks = Array.isArray(m.blocks) && m.blocks.length
       ? m.blocks
@@ -1670,6 +2161,9 @@ async function loadHistory() {
     for (const b of blocks) {
       if (b.type === 'text') {
         lastText = bubble(m.role === 'user' ? 'user' : 'assistant', b.text ?? '', body);
+      } else if (b.type === 'skill' && m.role === 'user') {
+        lastText = skillInvocationElement(b);
+        body.appendChild(lastText);
       } else if (b.type === 'thinking') {
         bubble('thinking', b.text ?? '', body);
       } else if (b.type === 'tool') {
@@ -1685,7 +2179,7 @@ async function loadHistory() {
   }
   // turn still in progress (the chat kept working while you were elsewhere):
   // it is rebuilt from the server buffer and streaming continues live
-  if (res.turnModel) state.turnModel = res.turnModel;
+  if (res.turnModel) activeChatState().turnModel = res.turnModel;
   currentTurn = currentAssistant = currentThinking = null;
   for (const seg of res.live ?? []) {
     if (!currentTurn) currentTurn = newTurn('pi');
@@ -1698,48 +2192,84 @@ async function loadHistory() {
     } else if (seg.type === 'tool' && seg.tool) {
       currentAssistant = currentThinking = null;
       renderTool({ ...seg.tool, status: 'start' });
-      taskFromTool({ ...seg.tool, status: 'start' });
-      if (seg.tool.status === 'end') { renderTool({ ...seg.tool, status: 'end' }); taskFromTool({ ...seg.tool, status: 'end' }); }
+      taskFromTool({ ...seg.tool, status: 'start' }, key);
+      if (seg.tool.status === 'end') { renderTool({ ...seg.tool, status: 'end' }); taskFromTool({ ...seg.tool, status: 'end' }, key); }
       else if (seg.tool.output) renderTool({ ...seg.tool, status: 'update' });
     }
   }
   // the folder can still be chosen only if the chat never started
-  setChatStarted((res.messages ?? []).length > 0 || (res.live ?? []).length > 0);
+  setChatStarted((res.messages ?? []).length > 0 || (res.live ?? []).length > 0, key);
+  const owner = uiState.chatState(key);
+  if (res.streaming) {
+    owner.streaming = true;
+    owner.responsePhase = (res.live ?? []).some((segment) => segment.type === 'text' && segment.text)
+      ? RESPONSE_TEXT
+      : RESPONSE_WAITING;
+  }
   setRunning(!!res.streaming);
-  if (res.streaming && !agentTask) setAgentTask(true, res.turnModel);
-  else if (!res.streaming && agentTask && !agentTask.t1) setAgentTask(false);
+  renderQueuedPrompts(owner);
+  if (res.streaming && !owner.agentTask) setAgentTask(true, res.turnModel, key);
+  else if (!res.streaming && owner.agentTask && !owner.agentTask.t1) setAgentTask(false, null, key);
   if (!chat.children.length) showHero();
   else setHeroMode(false); // switching to a started chat: no hero, no tray
-  scrollDown();
+  if (savedScrollTop === null) scrollDown();
+  else chatWrap.scrollTop = savedScrollTop;
+  uiState.chatViewState(key).view.scrollTop = chatWrap.scrollTop;
 }
 
 /* ---------------- diff panel ---------------- */
-let activeFile = null;
 const dlines = (cls, t) => t.split('\n').map((l) => `<div class="diffline ${cls}">${esc(l) || ' '}</div>`).join('');
-async function loadFiles() {
-  const r = await api('/api/files');
-  const files = r.files ?? [];
+function renderProjectFiles(scope = activeProjectScope()) {
+  const files = scope?.files ?? [];
   $('diffCount').textContent = files.length;
   $('diffCount').classList.toggle('hide', !files.length);
   const list = $('fileList');
   list.innerHTML = '';
   for (const f of files) {
     const div = document.createElement('div');
-    div.className = 'fileItem' + (f.path === activeFile ? ' active' : '');
-    div.innerHTML = `<span title="${esc(f.path)}">${esc(f.path.split(/[\\/]/).pop())}</span><span class="b">${f.changes}</span>`;
-    div.addEventListener('click', () => showDiff(f.path));
+    const fileId = `${f.sourceKey}\0${f.path}`;
+    div.className = 'fileItem' + (fileId === scope.activeFile ? ' active' : '');
+    div.innerHTML = `<span title="${esc(`${f.path}\nSource chat: ${f.sourceKey}`)}">${esc(f.path.split(/[\\/]/).pop())}</span><span class="b">${f.changes}</span>`;
+    div.addEventListener('click', () => showDiff(f));
     list.appendChild(div);
   }
 }
-async function showDiff(p) {
-  activeFile = p;
-  await loadFiles();
-  const d = await api('/api/files/diff?path=' + encodeURIComponent(p));
+function renderProjectScope(scope = activeProjectScope()) {
+  renderProjectFiles(scope);
+  renderGit(scope);
+  $('diffBody').innerHTML = scope ? scope.diffHtml : '';
+}
+async function loadFiles({ key = activeChatKey() ?? renderedChatKey, projectCwd = projectScopeForChat(key)?.cwd } = {}) {
+  if (!key || !projectCwd) return;
+  const owner = uiState.projectState(projectCwd);
+  const r = await api('/api/files', undefined, {
+    key,
+    guard: () => isProjectScopeActive(owner.cwd),
+  });
+  if (r.error) return;
+  owner.files = r.files ?? [];
+  if (isProjectScopeActive(owner.cwd)) renderProjectFiles(owner);
+}
+async function showDiff(file) {
+  const key = activeChatKey();
+  const owner = projectScopeForChat(key);
+  if (!key || !owner) return;
+  const fileId = `${file.sourceKey}\0${file.path}`;
+  owner.activeFile = fileId;
+  owner.diffHtml = '';
+  renderProjectScope(owner);
+  await loadFiles({ key, projectCwd: owner.cwd });
+  const query = new URLSearchParams({ path: file.path, source: file.sourceKey });
+  const d = await api('/api/files/diff?' + query, undefined, {
+    key,
+    guard: () => isProjectScopeActive(owner.cwd) && owner.activeFile === fileId,
+  });
   if (d.error) return;
   let html = '';
   if (d.write) html += '<div class="hunk">' + dlines('add', d.write.content) + '</div>';
   for (const h of d.hunks) html += '<div class="hunk">' + dlines('del', h.oldText) + dlines('add', h.newText) + '</div>';
-  $('diffBody').innerHTML = html || '<div class="sys" style="padding:.5rem">(no change)</div>';
+  owner.diffHtml = html || '<div class="sys" style="padding:.5rem">(no change)</div>';
+  $('diffBody').innerHTML = owner.diffHtml;
 }
 $('navDiff').addEventListener('click', () => {
   const open = $('diffPanel').classList.toggle('open');
@@ -1754,33 +2284,43 @@ $('diffClose').addEventListener('click', () => {
 });
 
 /* ---------------- tasks panel: background processes OF THIS chat ------------
-   One entry for the agent turn (while it is running) and one for every
-   long-running tool (bash, task/agent, web) started in this chat. The list is
-   bound to the current chat: switching chat clears it and rebuilds it from the
-   server events/replay. */
-const tasks = new Map();          // toolCallId → { name, summary, t0, t1, error }
+   Tool and agent execution records live on their chat state. Switching only
+   changes which record set is projected; it never clears another chat. */
 const TASK_TOOLS = /^(bash|shell|task|agent|subagent|dispatch_agent|web_search|web_fetch|fetch)$/i;
-let agentTask = null;             // the agent turn currently running on this chat
-
-function resetTasks() { tasks.clear(); agentTask = null; syncTasks(); }
-function taskFromTool(ev) {
-  if (!TASK_TOOLS.test(ev.name || '')) return;
+function taskOwner(key = activeChatKey()) {
+  return key ? uiState.chatState(key) : uiState.pendingChat;
+}
+function resetTasks(key = activeChatKey()) {
+  const owner = taskOwner(key);
+  owner.tasks.clear();
+  owner.agentTask = null;
+  if (key === activeChatKey()) syncTasks();
+}
+function taskFromTool(ev, key = activeChatKey()) {
+  if (!key || !TASK_TOOLS.test(ev.name || '')) return;
+  const owner = taskOwner(key);
   if (ev.status === 'start') {
-    tasks.set(ev.id, { name: ev.name, summary: ev.summary || '', t0: Date.now(), t1: null, error: false });
+    owner.tasks.set(ev.id, { name: ev.name, summary: ev.summary || '', t0: Date.now(), t1: null, error: false });
   } else if (ev.status === 'end') {
-    const t = tasks.get(ev.id);
-    if (t) { t.t1 = Date.now(); t.error = !!ev.isError; }
+    const task = owner.tasks.get(ev.id);
+    if (task) { task.t1 = Date.now(); task.error = !!ev.isError; }
   }
-  syncTasks();
+  if (key === activeChatKey()) syncTasks();
 }
-function setAgentTask(on, model) {
-  if (on) agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
-  else if (agentTask) agentTask.t1 = Date.now();
-  syncTasks();
+function setAgentTask(on, model, key = activeChatKey()) {
+  if (!key) return;
+  const owner = taskOwner(key);
+  if (on && (!owner.agentTask || owner.agentTask.t1 !== null)) {
+    owner.agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
+  } else if (!on && owner.agentTask && !owner.agentTask.t1) {
+    owner.agentTask.t1 = Date.now();
+  }
+  if (key === activeChatKey()) syncTasks();
 }
-function taskList() {
-  const all = [...tasks.values()];
-  if (agentTask) all.push(agentTask);
+function taskList(key = activeChatKey()) {
+  const owner = taskOwner(key);
+  const all = [...owner.tasks.values()];
+  if (owner.agentTask) all.push(owner.agentTask);
   return all.sort((a, b) => (a.t1 ? 1 : 0) - (b.t1 ? 1 : 0) || b.t0 - a.t0);
 }
 function fmtDur(ms) {
@@ -1826,9 +2366,10 @@ $('navTasks').addEventListener('click', () => {
   if (open) renderTasks();
 });
 $('tasksRefresh').addEventListener('click', () => {
-  // "Clear": drop the finished tasks, keep only the running ones
-  for (const [id, t] of tasks) if (t.t1) tasks.delete(id);
-  if (agentTask?.t1) agentTask = null;
+  // "Clear": drop finished tasks only from the visible chat.
+  const owner = taskOwner();
+  for (const [id, task] of owner.tasks) if (task.t1) owner.tasks.delete(id);
+  if (owner.agentTask?.t1) owner.agentTask = null;
   syncTasks(); renderTasks();
 });
 $('tasksClose').addEventListener('click', () => {
@@ -1842,7 +2383,6 @@ $('tasksClose').addEventListener('click', () => {
    scrollback. The process itself lives in the server, so a page reload only
    costs the instance, never the session. */
 const termPanes = new Map();   // id -> { pane, term, fit, es }
-let activeTerminalId = null;
 
 // xterm parses colours itself and only understands hex and `rgb()/rgba()`: a
 // theme token written as `color-mix()` (or any other CSS colour function) is
@@ -1978,6 +2518,11 @@ function markTerminalExited(id, code) {
   entry.term.options.disableStdin = true;
   entry.term.options.cursorBlink = false;
   entry.term.write(`\r\n[process exited (code ${code}) — close this terminal with ×]\r\n`);
+  const terminal = terminals.find((item) => item.id === id);
+  if (terminal) terminal.exited = code;
+  const scoped = uiState.terminals.get(id);
+  if (scoped) scoped.exited = code;
+  renderContextHeader();
 }
 
 function openTerminalPane(id) {
@@ -2059,19 +2604,89 @@ function disposeTerminalPane(id) {
   try { entry.term.dispose(); } catch {}
   entry.pane.remove();
   termPanes.delete(id);
-  if (activeTerminalId === id) activeTerminalId = null;
 }
 
 function showTerminal(id) {
+  const terminal = terminals.find((item) => item.id === id);
+  if (!terminal) return;
+  const currentProject = activeProjectCwd();
+  const tabId = !currentProject || currentProject.toLowerCase() === terminal.cwd.toLowerCase()
+    ? uiState.activeTabId
+    : projectTabId(null);
+  navigation.transition({ tabId, view: VIEW_TERMINAL, resourceId: id });
+}
+
+function renderContextHeader(selection = uiState.selection) {
+  const selectedChat = selection?.view === VIEW_CHAT ? uiState.chats.get(selection.resourceId) : null;
+  const chatSession = selection?.view === VIEW_CHAT
+    ? allSessions.find((item) => item.path === selection.resourceId)
+    : null;
+  const chatHeader = chatHeaderState(selection, selectedChat, chatSession, {
+    canOpenFolder: platformCaps?.openFolder,
+  });
+  const terminal = selection?.view === VIEW_TERMINAL
+    ? terminals.find((item) => item.id === selection.resourceId)
+    : null;
+  const terminalHeader = terminalHeaderState(selection, terminal, {
+    canOpenFolder: platformCaps?.openFolder,
+    canCopyPath: Boolean(navigator.clipboard) || typeof document.execCommand === 'function',
+  });
+  $('mainHeader').dataset.view = selection?.view ?? VIEW_CHAT;
+  document.querySelector('.crumb').classList.toggle('hide', !chatHeader);
+  $('terminalHeader').classList.toggle('hide', !terminalHeader);
+
+  if (chatHeader) {
+    const parts = chatHeader.cwd.split(/[\\/]/).filter(Boolean);
+    $('cwdLabel').textContent = parts.slice(-2).join('/') || chatHeader.cwd || '—';
+    $('cwdChip').title = 'Working folder: ' + chatHeader.cwd;
+    $('chatTitle').textContent = chatHeader.title;
+    $('cwdInput').value = chatHeader.cwd;
+    $('cwdInput').readOnly = !chatHeader.canChangeFolder;
+    $('cwdInput').classList.toggle('hide', !chatHeader.canChangeFolder);
+    $('cwdEditRow').classList.toggle('hide', !chatHeader.canChangeFolder);
+    $('recentBox').classList.toggle('hide', !chatHeader.canChangeFolder);
+    $('browseBtn').classList.toggle('hide', !chatHeader.canChangeFolder || !platformCaps?.pickFolder);
+    $('cwdHint').textContent = chatHeader.canChangeFolder
+      ? 'Working folder: the agent reads and edits the files inside it. You pick it here before starting the chat.'
+      : 'Chat already started: the folder can no longer be changed. Open a new chat to work somewhere else.';
+    $('cwdOpenRow').classList.toggle('hide', !chatHeader.canOpenFolder);
+    $('explorerBtn').title = chatHeader.canOpenFolder
+      ? `Open ${chatHeader.cwd}`
+      : 'Opening folders is unavailable on this system';
+    renderTray();
+  }
+
+  if (!terminalHeader) return;
+  $('terminalFolder').textContent = terminalHeader.folder || 'Terminal';
+  $('terminalPath').textContent = terminalHeader.cwd;
+  $('terminalPath').title = terminalHeader.cwd;
+  $('terminalKind').textContent = terminalHeader.kind;
+  $('terminalStatus').textContent = terminalHeader.status;
+  $('terminalStatus').classList.toggle('running', terminalHeader.running);
+  $('terminalStatus').classList.toggle('exited', !terminalHeader.running);
+  $('terminalOpenFolderBtn').disabled = !terminalHeader.canOpenFolder;
+  $('terminalOpenFolderBtn').title = terminalHeader.canOpenFolder
+    ? `Open ${terminalHeader.cwd}`
+    : 'Opening folders is unavailable on this system';
+  $('terminalCopyPathBtn').disabled = !terminalHeader.canCopyPath;
+  $('terminalCopyPathBtn').title = terminalHeader.canCopyPath
+    ? `Copy ${terminalHeader.cwd}`
+    : 'Clipboard unavailable; select the path and use the browser menu';
+  const restarting = pendingTerminalRestarts.has(terminalHeader.id);
+  $('terminalRestartBtn').disabled = restarting;
+  $('terminalRestartBtn').textContent = restarting ? 'Restarting…' : 'Restart';
+  $('terminalCloseBtn').disabled = restarting;
+}
+
+function renderTerminalView(id) {
   const entry = openTerminalPane(id);
   if (!entry) return;
-  activeTerminalId = id;
   $('chatView').classList.add('hide');
   $('settingsView').classList.add('hide');
   $('termView').classList.remove('hide');
   $('navChat').classList.remove('on');
   $('navSettings').classList.remove('on');
-  for (const [paneId, e] of termPanes) e.pane.classList.toggle('hide', paneId !== id);
+  for (const [paneId, paneEntry] of termPanes) paneEntry.pane.classList.toggle('hide', paneId !== id);
   fitTerminal(id);
   entry.term.focus();
 }
@@ -2080,9 +2695,6 @@ function showTerminal(id) {
 // their scrollback survive, so coming back is instant.
 function hideTerminalView() {
   $('termView').classList.add('hide');
-  if (activeTerminalId === null) return;
-  activeTerminalId = null;
-  renderTerminals();   // the sidebar row must lose the highlight with the view
 }
 
 // The window is not the only thing that changes the width: the sidebar folds,
@@ -2091,7 +2703,10 @@ function hideTerminalView() {
 let termFitTimer = null;
 win.addEventListener('resize', () => {
   clearTimeout(termFitTimer);
-  termFitTimer = setTimeout(() => { if (activeTerminalId) fitTerminal(activeTerminalId); }, 120);
+  termFitTimer = setTimeout(() => {
+    const id = activeTerminalId();
+    if (id) fitTerminal(id);
+  }, 120);
 });
 
 /* ---------------- terminals in the sidebar ----------------
@@ -2101,16 +2716,18 @@ win.addEventListener('resize', () => {
    The quick-chat flyout deliberately stays out of this: it is a window on the
    chats, terminals have no business in it. */
 let terminals = [];
+const pendingTerminalRestarts = new Set();
 
 // A plain fetch, not api(): the endpoints answer 403 to anything that is not
 // loopback, and a LAN client would eat a toast at every boot for a feature it
 // simply does not have.
 async function loadTerminals() {
+  let payload;
   try {
     const r = await fetch('/api/terminals');
-    const d = r.ok ? await r.json() : null;
-    terminals = Array.isArray(d?.terminals) ? d.terminals : [];
-  } catch { terminals = []; }
+    payload = r.ok ? await r.json() : { terminals: [] };
+  } catch { payload = { terminals: [] }; }
+  terminals = uiState.applyTerminalsPayload(payload).terminals;
   renderTerminals();
 }
 
@@ -2122,7 +2739,7 @@ function terminalItemEl(t) {
   const div = document.createElement('div');
   const dead = hasExited(t);
   div.className = 'sessionItem termItem'
-    + (t.id === activeTerminalId ? ' active' : '') + (dead ? ' done' : '');
+    + (t.id === activeTerminalId() ? ' active' : '') + (dead ? ' done' : '');
   div.innerHTML = `<div class="acts"><button class="killBtn" title="Close this terminal">×</button></div>
     <div class="title"><span class="termIcon">${t.kind === 'pi' ? 'π' : '▢'}</span>${dead ? '' : '<span class="liveDot"></span>'}<span class="lbl"></span></div>
     <div class="meta">${dead ? '<span class="exited">exited</span>' : `<span>${t.kind === 'pi' ? 'pi' : 'powershell'}</span>`}</div>`;
@@ -2150,7 +2767,7 @@ function renderTermsChip() {
   menu.innerHTML = '<div class="dd-group">Running terminals</div>';
   for (const t of live) {
     const row = document.createElement('div');
-    row.className = 'termRow' + (t.id === activeTerminalId ? ' sel' : '');
+    row.className = 'termRow' + (t.id === activeTerminalId() ? ' sel' : '');
     row.innerHTML = `<button class="dd-item go"><span class="termIcon">${t.kind === 'pi' ? 'π' : '▢'}</span><span class="col"><span class="nm"></span><span class="pth"></span></span></button>
       <button class="btn icon kill" title="Close this terminal">×</button>`;
     row.querySelector('.nm').textContent = projName(t.cwd) || '(no folder)';
@@ -2171,7 +2788,7 @@ function renderTermsChip() {
 // the header stays global on purpose — it is the one place that answers "what is
 // still running anywhere?".
 function terminalsOfActiveProject() {
-  const act = (projState.active || '').toLowerCase();
+  const act = (activeProjectCwd() || '').toLowerCase();
   if (!act) return terminals;
   return terminals.filter((t) => (t.cwd || '').toLowerCase() === act);
 }
@@ -2186,12 +2803,20 @@ function renderTerminals() {
   // a terminal the server no longer knows about has no process to talk to:
   // its instance goes with the row
   const alive = new Set(terminals.map((t) => t.id));
-  const activeGone = activeTerminalId !== null && !alive.has(activeTerminalId);
+  const selectedTerminal = activeTerminalId();
+  const activeGone = selectedTerminal !== null
+    && !alive.has(selectedTerminal)
+    && !pendingTerminalRestarts.has(selectedTerminal);
   for (const id of [...termPanes.keys()]) if (!alive.has(id)) disposeTerminalPane(id);
   list.innerHTML = '';
   for (const t of shown) list.appendChild(terminalItemEl(t));
   renderTermsChip();
-  if (activeGone) showChat();
+  renderContextHeader();
+  if (activeGone) {
+    const ticket = navigation.restoreActive(fallbackSelectionForTab);
+    if (!ticket.selection) newChat({ tabId: uiState.activeTabId, ticket });
+    else if (ticket.selection.view === VIEW_CHAT) loadOpenChat(ticket);
+  }
 }
 
 // Selecting a terminal only swaps the view: the chat keeps streaming behind it
@@ -2213,11 +2838,102 @@ async function openTerminal(kind) {
   selectTerminal(r.id);
 }
 
+async function openVisibleTerminalFolder() {
+  const terminal = terminals.find((item) => item.id === activeTerminalId());
+  if (!terminal) return;
+  const button = $('terminalOpenFolderBtn');
+  button.disabled = true;
+  try {
+    const r = await api(`/api/terminals/${encodeURIComponent(terminal.id)}/open-folder`, {
+      method: 'POST',
+    }, { key: null, followKey: false });
+    if (!r.error) toast(`Opened ${r.cwd}`, true);
+  } finally {
+    renderContextHeader();
+  }
+}
+
+async function writeTerminalPathToClipboard(text) {
+  if (navigator.clipboard) return navigator.clipboard.writeText(text);
+  // Electron and plain-http LAN pages may not expose Clipboard API. A focused
+  // temporary input keeps the explicit Copy path action useful without
+  // changing the terminal's native context-menu fallback.
+  const input = document.createElement('input');
+  input.value = text;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  input.select();
+  try {
+    if (!document.execCommand('copy')) throw new Error('copy command refused');
+  } finally {
+    input.remove();
+  }
+}
+
+async function copyVisibleTerminalPath() {
+  const terminal = terminals.find((item) => item.id === activeTerminalId());
+  if (!terminal) return;
+  try {
+    await writeTerminalPathToClipboard(terminal.cwd);
+    toast('Terminal path copied', true);
+  } catch {
+    toast('Copy failed (browser clipboard permissions)');
+  }
+}
+
+async function restartVisibleTerminal() {
+  const id = activeTerminalId();
+  if (!id || pendingTerminalRestarts.has(id)) return;
+  pendingTerminalRestarts.add(id);
+  renderContextHeader();
+  try {
+    const r = await api(`/api/terminals/${encodeURIComponent(id)}/restart`, {
+      method: 'POST',
+    }, { key: null, followKey: false });
+    if (r.error) return;
+
+    const stillSelected = activeTerminalId() === id;
+    const next = uiState.applyTerminalsPayload({
+      terminals: [
+        ...terminals.filter((item) => item.id !== id && item.id !== r.terminal.id),
+        r.terminal,
+      ],
+    });
+    terminals = next.terminals;
+    disposeTerminalPane(id);
+    if (stillSelected) showTerminal(r.terminal.id);
+    else renderTerminals();
+    toast('Terminal restarted', true);
+  } finally {
+    pendingTerminalRestarts.delete(id);
+    renderTerminals();
+  }
+}
+
+$('terminalOpenFolderBtn').addEventListener('click', openVisibleTerminalFolder);
+$('terminalCopyPathBtn').addEventListener('click', copyVisibleTerminalPath);
+$('terminalRestartBtn').addEventListener('click', restartVisibleTerminal);
+$('terminalCloseBtn').addEventListener('click', () => {
+  const id = activeTerminalId();
+  if (id) killTerminal(id);
+});
+
 async function killTerminal(id) {
-  const r = await api(`/api/terminals/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const r = await api(`/api/terminals/${encodeURIComponent(id)}`, { method: 'DELETE' }, {
+    key: null,
+    followKey: false,
+  });
   if (r.error) return;
   terminals = terminals.filter((t) => t.id !== id);
-  disposeTerminalPane(id);   // this clears activeTerminalId if it was the open one
+  uiState.applyTerminalsPayload({ terminals });
+  disposeTerminalPane(id);
+  if (activeTerminalId() === id) {
+    const ticket = navigation.restoreActive(fallbackSelectionForTab);
+    if (!ticket.selection) newChat({ tabId: uiState.activeTabId, ticket });
+    else if (ticket.selection.view === VIEW_CHAT) loadOpenChat(ticket);
+  }
   renderTerminals();
 }
 
@@ -2306,7 +3022,58 @@ $('settingsView').addEventListener('scroll', () => {
   $('settingsNav').querySelectorAll('.snavItem').forEach((x) =>
     x.classList.toggle('on', x.dataset.target === current));
 });
-function showChat() {
+async function showChat() {
+  const tabId = uiState.activeTabId;
+  const current = uiState.selection;
+  if (current?.tabId === tabId && current.view === VIEW_CHAT && isNavigationSelectionAvailable(current)) {
+    return loadOpenChat(navigation.transition(current));
+  }
+  const sessionState = renderedChatKey ? uiState.chats.get(renderedChatKey) : null;
+  const project = uiState.projects.get(tabId);
+  if (sessionState && project
+      && (!project.cwd || sessionState.cwd.toLowerCase() === project.cwd.toLowerCase())) {
+    return loadOpenChat(navigation.transition({ tabId, view: VIEW_CHAT, resourceId: renderedChatKey }));
+  }
+  const fallback = fallbackSelectionForTab(tabId);
+  if (fallback?.view === VIEW_CHAT) return loadOpenChat(navigation.transition(fallback));
+  else newChat({ tabId });
+}
+function showSettings() {
+  navigation.settings();
+}
+function renderNavigationSelection(selection) {
+  renderContextHeader(selection);
+  if (selection.view === VIEW_CHAT) {
+    // Navigation commits before openSession starts HTTP. This call parks the
+    // previous DOM and restores the selected chat's cached snapshot in the
+    // same synchronous turn, so old content is never shown under a new header.
+    renderChatView(); // scroll restoration needs a laid-out container
+    navigationSync.show(selection);
+    renderCachedChatState();
+    renderProjectScope(projectScopeForChat(selection.resourceId));
+    connect(selection.resourceId);
+  } else {
+    parkChatView(renderedChatKey);
+    transport.closeDetailed();
+  }
+  saveProjTabs();
+  renderProjTabs();
+  renderSessions();
+  renderTerminals();
+  if (selection.view === VIEW_TERMINAL) renderTerminalView(selection.resourceId);
+  else if (selection.view === VIEW_SETTINGS) renderSettingsView();
+}
+function renderCachedChatState() {
+  renderContextHeader();
+  renderModelBtn();
+  renderThinking();
+  renderStats();
+  setRunning(activeChatState().streaming);
+  renderQueuedPrompts();
+  syncTasks();
+  renderUsageWidget();
+}
+function renderChatView() {
   $('chatView').classList.remove('hide');
   $('settingsView').classList.add('hide');
   hideTerminalView();
@@ -2316,7 +3083,7 @@ function showChat() {
   $('navTasks').classList.remove('hide');
   $('sidebar').classList.remove('mode-settings');   // the sidebar goes back to the chats
 }
-function showSettings() {
+function renderSettingsView() {
   $('chatView').classList.add('hide');
   $('settingsView').classList.remove('hide');
   hideTerminalView();
@@ -2567,14 +3334,25 @@ async function renderSettings() {
       <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
       <div class="themeGrid">${LOGO_STYLES.map((s) => `
         <button class="themeCard logoStyleCard" data-l="${s.id}">
-          <span class="prev">${['anthropic', 'openai', 'google', 'kimi'].map((p) => logoHtml(p, '', 'lg fixed')).join('')}</span>
+          <span class="prev">${['openrouter', 'openai', 'google', 'kimi'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
           <span class="nm">${esc(s.name)}</span>
         </button>`).join('')}</div>
     </div>
 
     <div class="sec" id="sec-usage">
-      <h3>Real account limits (claude.ai / kimi.com)</h3>
-      <p class="lead" style="margin:-.3rem 0 .8rem">This is not a public API: it replays what the browser sees on the usage pages of the two accounts. It needs your browser session — <b>it stays on this machine only</b>, in <code>~/.pi/agent/web-usage.json</code>, never committed. It has to be renewed when it expires.<br><b>Nothing to figure out:</b> copy the request with <b>Copy as cURL</b> and paste it below, the rest is derived from it.</p>
+      <h3>Account limits</h3>
+      <p class="lead" style="margin:-.3rem 0 .8rem">OpenAI can reuse the OAuth sign-in already managed by pi. Claude and Kimi use browser session credentials stored only on this machine in <code>~/.pi/agent/web-usage.json</code>. These are private provider endpoints and may change.</p>
+      <div class="card" style="padding:.9rem 1rem;margin-bottom:.7rem">
+        <div class="setRow">
+          <div>
+            <div class="k">openaiUsage <span class="badge">boolean</span>${usageCfg.openai?.configured ? '<span class="badge ok">pi OAuth ready</span>' : '<span class="badge no">pi OAuth unavailable</span>'}</div>
+            <div class="d">Read Codex subscription windows from OpenAI using pi's <code>openai-codex</code> OAuth. The token and full account ID stay on the server and are never copied into this app's settings.</div>
+            <div class="def">default: <code>off</code>. No OpenAI request is made until you enable it</div>
+          </div>
+          <div class="ctl"><span class="sw ${usageCfg.openai?.enabled ? 'on' : ''}" id="openaiUsageSw" role="switch" tabindex="0"></span><span class="saved" id="openaiUsageMsg"></span></div>
+        </div>
+      </div>
+      <p class="lead" style="margin:.9rem 0 .8rem"><b>Claude and Kimi:</b> copy the matching request from browser DevTools as cURL and paste it below. The saved session expires and then has to be renewed.</p>
       <div class="card" style="padding:.9rem 1rem;margin-bottom:.7rem">
         <h4 style="margin:0 0 .5rem;font-size:.82rem;color:var(--teal)">Claude (claude.ai)
           <span class="badge ${usageCfg.anthropic?.configured ? 'ok' : ''}" id="claudeCfgBadge">${usageCfg.anthropic?.configured ? 'configured' : 'not configured'}</span>
@@ -2675,6 +3453,14 @@ async function renderSettings() {
             <div class="def">default: <code>off</code> — turning it on covers the chats you open from now on, never the ones already there</div>
           </div>
           <div class="ctl"><span class="sw" id="titleGenSw" role="switch" tabindex="0"></span></div>
+        </div>
+        <div class="setRow" style="margin-top:.9rem;padding-top:.9rem;border-top:1px solid var(--line)">
+          <div>
+            <div class="k">lunaTitleFallback <span class="badge">boolean</span></div>
+            <div class="d">If Haiku is unavailable, allow one fallback request to <code>openai-codex/gpt-5.6-luna</code>. The first message then goes to OpenAI and uses your Codex subscription quota. A valid Haiku answer never falls back.</div>
+            <div class="def">default: <code>off</code> — separate consent, covering only chats opened after this switch is enabled</div>
+          </div>
+          <div class="ctl"><span class="sw" id="lunaTitleFallbackSw" role="switch" tabindex="0"></span></div>
         </div>
         <div id="titleGenDetails" class="hide" style="margin-top:.6rem">
           <div class="row" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
@@ -2837,10 +3623,13 @@ async function renderSettings() {
 
   /* ---- generated chat titles ---- */
   let titleGen = false;
+  let lunaTitleFallback = false;
   function drawTitleGen(cfg, msg = '') {
     if (cfg.error) return;
     titleGen = cfg.enabled === true;
+    lunaTitleFallback = cfg.lunaTitleFallback === true;
     $('titleGenSw').classList.toggle('on', titleGen);
+    $('lunaTitleFallbackSw').classList.toggle('on', lunaTitleFallback);
     // The backfill button lives behind the switch: turning the feature on is
     // the first consent, clicking the button the second one.
     $('titleGenDetails').classList.toggle('hide', !titleGen);
@@ -2853,6 +3642,15 @@ async function renderSettings() {
   $('titleGenSw').addEventListener('click', toggleTitleGen);
   $('titleGenSw').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTitleGen(); }
+  });
+  const toggleLunaTitleFallback = async () => {
+    drawTitleGen(await sendJson('PUT', '/api/title-generation', {
+      lunaTitleFallback: !lunaTitleFallback,
+    }));
+  };
+  $('lunaTitleFallbackSw').addEventListener('click', toggleLunaTitleFallback);
+  $('lunaTitleFallbackSw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLunaTitleFallback(); }
   });
   $('titleGenBackfillBtn').addEventListener('click', async () => {
     const r = await post('/api/title-generation/backfill');
@@ -2879,6 +3677,26 @@ async function renderSettings() {
   });
 
   /* ---- usage credentials handlers ---- */
+  let openAIUsageEnabled = usageCfg.openai?.enabled === true;
+  const openAIUsageSw = $('openaiUsageSw');
+  const toggleOpenAIUsage = async () => {
+    const next = !openAIUsageEnabled;
+    const result = await post('/api/usage/config', { provider: 'openai-codex', enabled: next });
+    if (result.error) {
+      $('openaiUsageMsg').textContent = result.error;
+      return;
+    }
+    openAIUsageEnabled = result.status?.openai?.enabled === true;
+    openAIUsageSw.classList.toggle('on', openAIUsageEnabled);
+    $('openaiUsageMsg').textContent = 'saved';
+    setTimeout(() => { if ($('openaiUsageMsg')) $('openaiUsageMsg').textContent = ''; }, 2500);
+    refreshUsage(true);
+  };
+  openAIUsageSw.addEventListener('click', toggleOpenAIUsage);
+  openAIUsageSw.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpenAIUsage(); }
+  });
+
   function cfgMsg(id, text, kind) {
     const el = $(id);
     el.textContent = text;
@@ -3006,7 +3824,7 @@ async function renderSettings() {
     enabledPatterns = r.value ?? [];
     $('enabledMsg').textContent = 'saved';
     drawEnabled();
-    loadModels();   // the picker at the top must reflect the list right away
+    loadModels({ force: true });   // explicit invalidation: the global picker changed
   }
 
   const onEnabledToggle = (e) => {
@@ -3036,7 +3854,7 @@ async function renderSettings() {
     $('modelCount').textContent = `${list.length} shown out of ${c.models.length}`;
     grid.innerHTML = list.map(({ m, i }) => `
       <button class="modelCard ${c.current && m.provider === c.current.provider && m.id === c.current.id ? 'sel' : ''} ${m.authed ? '' : 'off'}" data-i="${i}" ${m.authed ? '' : 'disabled title="provider not authenticated"'}>
-        <div class="h">${logoHtml(m.provider, m.id, 'lg')}
+        <div class="h">${providerIconHtml(m.provider, m.id, 'lg')}
           <div style="min-width:0"><div class="nm">${esc(m.name || m.id)}</div><div class="pv">${esc(m.provider)}/${esc(m.id)}</div></div>
         </div>
         <div class="row">
@@ -3078,21 +3896,40 @@ function renderAttachments() {
     el.appendChild(t);
   });
 }
-function addFiles(files) {
+function addFiles(files, ownerKey = activeChatKey() ?? renderedChatKey) {
+  if (!ownerKey) return;
+  const entry = uiState.chatViewState(ownerKey);
+  const reader = () => {
+    const r = new FileReader();
+    r.onloadend = chatCache.addCleanup(entry.key, () => {
+      r.onload = r.onloadend = r.onerror = null;
+      if (r.readyState === FileReader.LOADING) r.abort();
+    });
+    r.onerror = () => toast('Could not read attachment');
+    return r;
+  };
+  const append = (attachment) => {
+    if (chatCache.peek(entry.key) !== entry) return;
+    const attachments = entry.composer.attachments;
+    attachments.push(attachment);
+    if (entry.key === activeChatKey()) {
+      pending = attachments;
+      renderAttachments();
+    }
+  };
   for (const file of files) {
     if (!file) continue;
     if (file.type.startsWith('image/')) {
-      const r = new FileReader();
+      const r = reader();
       r.onload = () => {
         const url = String(r.result);
-        pending.push({ kind: 'image', name: file.name || 'image', url, data: url.split(',')[1], mimeType: file.type });
-        renderAttachments();
+        append({ kind: 'image', name: file.name || 'image', url, data: url.split(',')[1], mimeType: file.type });
       };
       r.readAsDataURL(file);
     } else if (file.type.startsWith('text/') || TEXT_EXT.test(file.name) || !file.type) {
       if (file.size > 512 * 1024) { toast(`${file.name}: too large (max 512 KB)`); continue; }
-      const r = new FileReader();
-      r.onload = () => { pending.push({ kind: 'file', name: file.name, text: String(r.result) }); renderAttachments(); };
+      const r = reader();
+      r.onload = () => append({ kind: 'file', name: file.name, text: String(r.result) });
       r.readAsText(file);
     } else toast(`${file.name}: unsupported type`);
   }
@@ -3122,30 +3959,45 @@ window.addEventListener('drop', (e) => {
 });
 
 /* ---------------- "/" slash commands: extension commands, prompt templates, skills ---------------- */
-let commandsCache = [];
-async function loadCommands() {
-  const r = await api('/api/commands');
-  commandsCache = r.commands ?? [];
+let commandsLoaded = false;
+let commandsLoading = null;
+const commandsCache = () => uiState.global.commands;
+async function loadCommands({ force = false } = {}) {
+  if (!force && commandsLoaded) return uiState.global.commands;
+  if (!force && commandsLoading) return commandsLoading;
+  const loading = (async () => {
+    const r = await api('/api/commands', undefined, { key: null, followKey: false });
+    if (r.error) return null;
+    const payload = uiState.applyCommandsPayload(r);
+    commandsLoaded = true;
+    return payload.commands;
+  })();
+  commandsLoading = loading;
+  try { return await loading; }
+  finally { if (commandsLoading === loading) commandsLoading = null; }
 }
 const CMD_SOURCE_LABEL = { extension: 'extension', prompt: 'prompt', skill: 'skill' };
 let cmdMenuOpen = false, cmdMenuItems = [], cmdMenuIndex = 0, cmdMenuRange = null;
-// only triggers for a "/" at the start of the current line, with no space typed
-// yet after it — exactly like a console command
+// A slash command can start any word, not only a line. The query ends at the
+// caret while the replacement range extends through the whole command token,
+// preserving prose on both sides when the caret sits inside an existing word.
 function slashToken() {
   const el = $('input');
   const v = el.value, pos = el.selectionStart;
   if (pos !== el.selectionEnd) return null;
-  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
-  const line = v.slice(lineStart, pos);
-  const m = /^\/([a-zA-Z0-9_:.-]*)$/.exec(line);
-  if (!m) return null;
-  return { query: m[1].toLowerCase(), start: lineStart, end: pos };
+  const match = /(^|\s)\/([a-zA-Z0-9_:.-]*)$/.exec(v.slice(0, pos));
+  if (!match) return null;
+  const start = match.index + match[1].length;
+  let end = pos;
+  while (end < v.length && /[a-zA-Z0-9_:.-]/.test(v[end])) end += 1;
+  return { query: match[2].toLowerCase(), start, end };
 }
 function updateCmdMenu() {
   const tok = slashToken();
-  if (!tok || !commandsCache.length) { closeCmdMenu(); return; }
+  const commands = commandsCache();
+  if (!tok || !commands.length) { closeCmdMenu(); return; }
   cmdMenuRange = tok;
-  cmdMenuItems = commandsCache
+  cmdMenuItems = commands
     .filter((c) => c.name.toLowerCase().includes(tok.query))
     .sort((a, b) => a.name.toLowerCase().indexOf(tok.query) - b.name.toLowerCase().indexOf(tok.query))
     .slice(0, 30);
@@ -3175,8 +4027,8 @@ function pickCmd(i) {
   const c = cmdMenuItems[i];
   if (!c || !cmdMenuRange) return;
   const { start, end } = cmdMenuRange;
-  const insert = '/' + c.name + ' ';
   const v = input.value;
+  const insert = '/' + c.name + (end === v.length ? ' ' : '');
   input.value = v.slice(0, start) + insert + v.slice(end);
   input.selectionStart = input.selectionEnd = start + insert.length;
   closeCmdMenu();
@@ -3196,41 +4048,125 @@ function autoGrow() {
   input.classList.toggle('scroll', input.scrollHeight > cap);
 }
 window.addEventListener('resize', autoGrow);
-input.addEventListener('input', () => { autoGrow(); updateCmdMenu(); });
+input.addEventListener('input', () => {
+  const key = activeChatKey();
+  if (key) chatCache.setDraft(key, input.value);
+  autoGrow();
+  updateCmdMenu();
+});
 input.addEventListener('click', updateCmdMenu);
 input.addEventListener('blur', () => setTimeout(closeCmdMenu, 150));
-$('composer').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  closeCmdMenu();
-  const text = input.value.trim();
-  if (!text && !pending.length) return;
-  const images = pending.filter((a) => a.kind === 'image').map((a) => ({ data: a.data, mimeType: a.mimeType }));
-  let payload = text;
-  for (const d of pending.filter((a) => a.kind === 'file')) {
-    payload += `\n\n--- attached file: ${d.name} ---\n\`\`\`\n${d.text}\n\`\`\``;
-  }
-  const body = newTurn('user');
-  // attachments BEFORE the text: images sit at the top of the message, as
-  // thumbnails, and the typed text stays below
-  if (pending.length) {
+let composerSubmitting = false;
+function setComposerSubmitting(value) {
+  composerSubmitting = value;
+  $('sendBtn').disabled = value;
+  $('queueActions').querySelectorAll('button').forEach((button) => { button.disabled = value; });
+}
+function acceptedUserTurn(text, attachments) {
+  const turn = document.createElement('div');
+  turn.className = 'turn user';
+  turn.dataset.sig = 'user';
+  const body = document.createElement('div');
+  body.className = 'body';
+  if (attachments.length) {
     const media = document.createElement('div');
     media.className = 'media';
-    for (const a of pending) {
-      if (a.kind === 'image') {
-        const img = document.createElement('img');
-        img.src = a.url; img.alt = a.name; img.title = a.name + ' — click to enlarge';
-        media.appendChild(img);
-      } else { const c = document.createElement('span'); c.className = 'filechip'; c.textContent = '📄 ' + a.name; media.appendChild(c); }
+    for (const attachment of attachments) {
+      if (attachment.kind === 'image') {
+        const image = document.createElement('img');
+        image.src = attachment.url;
+        image.alt = attachment.name;
+        image.title = attachment.name + ' — click to enlarge';
+        media.appendChild(image);
+      } else {
+        const file = document.createElement('span');
+        file.className = 'filechip';
+        file.textContent = '📄 ' + attachment.name;
+        media.appendChild(file);
+      }
     }
     body.appendChild(media);
   }
-  if (text) bubble('user', text, body);
-  input.value = ''; autoGrow();
-  stashComposerDraft(sessionKey);   // sent: nothing is pending on this chat any more
-  pending = []; renderAttachments();
-  scrollDown();
-  const r = await post('/api/prompt', { text: payload, images });
-  if (!r.error) { setChatStarted(true); setRunning(true); }
+  if (text) {
+    const skill = skillInvocationFromCommand(text, commandsCache());
+    if (skill) {
+      body.appendChild(skillInvocationElement(skill));
+    } else {
+      const message = document.createElement('div');
+      message.className = 'msg user';
+      message.textContent = text;
+      body.appendChild(message);
+    }
+  }
+  turn.appendChild(body);
+  return turn;
+}
+function clearAcceptedComposer(entry, draft, attachments) {
+  if (entry.composer.draft === draft) chatCache.setDraft(entry.key, '');
+  const sent = new Set(attachments);
+  entry.composer.attachments = entry.composer.attachments.filter((attachment) => !sent.has(attachment));
+  if (entry.key !== activeChatKey()) return;
+  input.value = entry.composer.draft;
+  pending = entry.composer.attachments;
+  autoGrow();
+  renderAttachments();
+}
+async function submitPrompt(queueType = null) {
+  if (composerSubmitting) return;
+  closeCmdMenu();
+  const key = activeChatKey();
+  if (!key) return;
+  const entry = uiState.chatViewState(key);
+  const draft = input.value;
+  const text = draft.trim();
+  const attachments = [...pending];
+  if (!text && !attachments.length) return;
+  chatCache.setDraft(key, draft);
+  entry.composer.attachments = pending;
+
+  const images = attachments
+    .filter((attachment) => attachment.kind === 'image')
+    .map((attachment) => ({ data: attachment.data, mimeType: attachment.mimeType }));
+  let payload = text;
+  for (const attachment of attachments.filter((item) => item.kind === 'file')) {
+    payload += `\n\n--- attached file: ${attachment.name} ---\n\`\`\`\n${attachment.text}\n\`\`\``;
+  }
+  const anchor = chat.lastElementChild;
+  setComposerSubmitting(true);
+  try {
+    const body = { text: payload, images };
+    if (queueType) body.type = queueType;
+    const result = await post('/api/prompt', body, { key, guardChat: true });
+    if (result.error) return;
+
+    clearAcceptedComposer(entry, draft, attachments);
+    // HTTP confirms acceptance, not current queue membership. A newer SSE
+    // dispatch/cancel may already have removed this item before HTTP arrives.
+    if (result.queued) return;
+
+    uiState.chatState(entry.key).started = true;
+    if (entry.key === activeChatKey() && entry.key === renderedChatKey) {
+      const hero = $('hero');
+      const insertionAnchor = anchor === hero ? null : anchor;
+      hero?.remove();
+      setHeroMode(false);
+      const turn = acceptedUserTurn(text, attachments);
+      if (insertionAnchor?.parentNode === chat) insertionAnchor.after(turn);
+      else chat.prepend(turn);
+      scrollDown();
+      // Lifecycle comes from status/state, not this possibly late HTTP ack.
+    }
+  } finally {
+    setComposerSubmitting(false);
+  }
+}
+$('composer').addEventListener('submit', (event) => {
+  event.preventDefault();
+  submitPrompt(activeChatState().streaming ? 'steer' : null);
+});
+$('queueActions').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-queue-type]');
+  if (button) submitPrompt(button.dataset.queueType);
 });
 input.addEventListener('keydown', (e) => {
   if (cmdMenuOpen) {
@@ -3298,7 +4234,25 @@ function closeLightbox() {
   $('lightbox').classList.remove('on');
   $('lightboxImg').src = '';
 }
-chat.addEventListener('click', (e) => {
+chat.addEventListener('click', async (e) => {
+  const queueRemove = e.target.closest('[data-queue-remove]');
+  if (queueRemove) {
+    await cancelQueuedPrompt(queueRemove.dataset.queueRemove);
+    return;
+  }
+  const copyBtn = e.target.closest('.codeCopyBtn');
+  if (copyBtn) {
+    const pre = copyBtn.closest('.codeBox')?.querySelector('pre');
+    const codeEl = pre?.querySelector('code');
+    await copyToClipboard(codeEl ? codeEl.innerText : pre?.innerText, copyBtn);
+    return;
+  }
+  const runBtn = e.target.closest('.codeRunBtn');
+  if (runBtn) {
+    const r = await post('/api/type-command', { command: runBtn.dataset.command });
+    if (!r.error) toast('Command typed in a new terminal — press Enter there to run it', true);
+    return;
+  }
   const img = e.target.closest('.media img, .msg img');
   if (img) openLightbox(img.src, img.alt);
 });
@@ -3373,21 +4327,27 @@ document.addEventListener('keydown', (e) => {
     case 'n': e.preventDefault(); newChat(); break;             // new chat
   }
 });
-$('abort').addEventListener('click', () => post('/api/abort'));
+$('abort').addEventListener('click', async () => {
+  const result = await post('/api/abort');
+  if (!result.error) closeResponseSpinner();
+});
+const STOPPED_PAGE = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi desktop ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
 $('quit').addEventListener('click', async () => {
   if (!confirm('Shut down the pi desktop ui server?\nThis page will stop working until you start it again with `npm start`.')) return;
-  try { await fetch('/api/shutdown', { method: 'POST' }); } catch {}
-  document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi desktop ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
+  if (!await askToStop('/api/shutdown')) return;
+  document.body.innerHTML = STOPPED_PAGE;
 });
-// POST /api/restart, with the confirmation the server asks for when the
-// restart would close live terminals. Answers `null` when the user backed out
-// — nothing was stopped and the page must stay exactly as it is.
-async function askForRestart() {
+// POST to a route that stops the server, with the confirmation the server asks
+// for when there is work it would interrupt: chats mid-turn, open terminals.
+// The counts are the server's — this page only knows what it last saw.
+// Answers `null` when the user backed out: nothing was stopped and the page
+// must stay exactly as it is.
+async function askToStop(route) {
   for (const force of [false, true]) {
     let payload = {};
     let status = 0;
     try {
-      const r = await fetch('/api/restart', {
+      const r = await fetch(route, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force }),
@@ -3395,9 +4355,8 @@ async function askForRestart() {
       status = r.status;
       payload = await r.json().catch(() => ({}));
     } catch { /* no answer at all: assume it is coming back, as before */ }
-    // The server counted the terminals it is about to kill: ask before it does.
-    if (status === 409 && payload?.error?.code === 'terminals_open') {
-      const err = errorInfo(payload, 'terminals will be closed by the restart');
+    if (status === 409 && payload?.error?.code === 'work_in_progress') {
+      const err = errorInfo(payload, 'this will stop the work in progress');
       if (!confirm(`${err.message}.\nContinue?`)) return null;
       continue;
     }
@@ -3410,11 +4369,11 @@ $('restartBtn').addEventListener('click', async () => {
   // Only the desktop shell restarts the server in place. Started from the
   // terminal it stops for good and says so with `restarting: false`: waiting
   // for it to come back would leave this page spinning on a dead server.
-  const answer = await askForRestart();
+  const answer = await askToStop('/api/restart');
   if (!answer) return;
   const restarting = answer.restarting !== false;
   if (!restarting) {
-    document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi desktop ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
+    document.body.innerHTML = STOPPED_PAGE;
     return;
   }
   document.body.innerHTML = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">Restarting pi desktop ui…<br><br>The page will reload by itself.</div>';
@@ -3429,57 +4388,74 @@ $('restartBtn').addEventListener('click', async () => {
 });
 
 /* ---------------- git status (branch + pending changes) ---------------- */
-let gitInfo = null;
-async function refreshGit() {
-  const g = await api('/api/git');
+async function refreshGit({ key = activeChatKey() ?? renderedChatKey, projectCwd = projectScopeForChat(key)?.cwd } = {}) {
+  if (!key || !projectCwd) return;
+  const owner = uiState.projectState(projectCwd);
+  const g = await api('/api/git', undefined, {
+    key,
+    guard: () => isProjectScopeActive(owner.cwd),
+  });
   if (g.error) return;
-  gitInfo = g;
-  renderGit();
+  owner.git = g;
+  if (isProjectScopeActive(owner.cwd)) renderGit(owner);
 }
-function renderGit() {
+function renderGit(scope = activeProjectScope()) {
+  const git = scope?.git;
   const chip = $('gitChip');
   renderTray(); // the tray shows the same branch, also when there is no repo
-  if (!gitInfo?.repo) { chip.classList.add('hide'); return; }
+  if (!git?.repo) { chip.classList.add('hide'); return; }
   chip.classList.remove('hide');
-  $('gitBranch').textContent = gitInfo.branch;
-  const n = gitInfo.changed ?? 0;
+  $('gitBranch').textContent = git.branch;
+  const n = git.changed ?? 0;
   const count = $('gitCount');
   count.textContent = n;
   count.classList.toggle('hide', !n);
-  count.classList.toggle('warn', (gitInfo.staged ?? 0) > 0);
+  count.classList.toggle('warn', (git.staged ?? 0) > 0);
   const sync = [];
-  if (gitInfo.ahead) sync.push(`↑ ${gitInfo.ahead} commits to push`);
-  if (gitInfo.behind) sync.push(`↓ ${gitInfo.behind} commits to pull`);
-  chip.title = `branch: ${gitInfo.branch}\n` +
-    `pending changes: ${n} (staged ${gitInfo.staged} · unstaged ${gitInfo.unstaged} · new ${gitInfo.untracked})\n` +
+  if (git.ahead) sync.push(`↑ ${git.ahead} commits to push`);
+  if (git.behind) sync.push(`↓ ${git.behind} commits to pull`);
+  chip.title = `branch: ${git.branch}\n` +
+    `pending changes: ${n} (staged ${git.staged} · unstaged ${git.unstaged} · new ${git.untracked})\n` +
     (sync.length ? sync.join(' · ') : 'in sync with the remote');
 }
 
 /* ---------------- boot ---------------- */
-async function loadState() {
-  const s = await api('/api/state');
-  if (s.error) return;
-  state.cwd = s.cwd;
-  state.model = s.current ?? state.model;
-  applyPlatformCapabilities(s.platform);
-  applyChatArchiving(s.chatArchiving);
-  setCwdLabel(s.cwd);
-  renderStats(s.chat, s.context, s.chatByModel);
-  setRunning(!!s.streaming);
-  renderUsageWidget();
-  refreshGit();
+async function loadState({ key = activeChatKey() ?? renderedChatKey, ticket = null } = {}) {
+  const raw = await api('/api/state', undefined, {
+    key, ticket,
+    guard: () => !uiState.selection || activeChatKey() === key,
+  });
+  if (raw.error || (ticket && key !== activeChatKey())) return;
+  const s = uiState.applyStatePayload(raw);
+  selectCurrentChatState(s.key);
+  applyPlatformCapabilities(uiState.global.platform);
+  applyChatArchiving(uiState.global.chatArchiving);
+  renderCachedChatState();
+  renderProjectScope(projectScopeForChat(s.key));
 }
 (async () => {
+  if (renderedChatKey) restoreChatView(renderedChatKey);
   connect();
   await loadState();
-  await Promise.all([loadModels(), loadFiles(), loadCommands(), loadRecentCwds()]);
+  // Global catalogs load once at bootstrap. Ordinary chat/tab switches only
+  // synchronize the selected chat, its project and the global session list.
+  await Promise.all([loadModels(), loadCommands(), loadRecentCwds()]);
   await loadSessions();
   await loadTerminals();
-  await refreshChat();
-  await refreshUsage();
+  await Promise.all([
+    refreshChat(),
+    loadFiles(),
+    refreshGit(),
+    refreshUsage(),
+  ]);
 })();
 // safety net: if SSE dies the sidebar must never go stale
-setInterval(() => { if (!document.hidden && es?.readyState === 2) { es.close(); connect(); } }, 5000);
+setInterval(() => {
+  if (!document.hidden && transport.detailedReadyState() === 2) {
+    transport.closeDetailed();
+    connect();
+  }
+}, 5000);
 // real account usage limits (claude.ai / kimi.com) — poll, don't hammer
 setInterval(() => { if (!document.hidden) refreshUsage(); }, 30000);
 // git branch / pending changes — light poll (the server caches for 5s)

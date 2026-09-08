@@ -1,48 +1,54 @@
-// Chat titles: what the sidebar shows while the summary is not there yet, what
-// it shows once it is, and the three ways a summary can fail without the user
-// ever noticing. No request leaves this file: `fetch` is replaced by a stub, so
-// a green run proves the fallbacks work offline too.
-//
-// The feature is off by default, so most of the file runs with the switch
-// turned on and with chats created after that instant — the only shape that
-// generates anything. The tests at the bottom pin the other side: switch off,
-// chat older than the switch, and the explicit backfill that ignores both.
+// Chat title generation is exercised with a fake ModelRuntime: no provider
+// request or real credential is used by this suite.
 import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 
-// AGENT_DIR is a module-level constant, so the override has to land before the
-// dynamic import below. PI_WEB_UI_TEST=1 is what makes it honoured at all.
 let agentDir;
 let titles;
 let store;
-const realFetch = globalThis.fetch;
-// A chat created right now: newer than the switch, hence covered by it.
-const justCreated = () => new Date();
-/** Every request the module made, in order. */
 let calls;
+let runtime;
 
-// A credential shaped like the one pi writes for an Anthropic subscription.
-const oauthCredential = (expires) => ({
-  anthropic: { type: "oauth", access: "sk-ant-oat01-test", refresh: "sk-ant-ort01-test", expires },
-});
+const justCreated = () => new Date();
+const HAIKU = "anthropic/claude-haiku-4-5";
+const LUNA = "openai-codex/gpt-5.6-luna";
 
-function stubFetch(handler) {
-  globalThis.fetch = async (url, init) => {
-    calls.push({ url, init });
-    return handler(url, init);
-  };
+/** @param {string} text */
+function assistant(text) {
+  return { content: [{ type: "text", text }] };
 }
 
-const answering = (title) =>
-  new Response(JSON.stringify({ content: [{ type: "text", text: title }] }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-
-const writeAuth = (data) => writeFile(path.join(agentDir, "auth.json"), JSON.stringify(data));
+/**
+ * @param {{
+ *   subscriptions?: string[],
+ *   models?: string[],
+ *   complete?: (...args: any[]) => Promise<any>
+ * }} [options]
+ */
+function fakeRuntime(options = {}) {
+  const {
+    subscriptions = ["anthropic", "openai-codex"],
+    models = [HAIKU, LUNA],
+    complete = async () => assistant("Generated title"),
+  } = options;
+  const subscribed = new Set(subscriptions);
+  const catalog = new Set(models);
+  return {
+    getModel(provider, id) {
+      return catalog.has(`${provider}/${id}`) ? { provider, id } : undefined;
+    },
+    isUsingSubscription(provider) {
+      return subscribed.has(provider);
+    },
+    async completeSimple(model, context, options) {
+      calls.push({ model, context, options });
+      return complete(model, context, options);
+    },
+  };
+}
 
 before(async () => {
   agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-titles-"));
@@ -50,251 +56,369 @@ before(async () => {
   process.env.PI_WEB_UI_AGENT_DIR = agentDir;
   titles = await import("../titles.mjs");
   store = await import("../session-store.mjs");
-  // Off is the default and the subject of its own test below; everything else
-  // needs the switch on to have anything to observe.
-  await store.setTitleGenerationEnabled(true);
 });
 
 after(async () => {
-  globalThis.fetch = realFetch;
   await rm(agentDir, { recursive: true, force: true });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   calls = [];
+  runtime = fakeRuntime();
+  titles.configureTitleModelRuntime(runtime);
+  await store.setTitleGenerationEnabled(false);
+  await store.setLunaTitleFallbackEnabled(false);
+  await store.setTitleGenerationEnabled(true);
 });
 
-test("fallbackTitle: one line, collapsed whitespace, cut when too long", () => {
+test("fallbackTitle collapses whitespace and cuts long first messages", () => {
   assert.equal(titles.fallbackTitle("  fix the\n  docker build  "), "fix the docker build");
-  assert.equal(titles.fallbackTitle(""), "");
   assert.equal(titles.fallbackTitle(undefined), "");
   const long = titles.fallbackTitle("x".repeat(500));
-  assert.equal(long.length, 101); // 100 characters plus the ellipsis
+  assert.equal(long.length, 101);
   assert.ok(long.endsWith("…"));
 });
 
-test("a chat with no cached title falls back at once and is summarized in the background", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => answering("Fix del container docker"));
+test("Haiku uses completeSimple once and the generated title is permanent", async () => {
+  runtime = fakeRuntime({ complete: async () => assistant("Fix del container docker") });
+  titles.configureTitleModelRuntime(runtime);
 
-  const first = await titles.titleFor("/sessions/a.jsonl", "ciao, mi si rompe il container docker", justCreated());
-  assert.equal(first, "ciao, mi si rompe il container docker"); // the old truncation
-
+  const first = await titles.titleFor(
+    "/sessions/primary.jsonl",
+    "ciao, mi si rompe il container docker",
+    justCreated(),
+  );
+  assert.equal(first, "ciao, mi si rompe il container docker");
   await titles.flushTitleQueue();
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://api.anthropic.com/v1/messages");
-  assert.equal(calls[0].init.headers.authorization, "Bearer sk-ant-oat01-test");
-  const body = JSON.parse(calls[0].init.body);
-  assert.equal(body.model, "claude-haiku-4-5");
-  assert.match(body.system[0].text, /^You are Claude Code/);
-  assert.equal(await titles.titleFor("/sessions/a.jsonl", "ciao, mi si rompe il container docker"), "Fix del container docker");
-});
-
-test("a title already in the cache is never generated again", async () => {
-  stubFetch(() => {
-    throw new Error("the cache must answer without a request");
-  });
-
-  assert.equal(await titles.titleFor("/sessions/a.jsonl", "whatever it was"), "Fix del container docker");
-  assert.equal(calls.length, 0);
+  assert.equal(`${calls[0].model.provider}/${calls[0].model.id}`, HAIKU);
+  assert.match(calls[0].context.systemPrompt, /at most seven words/);
+  assert.equal(calls[0].options.maxTokens, 32);
+  assert.equal(calls[0].options.cacheRetention, "none");
+  assert.equal(
+    await titles.titleFor("/sessions/primary.jsonl", "whatever it was"),
+    "Fix del container docker",
+  );
+  assert.equal(calls.length, 1, "a cached title must never be regenerated");
 
   const cached = JSON.parse(await readFile(path.join(agentDir, "web-ui-titles.json"), "utf8"));
-  assert.equal(cached["/sessions/a.jsonl"], "Fix del container docker");
+  assert.equal(cached["/sessions/primary.jsonl"], "Fix del container docker");
 });
 
-test("an expired token means no request at all, and the fallback stands", async () => {
-  await writeAuth(oauthCredential(Date.now() - 1_000));
-  stubFetch(() => answering("never asked for"));
+test("fallback off never contacts OpenAI when Haiku is unavailable", async () => {
+  runtime = fakeRuntime({ subscriptions: ["openai-codex"] });
+  titles.configureTitleModelRuntime(runtime);
 
-  assert.equal(await titles.titleFor("/sessions/b.jsonl", "expired token chat", justCreated()), "expired token chat");
-  await titles.flushTitleQueue();
-
-  assert.equal(calls.length, 0);
-  assert.equal(await titles.titleFor("/sessions/b.jsonl", "expired token chat", justCreated()), "expired token chat");
-});
-
-test("a missing credential is not an error either", async () => {
-  await writeAuth({});
-  stubFetch(() => answering("never asked for"));
-
-  assert.equal(await titles.titleFor("/sessions/c.jsonl", "no credential chat", justCreated()), "no credential chat");
-  await titles.flushTitleQueue();
-
-  assert.equal(calls.length, 0);
-});
-
-test("a refused request leaves the chat on its fallback, caches nothing and is not retried at once", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => new Response("upstream is down", { status: 500 }));
-
-  const t0 = Date.parse("2026-08-19T10:00:00Z");
-  assert.equal(await titles.titleFor("/sessions/d.jsonl", "server error chat", justCreated(), t0), "server error chat");
-  await titles.flushTitleQueue();
-
-  assert.equal(calls.length, 1);
-
-  // nothing was cached, so the row keeps its fallback — but the failure is not
-  // chased at every refresh of the list: the next attempt is ten minutes away.
-  const oneMinuteLater = t0 + 60_000;
   assert.equal(
-    await titles.titleFor("/sessions/d.jsonl", "server error chat", justCreated(), oneMinuteLater),
-    "server error chat",
+    await titles.titleFor("/sessions/no-fallback.jsonl", "private request", justCreated()),
+    "private request",
   );
   await titles.flushTitleQueue();
-  assert.equal(calls.length, 1);
-
-  const cached = JSON.parse(await readFile(path.join(agentDir, "web-ui-titles.json"), "utf8"));
-  assert.equal(cached["/sessions/d.jsonl"], undefined);
+  assert.equal(calls.length, 0);
 });
 
-test("a failing chat gets three attempts, ten minutes apart, and then no more", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => new Response("upstream is down", { status: 500 }));
+test("Haiku unavailable uses Luna once only with separate, non-retroactive consent", async () => {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const oldChat = new Date();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await store.setLunaTitleFallbackEnabled(true);
+  runtime = fakeRuntime({
+    subscriptions: ["openai-codex"],
+    complete: async () => assistant("Titolo generato da Luna"),
+  });
+  titles.configureTitleModelRuntime(runtime);
 
-  const t0 = Date.parse("2026-08-19T12:00:00Z");
-  const minutes = (n) => t0 + n * 60_000;
-  const listAt = async (now) => {
-    await titles.titleFor("/sessions/flaky.jsonl", "flaky chat", justCreated(), now);
+  await titles.titleFor("/sessions/luna.jsonl", "new fallback chat", justCreated());
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 1);
+  assert.equal(`${calls[0].model.provider}/${calls[0].model.id}`, LUNA);
+  assert.equal(await titles.titleFor("/sessions/luna.jsonl", "new fallback chat"), "Titolo generato da Luna");
+
+  calls = [];
+  await titles.titleFor("/sessions/pre-luna.jsonl", "older private chat", oldChat);
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 0, "enabling Luna must not cover older chats automatically");
+});
+
+test("a valid but imperfect Haiku answer never triggers Luna", async () => {
+  await store.setLunaTitleFallbackEnabled(true);
+  runtime = fakeRuntime({
+    complete: async (model) => {
+      if (model.provider === "openai-codex") throw new Error("Luna must not run");
+      return assistant("one two three four five six seven eight nine.");
+    },
+  });
+  titles.configureTitleModelRuntime(runtime);
+
+  await titles.titleFor("/sessions/imperfect.jsonl", "style does not trigger fallback", justCreated());
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 1);
+  assert.equal(`${calls[0].model.provider}/${calls[0].model.id}`, HAIKU);
+  assert.equal(
+    await titles.titleFor("/sessions/imperfect.jsonl", "style does not trigger fallback"),
+    "one two three four five six seven",
+  );
+});
+
+test("when both subscription models are absent no remote call is made", async () => {
+  await store.setLunaTitleFallbackEnabled(true);
+  titles.configureTitleModelRuntime(fakeRuntime({ subscriptions: [] }));
+
+  await titles.titleFor("/sessions/absent.jsonl", "no provider chat", justCreated());
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 0);
+});
+
+test("unavailable models do not requeue and recover when availability changes", async () => {
+  await store.setLunaTitleFallbackEnabled(true);
+  let available = false;
+  runtime = {
+    getModel(provider, id) {
+      return available && `${provider}/${id}` === HAIKU ? { provider, id } : undefined;
+    },
+    isUsingSubscription(provider) {
+      return available && provider === "anthropic";
+    },
+    async completeSimple(model, context, options) {
+      calls.push({ model, context, options });
+      return assistant("Recovered title");
+    },
+  };
+  titles.configureTitleModelRuntime(runtime);
+  const chat = { path: "/sessions/local-miss.jsonl", firstMessage: "provider unavailable" };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await titles.titleFor(chat.path, chat.firstMessage, justCreated());
+    await titles.flushTitleQueue();
+  }
+  const backfills = [];
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    backfills.push(await titles.queueMissingTitles([chat]));
+    await titles.flushTitleQueue();
+  }
+  assert.deepEqual(backfills, [0, 0, 0, 0, 0]);
+  assert.equal(calls.length, 0);
+
+  available = true;
+  assert.equal(await titles.queueMissingTitles([chat]), 1);
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 1);
+  assert.equal(await titles.titleFor(chat.path, chat.firstMessage), "Recovered title");
+});
+
+test("three remote failures ten minutes apart exhaust the chat budget", async () => {
+  runtime = fakeRuntime({ complete: async () => { throw new Error("upstream unavailable"); } });
+  titles.configureTitleModelRuntime(runtime);
+  const t0 = Date.parse("2026-09-07T12:00:00Z");
+  const listAt = async (minutes) => {
+    await titles.titleFor(
+      "/sessions/retry.jsonl",
+      "retry title generation",
+      justCreated(),
+      t0 + minutes * 60_000,
+    );
     await titles.flushTitleQueue();
   };
 
-  await listAt(t0); // first attempt
-  assert.equal(calls.length, 1);
-
-  await listAt(minutes(9)); // too soon: the window is ten minutes
-  assert.equal(calls.length, 1);
-
-  await listAt(minutes(10)); // second attempt
-  assert.equal(calls.length, 2);
-
-  await listAt(minutes(21)); // third and last attempt
+  await listAt(0);
+  await listAt(9);
+  assert.equal(calls.length, 1, "cooldown blocks an early retry");
+  await listAt(10);
+  await listAt(20);
   assert.equal(calls.length, 3);
+  await listAt(30);
+  await listAt(24 * 60);
+  assert.equal(calls.length, 3, "the budget does not reset with time");
+});
 
-  await listAt(minutes(40));
-  await listAt(minutes(60 * 24)); // a day later: the budget is spent for good
-  assert.equal(calls.length, 3);
+test("Haiku and Luna share one budget of three remote calls", async () => {
+  await store.setLunaTitleFallbackEnabled(true);
+  runtime = fakeRuntime({ complete: async () => { throw new Error("provider unavailable"); } });
+  titles.configureTitleModelRuntime(runtime);
+  const t0 = Date.parse("2026-09-07T14:00:00Z");
 
-  // the explicit backfill does not buy extra attempts either
+  await titles.titleFor("/sessions/shared-budget.jsonl", "fallback retry", justCreated(), t0);
+  await titles.flushTitleQueue();
+  assert.deepEqual(calls.map((call) => `${call.model.provider}/${call.model.id}`), [HAIKU, LUNA]);
+
+  await titles.titleFor(
+    "/sessions/shared-budget.jsonl",
+    "fallback retry",
+    justCreated(),
+    t0 + 10 * 60_000,
+  );
+  await titles.flushTitleQueue();
+  assert.deepEqual(calls.map((call) => `${call.model.provider}/${call.model.id}`), [HAIKU, LUNA, HAIKU]);
+});
+
+test("requestTitle applies its timeout through the runtime signal", async () => {
+  let observedSignal;
+  runtime = fakeRuntime({
+    complete: async (_model, _context, options) => {
+      observedSignal = options.signal;
+      await new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    },
+  });
+
+  const result = await titles.requestTitle("timeout chat", runtime, undefined, 5);
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.attempted, true);
+  assert.equal(observedSignal.aborted, true);
+});
+
+test("duplicate listings queue one request and only 1000 input characters", async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  runtime = fakeRuntime({
+    complete: async () => {
+      await pending;
+      return assistant("Long message summarized");
+    },
+  });
+  titles.configureTitleModelRuntime(runtime);
+  const text = "y".repeat(5000);
+
+  await Promise.all([
+    titles.titleFor("/sessions/deduplicated.jsonl", text, justCreated()),
+    titles.titleFor("/sessions/deduplicated.jsonl", text, justCreated()),
+  ]);
+  assert.equal(calls.length, 1);
+  release();
+  await titles.flushTitleQueue();
+  assert.equal(calls[0].context.messages[0].content.length, 1000);
+});
+
+test("backfill is explicit, requires the primary toggle, and follows Luna's toggle", async () => {
+  await store.setTitleGenerationEnabled(false);
+  await store.setLunaTitleFallbackEnabled(true);
+  titles.configureTitleModelRuntime(fakeRuntime({ subscriptions: ["openai-codex"] }));
+
   assert.equal(
-    await titles.queueMissingTitles([{ path: "/sessions/flaky.jsonl", firstMessage: "flaky chat" }], minutes(60 * 24)),
+    await titles.queueMissingTitles([{ path: "/sessions/backfill-off.jsonl", firstMessage: "old chat" }]),
     0,
   );
   await titles.flushTitleQueue();
-  assert.equal(calls.length, 3);
-});
-
-test("a request that never left does not spend an attempt", async () => {
-  await writeAuth({}); // no credential: the queue is dropped before any fetch
-  stubFetch(() => answering("never asked for"));
-
-  const t0 = Date.parse("2026-08-19T14:00:00Z");
-  await titles.titleFor("/sessions/tokenless.jsonl", "tokenless chat", justCreated(), t0);
-  await titles.flushTitleQueue();
   assert.equal(calls.length, 0);
 
-  // once the credential is back the chat is summarized right away, without
-  // waiting out a ten minute window it never earned
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => answering("Chat senza token"));
-  await titles.titleFor("/sessions/tokenless.jsonl", "tokenless chat", justCreated(), t0 + 1_000);
+  await store.setTitleGenerationEnabled(true);
+  assert.equal(
+    await titles.queueMissingTitles([{ path: "/sessions/backfill-on.jsonl", firstMessage: "old chat" }]),
+    1,
+  );
   await titles.flushTitleQueue();
-  assert.equal(calls.length, 1);
-  assert.equal(await titles.titleFor("/sessions/tokenless.jsonl", "tokenless chat"), "Chat senza token");
+  assert.equal(`${calls[0].model.provider}/${calls[0].model.id}`, LUNA);
 });
 
-test("a network failure is swallowed, the queue survives it", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => {
-    throw new Error("getaddrinfo ENOTFOUND");
+test("primary consent is off by default behavior and never retroactive", async () => {
+  const beforePrimary = new Date(Date.now() - 60_000);
+  await store.setTitleGenerationEnabled(false);
+  await titles.titleFor("/sessions/primary-off.jsonl", "switch is off", justCreated());
+  await store.setTitleGenerationEnabled(true);
+  await titles.titleFor("/sessions/primary-old.jsonl", "older chat", beforePrimary);
+  await titles.titleFor("/sessions/primary-undated.jsonl", "undated chat", undefined);
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 0);
+});
+
+test("a valid empty Haiku response does not authorize Luna", async () => {
+  await store.setLunaTitleFallbackEnabled(true);
+  runtime = fakeRuntime({ complete: async () => assistant("   ") });
+  titles.configureTitleModelRuntime(runtime);
+
+  await titles.titleFor("/sessions/empty-answer.jsonl", "empty model answer", justCreated());
+  await titles.flushTitleQueue();
+  assert.deepEqual(calls.map((call) => `${call.model.provider}/${call.model.id}`), [HAIKU]);
+});
+
+test("one failed job does not stop the single worker from processing the next", async () => {
+  let invocation = 0;
+  runtime = fakeRuntime({
+    complete: async () => {
+      invocation += 1;
+      if (invocation === 1) throw new Error("first request failed");
+      return assistant("Second chat title");
+    },
   });
+  titles.configureTitleModelRuntime(runtime);
 
-  assert.equal(await titles.titleFor("/sessions/e.jsonl", "offline chat", justCreated()), "offline chat");
+  assert.equal(await titles.queueMissingTitles([
+    { path: "/sessions/queue-failure.jsonl", firstMessage: "first chat" },
+    { path: "/sessions/queue-success.jsonl", firstMessage: "second chat" },
+  ]), 2);
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 2);
+  assert.equal(await titles.titleFor("/sessions/queue-success.jsonl", "second chat"), "Second chat title");
+});
+
+test("backfill skips cached chats and blank first messages", async () => {
+  runtime = fakeRuntime({ complete: async () => assistant("Already cached title") });
+  titles.configureTitleModelRuntime(runtime);
+  await titles.titleFor("/sessions/backfill-cached.jsonl", "cached chat", justCreated());
+  await titles.flushTitleQueue();
+  calls = [];
+
+  assert.equal(await titles.queueMissingTitles([
+    { path: "/sessions/backfill-cached.jsonl", firstMessage: "cached chat" },
+    { path: "/sessions/backfill-blank.jsonl", firstMessage: "   " },
+    { path: "/sessions/backfill-new.jsonl", firstMessage: "new old chat" },
+  ]), 1);
   await titles.flushTitleQueue();
   assert.equal(calls.length, 1);
-
-  stubFetch(() => answering("A working title"));
-  await titles.titleFor("/sessions/f.jsonl", "second chat", justCreated());
-  await titles.flushTitleQueue();
-  assert.equal(await titles.titleFor("/sessions/f.jsonl", "second chat", justCreated()), "A working title");
 });
 
-test("with the switch off, listing a chat sends nothing at all", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => answering("never asked for"));
-  await store.setTitleGenerationEnabled(false);
-
-  try {
-    assert.equal(await titles.titleFor("/sessions/off.jsonl", "switched off chat", justCreated()), "switched off chat");
+test("SDK error messages authorize Luna and never cache partial failure text", async () => {
+  await store.setLunaTitleFallbackEnabled(true);
+  for (const stopReason of ["error", "aborted"]) {
+    const sessionPath = `/sessions/sdk-${stopReason}.jsonl`;
+    titles.configureTitleModelRuntime(fakeRuntime({
+      complete: async (model) => model.provider === "anthropic"
+        ? { ...assistant("Partial failure text"), stopReason }
+        : assistant("Recovered title"),
+    }));
+    calls = [];
+    await titles.titleFor(sessionPath, "provider failure", justCreated());
     await titles.flushTitleQueue();
-    assert.equal(calls.length, 0);
-  } finally {
-    await store.setTitleGenerationEnabled(true);
+    assert.deepEqual(calls.map((call) => `${call.model.provider}/${call.model.id}`), [HAIKU, LUNA]);
+    assert.equal(await titles.titleFor(sessionPath, "provider failure"), "Recovered title");
   }
 });
 
-test("the switch is not retroactive: a chat older than it is left alone", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => answering("never asked for"));
-
-  const beforeTheSwitch = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  assert.equal(await titles.titleFor("/sessions/old.jsonl", "last week's chat", beforeTheSwitch), "last week's chat");
-  // an unknown creation date counts as older, never as newer
-  assert.equal(await titles.titleFor("/sessions/undated.jsonl", "undated chat", undefined), "undated chat");
-  await titles.flushTitleQueue();
-
-  assert.equal(calls.length, 0);
-});
-
-test("queueMissingTitles is the explicit click: it covers the old chats, switch or not", async () => {
-  await writeAuth(oauthCredential(Date.now() + 3_600_000));
-  stubFetch(() => answering("Chat di la settimana scorsa"));
-  await store.setTitleGenerationEnabled(false);
-
-  try {
-    const queued = await titles.queueMissingTitles([
-      { path: "/sessions/old.jsonl", firstMessage: "last week's chat" },
-      // already summarized earlier in this file: never asked for twice
-      { path: "/sessions/a.jsonl", firstMessage: "ciao, mi si rompe il container docker" },
-      // no first message, nothing to summarize
-      { path: "/sessions/empty.jsonl", firstMessage: "   " },
-    ]);
-    assert.equal(queued, 1);
-
-    await titles.flushTitleQueue();
-    assert.equal(calls.length, 1);
-    assert.equal(
-      await titles.titleFor("/sessions/old.jsonl", "last week's chat"),
-      "Chat di la settimana scorsa",
-    );
-  } finally {
+test("revoking title consent prevents queued calls and a not-yet-started Luna fallback", async () => {
+  for (const toggle of ["primary", "luna"]) {
     await store.setTitleGenerationEnabled(true);
+    await store.setLunaTitleFallbackEnabled(true);
+    let release;
+    const response = new Promise((resolve) => { release = resolve; });
+    let started;
+    const firstStarted = new Promise((resolve) => { started = resolve; });
+    calls = [];
+    titles.configureTitleModelRuntime(fakeRuntime({ complete: async (model) => {
+      if (model.provider === "anthropic") {
+        started();
+        await response;
+        return { ...assistant(""), stopReason: "error" };
+      }
+      return assistant("Luna title");
+    } }));
+    await titles.titleFor(`/sessions/revoke-${toggle}.jsonl`, "first request", justCreated());
+    await firstStarted;
+    if (toggle === "primary") {
+      await titles.titleFor("/sessions/revoke-backlog.jsonl", "queued request", justCreated());
+      await store.setTitleGenerationEnabled(false);
+    } else {
+      await store.setLunaTitleFallbackEnabled(false);
+    }
+    release();
+    await titles.flushTitleQueue();
+    assert.deepEqual(calls.map((call) => `${call.model.provider}/${call.model.id}`), [HAIKU]);
   }
 });
 
-test("requestTitle: prose becomes a title, an unusable answer becomes null", async () => {
-  stubFetch(() => answering('  "Refactor the session store"  '));
-  assert.equal(await titles.requestTitle("refactor please", "sk-ant-oat01-test"), "Refactor the session store");
-
-  stubFetch(() => answering("one two three four five six seven eight nine"));
-  assert.equal(await titles.requestTitle("count", "sk-ant-oat01-test"), "one two three four five six seven");
-
-  stubFetch(() => answering("   "));
-  assert.equal(await titles.requestTitle("empty answer", "sk-ant-oat01-test"), null);
-
-  stubFetch(() => new Response(JSON.stringify({ error: "nope" }), { status: 200 }));
-  assert.equal(await titles.requestTitle("unknown shape", "sk-ant-oat01-test"), null);
-
-  calls = [];
-  assert.equal(await titles.requestTitle("", "sk-ant-oat01-test"), null);
-  assert.equal(await titles.requestTitle("no token", ""), null);
+test("an empty input never calls the runtime", async () => {
+  const outcome = await titles.requestTitle("", runtime);
+  assert.deepEqual(outcome, { status: "unavailable", attempted: false, title: null });
   assert.equal(calls.length, 0);
-});
-
-test("only the first 1000 characters of the first message are ever sent", async () => {
-  stubFetch(() => answering("Long message summarized"));
-  await titles.requestTitle("y".repeat(5000), "sk-ant-oat01-test");
-
-  const body = JSON.parse(calls[0].init.body);
-  assert.equal(body.messages[0].content.length, 1000);
 });

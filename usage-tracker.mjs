@@ -1,14 +1,16 @@
 /**
  * usage-tracker.mjs — reads *real* account usage limits directly from the
- * providers' own web apps (claude.ai / kimi.com), using session credentials
- * captured manually by the user from their browser DevTools.
+ * providers' own account services. Claude and Kimi use session credentials
+ * captured manually from browser DevTools. OpenAI uses pi's Codex OAuth only
+ * after a separate opt-in.
  *
  * This is NOT a public/documented API. It replicates what the browser itself
  * does when you open the account's usage page. Endpoints can change without
  * notice; failures are reported to the caller instead of throwing.
  *
- * Credentials are stored locally in ~/.pi/agent/web-usage.json (never
- * committed, never sent anywhere except the provider's own endpoint).
+ * Manually captured credentials are stored locally in
+ * ~/.pi/agent/web-usage.json. OpenAI tokens remain in pi's auth store. No
+ * credential is committed or sent anywhere except its provider's endpoint.
  */
 import { readFile, writeFile, mkdir, chmod } from "node:fs/promises";
 import path from "node:path";
@@ -27,6 +29,8 @@ const AGENT_DIR =
   ?? path.join(os.homedir(), ".pi", "agent");
 const CONFIG_PATH = path.join(AGENT_DIR, "web-usage.json");
 const TTL_MS = 45_000; // don't hammer the providers; UI polls faster than this
+const OPENAI_USAGE_TIMEOUT_MS = 10_000;
+const OPENAI_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 // The config holds live session credentials: keep it readable by its owner only.
 // `mode` is a no-op on Windows, which is fine — there it is not a group/other ACL.
 const DIR_MODE = 0o700;
@@ -38,7 +42,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 // `provider` argument on the config entry points.
 const PROVIDERS = ["anthropic", "kimi"];
 
-let cache = { anthropic: null, kimi: null };
+let cache = { anthropic: null, kimi: null, openai: null };
 
 async function readConfig() {
   try {
@@ -220,8 +224,38 @@ function curlHeaderConfig(headers) {
   return headers.map((h) => `header = ${quote(h)}\n`).join("");
 }
 
-function fresh(entry) {
-  return entry && Date.now() - entry.at < TTL_MS;
+function fresh(entry, now = Date.now()) {
+  return entry && now - entry.at < TTL_MS;
+}
+
+function openAIAccountId(accessToken) {
+  try {
+    const parts = accessToken.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const accountId = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+    return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve pi's OpenAI Codex OAuth for a server-side usage request. The public
+ * ModelRuntime API refreshes expiring credentials under its own lock; neither
+ * the token nor the account id leaves this function's return value.
+ * @param {any} modelRuntime
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function resolveOpenAIUsageAuth(modelRuntime, { signal } = {}) {
+  if (!modelRuntime) return null;
+  const status = await modelRuntime.checkAuth("openai-codex", { signal });
+  if (status?.type !== "oauth") return null;
+  const resolved = await modelRuntime.getAuth("openai-codex", { signal });
+  const accessToken = resolved?.auth?.apiKey;
+  if (typeof accessToken !== "string" || accessToken.length === 0) return null;
+  const accountId = openAIAccountId(accessToken);
+  return accountId ? { accessToken, accountId } : null;
 }
 
 /** Anthropic (claude.ai) — GET /api/organizations/{orgId}/usage */
@@ -360,10 +394,140 @@ export async function fetchKimiUsage({ force = false } = {}) {
   return data;
 }
 
-export async function fetchAllUsage({ force = false } = {}) {
-  const [anthropic, kimi] = await Promise.all([
+class OpenAIUsageShapeError extends Error {}
+
+function normalizeOpenAIWindow(value) {
+  if (!value || typeof value !== "object") throw new OpenAIUsageShapeError("missing usage window");
+  const usedPercent = value.used_percent;
+  const durationSeconds = value.limit_window_seconds;
+  const resetAtSeconds = value.reset_at;
+  if (
+    typeof usedPercent !== "number"
+    || !Number.isFinite(usedPercent)
+    || usedPercent < 0
+    || usedPercent > 100
+    || typeof durationSeconds !== "number"
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds <= 0
+    || typeof resetAtSeconds !== "number"
+    || !Number.isFinite(resetAtSeconds)
+    || resetAtSeconds <= 0
+  ) {
+    throw new OpenAIUsageShapeError("invalid usage window");
+  }
+  let resetsAt;
+  try {
+    resetsAt = new Date(resetAtSeconds * 1000).toISOString();
+  } catch {
+    throw new OpenAIUsageShapeError("invalid reset time");
+  }
+  return { usedPercent, durationSeconds, resetsAt };
+}
+
+export function normalizeOpenAIUsage(payload, now = Date.now()) {
+  if (!payload || typeof payload !== "object" || !payload.rate_limit || typeof payload.rate_limit !== "object") {
+    throw new OpenAIUsageShapeError("missing rate limits");
+  }
+  const primary = normalizeOpenAIWindow(payload.rate_limit.primary_window);
+  const secondaryValue = payload.rate_limit.secondary_window;
+  const windows = [primary];
+  if (secondaryValue !== null && secondaryValue !== undefined) {
+    windows.push(normalizeOpenAIWindow(secondaryValue));
+  }
+  return {
+    enabled: true,
+    configured: true,
+    fetchedAt: new Date(now).toISOString(),
+    windows,
+  };
+}
+
+function openAIUsageError(errorCode, error, configured) {
+  return { enabled: true, configured, errorCode, error };
+}
+
+/**
+ * OpenAI Codex (ChatGPT OAuth) — GET /backend-api/wham/usage.
+ * @param {{
+ *   enabled?: boolean,
+ *   force?: boolean,
+ *   modelRuntime?: any,
+ *   fetchImpl?: (url: string, options: any) => Promise<any>,
+ *   timeoutMs?: number,
+ *   now?: number,
+ *   cacheStore?: { openai: any },
+ * }} [options]
+ */
+export async function fetchOpenAIUsage({
+  enabled = false,
+  force = false,
+  modelRuntime,
+  fetchImpl = fetch,
+  timeoutMs = OPENAI_USAGE_TIMEOUT_MS,
+  now = Date.now(),
+  cacheStore = cache,
+} = {}) {
+  if (!enabled) return { enabled: false, configured: false };
+  if (!force && fresh(cacheStore.openai, now)) return cacheStore.openai.data;
+
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  let data;
+  try {
+    const auth = await resolveOpenAIUsageAuth(modelRuntime, { signal: timeoutSignal });
+    if (!auth) {
+      data = openAIUsageError(
+        "oauth_missing",
+        "OpenAI Codex OAuth is not configured in pi. Sign in before enabling account usage.",
+        false,
+      );
+    } else {
+      const response = await fetchImpl(OPENAI_USAGE_URL, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${auth.accessToken}`,
+          "ChatGPT-Account-Id": auth.accountId,
+          Accept: "application/json",
+          "User-Agent": UA,
+        },
+        signal: timeoutSignal,
+      });
+      if (response.status === 401 || response.status === 403) {
+        data = openAIUsageError(
+          "unauthorized",
+          "OpenAI rejected the pi sign-in. Sign in to OpenAI Codex again.",
+          true,
+        );
+      } else if (!response.ok) {
+        data = openAIUsageError("upstream_error", `OpenAI usage request failed (HTTP ${response.status}).`, true);
+      } else {
+        data = normalizeOpenAIUsage(await response.json(), now);
+      }
+    }
+  } catch (err) {
+    if (timeoutSignal.aborted || err?.name === "TimeoutError" || err?.name === "AbortError") {
+      data = openAIUsageError("timeout", "OpenAI usage request timed out.", true);
+    } else if (err instanceof OpenAIUsageShapeError || err instanceof SyntaxError) {
+      data = openAIUsageError(
+        "payload_incompatible",
+        "OpenAI returned an unsupported usage response. The private endpoint may have changed.",
+        true,
+      );
+    } else {
+      // Do not echo provider/runtime errors: they can contain request headers or
+      // credential fragments. The stable code is enough for the UI and tests.
+      data = openAIUsageError("request_failed", "OpenAI usage is temporarily unavailable.", true);
+    }
+  }
+  cacheStore.openai = { at: now, data };
+  return data;
+}
+
+/** @param {{ force?: boolean, openAIEnabled?: boolean, modelRuntime?: any }} [options] */
+export async function fetchAllUsage({ force = false, openAIEnabled = false, modelRuntime } = {}) {
+  const [anthropic, kimi, openai] = await Promise.all([
     fetchAnthropicUsage({ force }),
     fetchKimiUsage({ force }),
+    fetchOpenAIUsage({ enabled: openAIEnabled, force, modelRuntime }),
   ]);
-  return { anthropic, kimi };
+  return { anthropic, kimi, openai };
 }

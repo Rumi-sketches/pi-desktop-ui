@@ -9,6 +9,7 @@ import http from "node:http";
 import net from "node:net";
 import { once } from "node:events";
 import { SSE_PING, openSseStream, sseSend, sseWrite } from "../http.mjs";
+import { broadcast } from "../contexts.mjs";
 
 /** A response that records what reached it. */
 function fakeRes(state) {
@@ -37,6 +38,13 @@ describe("the SSE write guard", () => {
     const res = fakeRes();
     assert.equal(sseSend(res, { kind: "terminals" }), true);
     assert.deepEqual(res.written, ['data: {"kind":"terminals"}\n\n']);
+  });
+
+  test("every detailed chat event carries its opaque owner key", () => {
+    const res = fakeRes();
+    const key = "draft:C:\\opaque:project";
+    broadcast({ key, clients: new Set([res]) }, { kind: "status", status: "idle", key: "wrong" });
+    assert.deepEqual(res.written, [`data: ${JSON.stringify({ kind: "status", status: "idle", key })}\n\n`]);
   });
 });
 

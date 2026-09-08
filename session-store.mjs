@@ -305,13 +305,17 @@ export async function runFirstRunArchiving() {
 }
 
 // ---- title generation (opt-in feature, off by default) ---------------------
-// Summarizing a chat's first message sends it to Anthropic and spends the
-// user's own quota, so the switch starts off and nothing here is retroactive:
-// `enabledAt` is the instant it was last turned on, and titles.mjs only queues
-// chats created after it. The chats that already exist are summarized on an
-// explicit click, never as a side effect of listing them.
+// Summarizing a chat's first message sends it to Anthropic and may fall back to
+// OpenAI. Both providers spend the user's quota, so each has its own switch and
+// enable timestamp. Existing chats are summarized only on an explicit click,
+// never as a side effect of listing them.
 const TITLE_GENERATION_PATH = path.join(AGENT_DIR, "web-ui-title-generation.json");
-const defaultTitleGeneration = () => ({ enabled: false, enabledAt: null });
+const defaultTitleGeneration = () => ({
+  enabled: false,
+  enabledAt: null,
+  lunaTitleFallback: false,
+  lunaTitleFallbackEnabledAt: null,
+});
 const titleGenerationStore = jsonFile(TITLE_GENERATION_PATH, {
   fallback: defaultTitleGeneration,
   revive: (raw) =>
@@ -321,6 +325,9 @@ const titleGenerationStore = jsonFile(TITLE_GENERATION_PATH, {
           // feature on.
           enabled: raw.enabled === true,
           enabledAt: typeof raw.enabledAt === "string" ? raw.enabledAt : null,
+          lunaTitleFallback: raw.lunaTitleFallback === true,
+          lunaTitleFallbackEnabledAt:
+            typeof raw.lunaTitleFallbackEnabledAt === "string" ? raw.lunaTitleFallbackEnabledAt : null,
         }
       : undefined,
 });
@@ -331,10 +338,16 @@ async function loadTitleGeneration() {
 // A copy, like archivingState: this is the body of /api/title-generation.
 export const titleGenerationState = () => ({ ...titleGeneration });
 export const isTitleGenerationEnabled = () => titleGeneration.enabled;
+export const isLunaTitleFallbackEnabled = () => titleGeneration.lunaTitleFallback;
 /** When the toggle was last switched on, in ms, or null while it is off. */
 export function titleGenerationEnabledAt() {
   if (!titleGeneration.enabled || !titleGeneration.enabledAt) return null;
   const at = Date.parse(titleGeneration.enabledAt);
+  return Number.isFinite(at) ? at : null;
+}
+export function lunaTitleFallbackEnabledAt() {
+  if (!titleGeneration.lunaTitleFallback || !titleGeneration.lunaTitleFallbackEnabledAt) return null;
+  const at = Date.parse(titleGeneration.lunaTitleFallbackEnabledAt);
   return Number.isFinite(at) ? at : null;
 }
 export async function setTitleGenerationEnabled(enabled) {
@@ -343,6 +356,36 @@ export async function setTitleGenerationEnabled(enabled) {
   if (enabled && !titleGeneration.enabled) titleGeneration.enabledAt = new Date().toISOString();
   titleGeneration.enabled = enabled;
   await titleGenerationStore.save(titleGeneration);
+}
+export async function setLunaTitleFallbackEnabled(enabled) {
+  // Luna has independent consent. Existing Haiku consent cannot turn it on,
+  // and enabling it later covers only chats created from this point onward.
+  if (enabled && !titleGeneration.lunaTitleFallback) {
+    titleGeneration.lunaTitleFallbackEnabledAt = new Date().toISOString();
+  }
+  titleGeneration.lunaTitleFallback = enabled;
+  await titleGenerationStore.save(titleGeneration);
+}
+
+// ---- OpenAI account usage (opt-in, off by default) -------------------------
+// Reading subscription limits sends the pi-managed OAuth token to OpenAI's
+// private usage endpoint. The token remains in pi's auth store; this file keeps
+// only the user's consent to make that read-only request.
+const OPENAI_USAGE_PATH = path.join(AGENT_DIR, "web-ui-openai-usage.json");
+const defaultOpenAIUsage = () => ({ enabled: false });
+const openAIUsageStore = jsonFile(OPENAI_USAGE_PATH, {
+  fallback: defaultOpenAIUsage,
+  revive: (raw) => (raw && typeof raw === "object" ? { enabled: raw.enabled === true } : undefined),
+});
+let openAIUsage = defaultOpenAIUsage();
+async function loadOpenAIUsage() {
+  openAIUsage = await openAIUsageStore.load();
+}
+export const openAIUsageState = () => ({ ...openAIUsage });
+export const isOpenAIUsageEnabled = () => openAIUsage.enabled;
+export async function setOpenAIUsageEnabled(enabled) {
+  openAIUsage.enabled = enabled;
+  await openAIUsageStore.save(openAIUsage);
 }
 
 // ---- deep search budget (opt-out cap, capped by default) -------------------
@@ -405,6 +448,7 @@ export async function loadPersistedState() {
     loadSessionStatus(),
     loadArchiving(),
     loadTitleGeneration(),
+    loadOpenAIUsage(),
     loadFullSearch(),
     loadRecentCwds(),
   ]);

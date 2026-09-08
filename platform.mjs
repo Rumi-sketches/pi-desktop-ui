@@ -147,8 +147,7 @@ export async function openFolder(dir) {
   if (!(await canOpenFolder())) return UNAVAILABLE;
   // explorer.exe exits with code 1 even on success when it hands the path to an
   // already running instance: fire and forget, the exit code means nothing.
-  await detach(fileManager(), [dir]);
-  return { ok: true };
+  return (await detach(fileManager(), [dir])) ? { ok: true } : UNAVAILABLE;
 }
 
 /* ------------------------------ open terminal ----------------------------- */

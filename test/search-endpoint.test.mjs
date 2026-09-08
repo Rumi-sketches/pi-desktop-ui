@@ -21,6 +21,9 @@ let sessionsDir;
 let server;
 let origin;
 
+const SKILL_BODY_SENTINEL = "SECRET_SKILL_SEARCH_BODY";
+const SKILL_TEXT = `<skill name="release-check" location="C:/skills/release-check/SKILL.md">\n${SKILL_BODY_SENTINEL}\n</skill>\n\npublic-argument`;
+
 let clock = Date.parse("2026-01-01T00:00:00.000Z");
 // One chat per file, newest last: the handler answers newest first, and the cap
 // test needs an order it can predict.
@@ -81,6 +84,9 @@ before(async () => {
       message: { role: "assistant", content: [{ type: "thinking", thinking: "pineapple" }] },
     })}\n`,
   );
+  // Persisted skill text contains its full instructions for the model. Search
+  // and result previews may expose only the semantic invocation and arguments.
+  await writeChat("skill-expanded", [["user", SKILL_TEXT]]);
   // a broken line in the middle must not hide what comes after it
   await writeChat("broken-line", [["user", "before the mess"]]);
   await appendFile(
@@ -127,6 +133,14 @@ describe("GET /api/search", () => {
   test("only user and assistant text is searched, not tool output or thinking", async () => {
     const { body } = await search("pineapple");
     assert.deepEqual(body.sessions, []);
+  });
+
+  test("skill search sees its compact mention and arguments, never hidden instructions", async () => {
+    assert.deepEqual((await search(SKILL_BODY_SENTINEL)).body.sessions, []);
+    const { body } = await search("release-check public-argument");
+    assert.deepEqual(pathsOf(body), ["skill-expanded.jsonl"]);
+    assert.equal(JSON.stringify(body).includes(SKILL_BODY_SENTINEL), false);
+    assert.equal(body.sessions[0].firstMessage, "/skill:release-check public-argument");
   });
 
   test("a malformed line is skipped, not fatal: the rest of the file still matches", async () => {

@@ -3,7 +3,7 @@
  *
  * A chat has no title of its own: pi stores the first user message, and the
  * sidebar used to show a cut of it. Here that cut becomes the *fallback*: when
- * a token is available, the first message is summarized once by a small model
+ * a subscription model is available, the first message is summarized by a small model
  * and the answer is kept forever in `web-ui-titles.json`, keyed by session file
  * path.
  *
@@ -15,25 +15,39 @@
  *   - `/api/sessions` never waits for the model. `titleFor` answers from the
  *     cache and queues the work; the generated title shows up at the next
  *     refresh of the list.
- *   - one request at a time, one request per chat, ever. A chat already in the
- *     cache is never summarized again.
- *   - a failure is not an error the user should see: no token, no network, a
- *     rejected request, all end up as the same truncation the sidebar had
- *     before this module existed — and it is not chased forever either: three
- *     attempts per chat, ten minutes apart, then the row keeps its fallback
+ *   - one request at a time. A chat already in the cache is never summarized
+ *     again. Chats without an eligible subscription model never enter the
+ *     queue, while remote failures share a strict per-chat retry budget.
+ *   - a failure is not an error the user should see: no subscription, no
+ *     network, or a rejected request all leave the same truncation the sidebar
+ *     had before this module existed. At most three remote calls are made per
+ *     chat, with retries ten minutes apart, then the row keeps its fallback
  *     until the process restarts.
  *
- * Auth is pi's own OAuth credential (`auth.json`, provider `anthropic`), read
- * fresh at each request so a refreshed token is picked up without a restart —
- * and never logged. No API key is read or asked for: without a subscription
- * token this module simply does nothing.
+ * Authentication stays inside pi's shared ModelRuntime. Title requests only
+ * use subscription-backed providers; API keys are never selected implicitly.
  */
 import path from "node:path";
-import { AGENT_DIR, agentJsonFile, jsonFile, titleGenerationEnabledAt } from "./session-store.mjs";
+import {
+  AGENT_DIR,
+  isLunaTitleFallbackEnabled,
+  isTitleGenerationEnabled,
+  jsonFile,
+  lunaTitleFallbackEnabledAt,
+  titleGenerationEnabledAt,
+} from "./session-store.mjs";
 
-const API_URL = "https://api.anthropic.com/v1/messages";
+// The process owns one ModelRuntime, created by contexts.mjs and shared with
+// title generation. It is injected here rather than imported: titles never
+// create a second runtime or introduce an import cycle.
+let modelRuntime = null;
+export function configureTitleModelRuntime(runtime) {
+  modelRuntime = runtime;
+}
+
 // Small and cheap: this is a seven-word summary, not a conversation.
-const TITLE_MODEL = "claude-haiku-4-5";
+const HAIKU_MODEL = { provider: "anthropic", id: "claude-haiku-4-5" };
+const LUNA_MODEL = { provider: "openai-codex", id: "gpt-5.6-luna" };
 const MAX_OUTPUT_TOKENS = 32;
 // Enough of the first message to know what the chat is about. The rest is
 // usually a pasted stack trace or file, and it would be paid for on every chat.
@@ -53,18 +67,6 @@ const QUEUE_MAX = 100;
 const MAX_ATTEMPTS = 3;
 const RETRY_AFTER_MS = 10 * 60 * 1000;
 
-// Identity headers of pi's own Anthropic calls (see pi-ai's anthropic-messages):
-// an OAuth token is only accepted with them and with the Claude Code system
-// block below.
-const OAUTH_HEADERS = {
-  accept: "application/json",
-  "content-type": "application/json",
-  "anthropic-version": "2023-06-01",
-  "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-  "user-agent": "claude-cli/2.1.75",
-  "x-app": "cli",
-};
-const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 const INSTRUCTION =
   "Summarize the request below in a title of at most seven words, in the same language as the text."
   + " Answer with the title alone: no quotes, no trailing period, no explanation.";
@@ -111,25 +113,6 @@ async function rememberTitle(sessionPath, title) {
   await titlesStore.save(Object.fromEntries(titles));
 }
 
-// ---- auth ------------------------------------------------------------------
-/**
- * pi's stored subscription token, or null when there is none to use. Read from
- * disk at every call: pi refreshes it in place, and a cached copy would go
- * stale exactly when it matters.
- *
- * @returns {Promise<string | null>}
- */
-async function oauthAccessToken() {
-  const auth = await agentJsonFile("auth.json").load();
-  const credential = auth?.anthropic;
-  if (!credential || credential.type !== "oauth") return null;
-  const { access, expires } = credential;
-  if (typeof access !== "string" || access === "") return null;
-  // `expires` is a timestamp in ms, already shifted back by pi's own margin.
-  if (typeof expires === "number" && expires <= Date.now()) return null;
-  return access;
-}
-
 // ---- generation ------------------------------------------------------------
 // The model answers with a line of prose, and prose is not a title: quotes,
 // trailing punctuation and a stray second sentence all have to go before the
@@ -141,45 +124,64 @@ function cleanTitle(raw) {
   return clipped.slice(0, MAX_TITLE_CHARS).trim() || null;
 }
 
+function subscriptionModel(runtime, modelRef) {
+  if (!runtime) return undefined;
+  const model = runtime.getModel?.(modelRef.provider, modelRef.id);
+  return model && runtime.isUsingSubscription?.(modelRef.provider) === true ? model : undefined;
+}
+
 /**
- * One summarization request. Returns null on anything unexpected — a non-2xx
- * answer, a body in an unknown shape, a timeout — so the caller can fall back
- * without telling the two cases apart.
+ * One standalone title request through pi's public runtime. A successful model
+ * response is distinguished from provider unavailability: only the latter may
+ * later authorize a fallback.
  *
  * @param {string} text the chat's first message.
- * @param {string} token OAuth access token; never logged.
- * @returns {Promise<string | null>}
+ * @param {any} [runtime] the process-wide ModelRuntime.
+ * @param {{provider: string, id: string}} [modelRef]
+ * @param {number} [timeoutMs]
+ * @returns {Promise<{status: "answered" | "unavailable", attempted: boolean, title: string | null}>}
  */
-export async function requestTitle(text, token) {
+export async function requestTitle(
+  text,
+  runtime = modelRuntime,
+  modelRef = HAIKU_MODEL,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+) {
   const input = String(text ?? "").slice(0, MAX_INPUT_CHARS).trim();
-  if (!input || !token) return null;
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: { ...OAUTH_HEADERS, authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      model: TITLE_MODEL,
-      max_tokens: MAX_OUTPUT_TOKENS,
-      // The identity block is what makes an OAuth token acceptable, and it must
-      // come first; the instruction is a second block, like pi does.
-      system: [
-        { type: "text", text: CLAUDE_CODE_IDENTITY },
-        { type: "text", text: INSTRUCTION },
-      ],
-      messages: [{ role: "user", content: input }],
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!res.ok) return null;
-  const body = await res.json();
-  const parts = Array.isArray(body?.content) ? body.content : [];
-  const answer = parts.filter((p) => p?.type === "text").map((p) => p.text).join(" ");
-  return cleanTitle(answer);
+  if (!input) return { status: "unavailable", attempted: false, title: null };
+  const model = subscriptionModel(runtime, modelRef);
+  if (!model) return { status: "unavailable", attempted: false, title: null };
+
+  try {
+    const answer = await runtime.completeSimple(
+      model,
+      {
+        systemPrompt: INSTRUCTION,
+        messages: [{ role: "user", content: input, timestamp: Date.now() }],
+      },
+      {
+        maxTokens: MAX_OUTPUT_TOKENS,
+        cacheRetention: "none",
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
+    if (answer.stopReason === "error" || answer.stopReason === "aborted") {
+      return { status: "unavailable", attempted: true, title: null };
+    }
+    const raw = (answer.content ?? [])
+      .filter((part) => part?.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    return { status: "answered", attempted: true, title: cleanTitle(raw) };
+  } catch {
+    return { status: "unavailable", attempted: true, title: null };
+  }
 }
 
 // ---- queue -----------------------------------------------------------------
 // One worker, one request in flight. `queued` is what keeps a chat listed twice
 // in a row from being summarized twice.
-/** @type {{ path: string, text: string }[]} */
+/** @type {{ path: string, text: string, allowLuna: boolean, now: number }[]} */
 const queue = [];
 const queued = new Set();
 /** @type {Promise<void> | null} */
@@ -201,8 +203,12 @@ function mayAttempt(sessionPath, now) {
   return tried.count < MAX_ATTEMPTS && now - tried.at >= RETRY_AFTER_MS;
 }
 
-/** An attempt that never reached the network does not count as one. */
-function forgetAttempt(sessionPath) {
+function recordRemoteAttempt(sessionPath, now) {
+  const previous = attempts.get(sessionPath);
+  attempts.set(sessionPath, { count: (previous?.count ?? 0) + 1, at: now });
+}
+
+function forgetAttempts(sessionPath) {
   attempts.delete(sessionPath);
 }
 
@@ -210,14 +216,17 @@ function forgetAttempt(sessionPath) {
  * @param {string} sessionPath
  * @param {string} text
  * @param {number} [now]
+ * @param {boolean} [allowLuna]
  * @returns {boolean} whether the chat was actually queued.
  */
-function enqueue(sessionPath, text, now = Date.now()) {
+function enqueue(sessionPath, text, now = Date.now(), allowLuna = false) {
   if (queued.has(sessionPath) || queue.length >= QUEUE_MAX) return false;
   if (!mayAttempt(sessionPath, now)) return false;
-  attempts.set(sessionPath, { count: (attempts.get(sessionPath)?.count ?? 0) + 1, at: now });
+  const primary = subscriptionModel(modelRuntime, HAIKU_MODEL);
+  const fallback = allowLuna && subscriptionModel(modelRuntime, LUNA_MODEL);
+  if (!primary && !fallback) return false;
   queued.add(sessionPath);
-  queue.push({ path: sessionPath, text });
+  queue.push({ path: sessionPath, text, allowLuna, now });
   if (!worker) worker = drain().finally(() => (worker = null));
   return true;
 }
@@ -230,31 +239,38 @@ function enqueue(sessionPath, text, now = Date.now()) {
  *
  * @param {Date | string | number | undefined} createdAt
  */
-function isCoveredByTheSwitch(createdAt) {
-  const since = titleGenerationEnabledAt();
-  if (since === null) return false;
+function isCoveredBySwitch(createdAt, enabledAt) {
+  if (enabledAt === null) return false;
   const created = createdAt instanceof Date ? createdAt.getTime() : Date.parse(String(createdAt ?? ""));
-  return Number.isFinite(created) && created >= since;
+  return Number.isFinite(created) && created >= enabledAt;
+}
+
+const isCoveredByTheSwitch = (createdAt) => isCoveredBySwitch(createdAt, titleGenerationEnabledAt());
+const isCoveredByLunaSwitch = (createdAt) => isCoveredBySwitch(createdAt, lunaTitleFallbackEnabledAt());
+
+async function requestWithinBudget(job, modelRef) {
+  if (!isTitleGenerationEnabled() || (attempts.get(job.path)?.count ?? 0) >= MAX_ATTEMPTS) {
+    return { status: "unavailable", attempted: false, title: null };
+  }
+  const outcome = await requestTitle(job.text, modelRuntime, modelRef);
+  if (outcome.attempted) recordRemoteAttempt(job.path, job.now);
+  return outcome;
 }
 
 async function drain() {
   while (queue.length) {
     const job = queue.shift();
     try {
-      const token = await oauthAccessToken();
-      // No usable credential: the whole backlog is pointless, not just this job.
-      // Nothing was sent, so no chat pays for it with one of its three attempts.
-      if (!token) {
-        forgetAttempt(job.path);
-        for (const pending of queue) forgetAttempt(pending.path);
-        queue.length = 0;
-        queued.clear();
-        return;
+      const primary = await requestWithinBudget(job, HAIKU_MODEL);
+      // A valid Haiku response, even one whose wording cleans down to nothing,
+      // is final. Luna is only a provider-unavailability fallback.
+      let outcome = primary;
+      if (primary.status === "unavailable" && job.allowLuna && isLunaTitleFallbackEnabled()) {
+        outcome = await requestWithinBudget(job, LUNA_MODEL);
       }
-      const title = await requestTitle(job.text, token);
-      if (title) {
-        await rememberTitle(job.path, title);
-        forgetAttempt(job.path);
+      if (outcome.title) {
+        await rememberTitle(job.path, outcome.title);
+        forgetAttempts(job.path);
       }
     } catch {
       // Offline, refused, malformed: the fallback already covers the row.
@@ -289,20 +305,23 @@ export async function titleFor(sessionPath, firstMessage, createdAt, now = Date.
   if (!sessionPath) return fallback;
   const cached = (await loadTitles()).get(sessionPath);
   if (cached) return cached;
-  if (fallback && isCoveredByTheSwitch(createdAt)) enqueue(sessionPath, String(firstMessage), now);
+  if (fallback && isCoveredByTheSwitch(createdAt)) {
+    enqueue(sessionPath, String(firstMessage), now, isCoveredByLunaSwitch(createdAt));
+  }
   return fallback;
 }
 
 /**
- * The retroactive half, and the only one that ignores the switch: it runs on an
- * explicit click, which is the consent the switch stands for everywhere else.
- * Chats already in the cache are skipped, so a second click costs nothing.
+ * The retroactive half ignores the enable timestamps but still requires the
+ * primary switch. It runs only on an explicit click; Luna remains governed by
+ * its separate toggle. Cached chats are skipped, so a second click costs nothing.
  *
  * @param {{path?: string, firstMessage?: string}[]} chats the chats to cover.
  * @param {number} [now] current time in ms; injectable for tests.
  * @returns {Promise<number>} how many were queued.
  */
 export async function queueMissingTitles(chats, now = Date.now()) {
+  if (!isTitleGenerationEnabled()) return 0;
   const cache = await loadTitles();
   let count = 0;
   for (const chat of chats ?? []) {
@@ -310,7 +329,7 @@ export async function queueMissingTitles(chats, now = Date.now()) {
     if (!sessionPath || cache.get(sessionPath)) continue;
     const text = String(chat.firstMessage ?? "");
     if (!fallbackTitle(text)) continue;
-    if (enqueue(sessionPath, text, now)) count += 1;
+    if (enqueue(sessionPath, text, now, isLunaTitleFallbackEnabled())) count += 1;
   }
   return count;
 }

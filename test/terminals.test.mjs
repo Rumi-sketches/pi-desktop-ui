@@ -14,6 +14,7 @@ import {
   isTerminalKind,
   listTerminals,
   resize,
+  restartTerminal,
   setTerminalsChangedListener,
   subscribe,
   terminateTerminalsForChat,
@@ -184,6 +185,50 @@ test("countLiveTerminals: counts the processes, not the rows", { skip }, async (
 
   assert.equal(closeTerminal(info.id), true);
   assert.equal(countLiveTerminals(), before, "closing the row changes nothing either");
+});
+
+test("restartTerminal: replaces the process and drops the old scrollback", { skip }, async (t) => {
+  const original = createTerminal({ kind: "shell", cwd: os.tmpdir(), chatKey: "opaque-chat-key" });
+  let cleanupId = original.id;
+  t.after(() => closeTerminal(cleanupId));
+
+  const marker = "PI_OLD_SCROLLBACK_MARKER";
+  writeTo(original.id, `echo ${marker}\r`);
+  assert.ok(await waitFor(() => getScrollback(original.id)?.includes(marker)), "the old marker never appeared");
+
+  let oldExitNotifications = 0;
+  subscribe(original.id, () => {}, () => (oldExitNotifications += 1));
+  const restarted = restartTerminal(original.id);
+  assert.equal(restarted.ok, true);
+  if (!restarted.ok) return;
+  cleanupId = restarted.terminal.id;
+
+  assert.notEqual(restarted.terminal.id, original.id, "a replacement gets a new pane identity");
+  assert.equal(restarted.terminal.cwd, original.cwd);
+  assert.equal(restarted.terminal.kind, original.kind);
+  assert.equal(restarted.terminal.chatKey, original.chatKey);
+  assert.equal(getTerminal(original.id), null, "the old row leaves the registry");
+  assert.equal(closeTerminal(original.id), false, "the replaced process cannot be closed a second time");
+  assert.ok(!getScrollback(cleanupId)?.includes(marker), "old scrollback must not enter the clean console");
+  assert.equal(writeTo(cleanupId, "echo fresh\r"), true, "the replacement process accepts input");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(oldExitNotifications, 0, "disposing the old process must not emit a second terminal death");
+});
+
+test("restartTerminal: a spawn failure leaves the previous terminal coherent", { skip }, (t) => {
+  const original = createTerminal({ kind: "shell", cwd: os.tmpdir() });
+  t.after(() => closeTerminal(original.id));
+  const before = getTerminal(original.id);
+
+  const restarted = restartTerminal(original.id, {
+    spawnProcess() {
+      throw new Error("simulated spawn failure");
+    },
+  });
+
+  assert.deepEqual(restarted, { ok: false, reason: "spawn_failed" });
+  assert.deepEqual(getTerminal(original.id), before, "failed restart must keep the old row and state");
+  assert.equal(writeTo(original.id, "echo still-alive\r"), true, "the old process must remain usable");
 });
 
 test("the scrollback of a noisy terminal stays at the cap", { skip }, async (t) => {

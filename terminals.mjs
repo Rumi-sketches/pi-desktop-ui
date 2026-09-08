@@ -55,6 +55,7 @@ const POWERSHELL = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
  * @property {Set<Viewer>} subscribers
  * @property {string | null} chatKey  the chat it was opened from, if known
  * @property {number | null} exited  exit code once the process died, else null
+ * @property {boolean} disposed  true once the registry has replaced or closed it
  *
  * @typedef {object} Viewer
  * @property {(data: string, offset: number) => void} onData
@@ -116,17 +117,25 @@ function describe(terminal) {
 }
 
 /**
- * Spawn a terminal and keep it.
- * @param {{ kind: TerminalKind, cwd: string, chatKey?: string | null,
- *          cols?: number, rows?: number }} options
- * @returns {TerminalInfo}
+ * Spawn and wire a terminal without publishing it in the registry. Restart
+ * uses this staging step so a failed spawn cannot damage the old process.
+ * @param {{ kind: TerminalKind, cwd: string, chatKey: string | null,
+ *          cols?: number, rows?: number, createdAt?: number }} options
+ * @param {typeof spawn} [spawnProcess]
+ * @returns {Terminal}
  */
-export function createTerminal({ kind, cwd, chatKey = null, cols = DEFAULT_COLS, rows = DEFAULT_ROWS }) {
-  if (!isTerminalKind(kind)) throw new Error(`unknown terminal kind: ${kind}`);
+function buildTerminal({
+  kind,
+  cwd,
+  chatKey,
+  cols = DEFAULT_COLS,
+  rows = DEFAULT_ROWS,
+  createdAt = Date.now(),
+}, spawnProcess = spawn) {
   // `pi` rides inside PowerShell rather than being spawned directly: -NoExit
   // leaves a usable shell behind when the agent quits, instead of a dead PTY.
   const args = kind === "pi" ? ["-NoLogo", "-NoExit", "-Command", "pi"] : ["-NoLogo"];
-  const pty = spawn(POWERSHELL, args, {
+  const pty = spawnProcess(POWERSHELL, args, {
     name: "xterm-color",
     cols,
     rows,
@@ -139,17 +148,18 @@ export function createTerminal({ kind, cwd, chatKey = null, cols = DEFAULT_COLS,
     id: randomUUID(),
     kind,
     cwd,
-    createdAt: Date.now(),
+    createdAt,
     pty,
     scrollback: "",
     produced: 0,
     subscribers: new Set(),
     chatKey,
     exited: null,
+    disposed: false,
   };
-  terminals.set(terminal.id, terminal);
 
   pty.onData((data) => {
+    if (terminal.disposed) return;
     terminal.scrollback = capScrollback(terminal.scrollback + data);
     // Counted before the chunk goes out, so a viewer is told the offset it has
     // reached *including* what it is about to write.
@@ -164,6 +174,7 @@ export function createTerminal({ kind, cwd, chatKey = null, cols = DEFAULT_COLS,
   });
 
   pty.onExit(({ exitCode }) => {
+    if (terminal.disposed || terminal.exited !== null) return;
     terminal.exited = exitCode;
     // The viewers hear it before the list does: an open pane must turn
     // read-only on the death itself, not on the next keystroke it swallows.
@@ -177,6 +188,19 @@ export function createTerminal({ kind, cwd, chatKey = null, cols = DEFAULT_COLS,
     terminalsChanged();
   });
 
+  return terminal;
+}
+
+/**
+ * Spawn a terminal and keep it.
+ * @param {{ kind: TerminalKind, cwd: string, chatKey?: string | null,
+ *          cols?: number, rows?: number }} options
+ * @returns {TerminalInfo}
+ */
+export function createTerminal({ kind, cwd, chatKey = null, cols = DEFAULT_COLS, rows = DEFAULT_ROWS }) {
+  if (!isTerminalKind(kind)) throw new Error(`unknown terminal kind: ${kind}`);
+  const terminal = buildTerminal({ kind, cwd, chatKey, cols, rows });
+  terminals.set(terminal.id, terminal);
   terminalsChanged();
   return describe(terminal);
 }
@@ -342,6 +366,58 @@ export function terminateTerminalsForChat(chatKey) {
 }
 
 /**
+ * Release one process exactly once. Replaced terminals remain reachable from
+ * old callbacks for a short time, so the disposed guard also silences those.
+ * @param {Terminal} terminal
+ */
+function disposeTerminal(terminal) {
+  if (terminal.disposed) return;
+  terminal.disposed = true;
+  terminal.subscribers.clear();
+  // kill() runs even on an already exited process. On Windows the conout pipe
+  // can otherwise keep the event loop alive after the shell itself has quit.
+  try {
+    terminal.pty.kill();
+  } catch {
+    // Already gone: nothing left to kill.
+  }
+}
+
+/**
+ * Start a clean process before replacing the old terminal. If spawning fails,
+ * the old process, pane identity and scrollback remain untouched.
+ *
+ * The optional spawner is a narrow test seam for the synchronous node-pty
+ * failure path; production always uses node-pty's spawn.
+ * @param {string} id
+ * @param {{ spawnProcess?: typeof spawn }} [options]
+ * @returns {{ ok: true, previousId: string, terminal: TerminalInfo }
+ *   | { ok: false, reason: "unknown" | "spawn_failed" }}
+ */
+export function restartTerminal(id, { spawnProcess = spawn } = {}) {
+  const previous = terminals.get(id);
+  if (!previous) return { ok: false, reason: "unknown" };
+
+  let replacement;
+  try {
+    replacement = buildTerminal({
+      kind: previous.kind,
+      cwd: previous.cwd,
+      chatKey: previous.chatKey,
+      createdAt: previous.createdAt,
+    }, spawnProcess);
+  } catch {
+    return { ok: false, reason: "spawn_failed" };
+  }
+
+  terminals.delete(id);
+  terminals.set(replacement.id, replacement);
+  disposeTerminal(previous);
+  terminalsChanged();
+  return { ok: true, previousId: id, terminal: describe(replacement) };
+}
+
+/**
  * Kill the process and drop the row. Killing an already exited terminal is not
  * an error: it just removes it.
  * @param {string} id
@@ -351,16 +427,7 @@ export function closeTerminal(id) {
   const terminal = terminals.get(id);
   if (!terminal) return false;
   terminals.delete(id);
-  terminal.subscribers.clear();
-  // kill() runs even on an already exited process, and that is not belt and
-  // braces: on Windows the conout pipe of a PTY whose shell quit on its own
-  // stays open and keeps the event loop alive forever. kill() is what releases
-  // it. It throws when there is really nothing left, hence the catch.
-  try {
-    terminal.pty.kill();
-  } catch {
-    // Already gone: nothing left to kill.
-  }
+  disposeTerminal(terminal);
   terminalsChanged();
   return true;
 }

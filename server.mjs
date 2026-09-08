@@ -52,12 +52,14 @@ import {
   setListeningServer,
   setRestartHandler,
   stopServer,
+  workInProgress,
 } from "./lifecycle.mjs";
 import {
   handleAbort,
   handleActivateRecentSession,
   handleActivateSession,
   handleCreateSession,
+  handleDeleteQueuedPrompt,
   handleEvents,
   handleForgetRecentCwd,
   handleForkSession,
@@ -86,6 +88,8 @@ import {
   handleCreateTerminal,
   handleDeleteTerminal,
   handleListTerminals,
+  handleOpenTerminalFolder,
+  handleRestartTerminal,
   handleTerminalInput,
   handleTerminalResize,
   handleTerminalStream,
@@ -175,10 +179,13 @@ const ROUTES = [
 const PARAM_ROUTES = [
   ["POST", "/api/sessions/:id/activate", handleActivateSession],
   ["POST", "/api/sessions/:id/fork", handleForkSession],
+  ["DELETE", "/api/queued-prompts/:id", handleDeleteQueuedPrompt],
   ["DELETE", "/api/usage/credentials/:provider", handleDeleteUsageCredentials],
   ["GET", "/api/terminals/:id/stream", handleTerminalStream],
   ["POST", "/api/terminals/:id/input", handleTerminalInput],
   ["POST", "/api/terminals/:id/resize", handleTerminalResize],
+  ["POST", "/api/terminals/:id/open-folder", handleOpenTerminalFolder],
+  ["POST", "/api/terminals/:id/restart", handleRestartTerminal],
   ["DELETE", "/api/terminals/:id", handleDeleteTerminal],
 ];
 
@@ -262,7 +269,8 @@ function listen(httpServer, port, host) {
  * @param {string|null} [options.host] bind address; defaults to loopback (see resolveHost)
  * @param {() => void} [options.onRestart] takes over POST /api/restart, so a host (Electron)
  *   can restart the server in place; without it the CLI path just shuts down
- * @returns {Promise<{url: string, port: number, host: string, stop: () => Promise<void>}>}
+ * @returns {Promise<{url: string, port: number, host: string, stop: () => Promise<void>,
+ *   activity: () => import("./lifecycle.mjs").WorkInProgress}>}
  */
 export async function startServer(options = {}) {
   if (isServerRunning()) throw new Error("the server is already running in this process");
@@ -299,7 +307,10 @@ export async function startServer(options = {}) {
     throw err;
   }
 
-  return { url: localUrl(), port: serverPort(), host, stop: stopServer };
+  // `activity` is what a host needs to ask before it stops us: how much work
+  // stopping would interrupt. Handed over as a function, not as a number — the
+  // answer is only true at the moment it is asked.
+  return { url: localUrl(), port: serverPort(), host, stop: stopServer, activity: workInProgress };
 }
 
 
