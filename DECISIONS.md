@@ -2,6 +2,17 @@
 
 Mini-ADR del progetto. Una voce per decisione: contesto in una riga, decisione, perché.
 
+## Il diff di progetto conserva la provenienza della chat
+
+- **Stato**: ATTIVA.
+- **Contesto**: più chat nello stesso progetto possono modificare file diversi o lo stesso path;
+  una cache indicizzata solo per progetto sostituiva implicitamente i cambiamenti precedenti.
+- **Decisione**: il pannello mostra i cambiamenti prodotti dagli agenti, aggregati per progetto.
+  Ogni cambiamento conserva la session key della chat sorgente. Modifiche allo stesso path da chat
+  diverse restano separate e il client usa la provenienza per richiedere il relativo diff.
+- **Perché**: il pannello deve spiegare cosa ha modificato ciascun agente anche fuori da Git, senza
+  perdere informazioni quando più chat condividono la stessa cartella.
+
 ## SSE: un solo punto di scrittura
 
 - **Contesto**: il ping keepalive poteva fare `res.write` su una risposta già morta; l'evento
@@ -18,9 +29,32 @@ Mini-ADR del progetto. Una voce per decisione: contesto in una riga, decisione, 
   le vecchie, senza avviso.
 - **Decisione**: ogni feature che manda dati fuori dalla macchina o consuma quota è dietro un
   toggle in Settings, default off; il retroattivo (chat esistenti) richiede un'azione esplicita
-  dell'utente, il toggle vale solo per il futuro.
+  dell'utente, il toggle vale solo per il futuro. Quota OpenAI, titoli Haiku e fallback Luna hanno
+  consensi indipendenti. OpenAI usa l'OAuth già gestito da pi solo lato server; token e account ID
+  completo non entrano nelle impostazioni o nei payload del browser.
 - **Perché**: il primo messaggio di una chat è spesso la cosa più sensibile che contiene, e la
   quota è dell'utente.
+
+## La coda prompt appartiene al context ed è effimera
+
+- **Contesto**: steering e follow-up devono restare cancellabili senza affidarsi alla coda privata
+  dell'SDK o confondere due messaggi con lo stesso testo.
+- **Decisione**: ogni context possiede una coda in memoria con ID opachi, tipo, testo, allegati e
+  byte occupati. La coda segue il context durante un rekey, non sopravvive al riavvio e consegna
+  tramite `steer()` e `followUp()` ai confini pubblici del turno. Abort ed errori terminali la
+  svuotano. I limiti sono 20 elementi e 32 MiB complessivi.
+- **Perché**: il server deve poter annullare un solo elemento, mantenere separate le chat e non
+  dipendere da campi privati di pi.
+
+## I marchi dubbi usano il simbolo neutro
+
+- **Contesto**: alcune fonti pubblicano un logo ma richiedono approvazione o vietano modifiche e
+  ricolorazioni; Simple Icons non distribuisce più l'icona OpenAI.
+- **Decisione**: `public/provider-icons.js` registra fonte, termini e vincolo per ogni provider. Un
+  asset di marchio appare solo quando i termini ne consentono chiaramente questo uso. Negli altri
+  casi, e nella modalità mono dei marchi non modificabili, la UI usa il simbolo neutro. Gli alias
+  passano dalla stessa mappa. OpenAI non dipende da Simple Icons.
+- **Perché**: un logo riconoscibile non implica il permesso di incorporarlo o alterarlo.
 
 ## Lavoro server scatenato da input utente ha un budget e un abort
 

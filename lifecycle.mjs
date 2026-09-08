@@ -16,7 +16,7 @@
  */
 import { PRODUCT_ID } from "./product.mjs";
 import { jsonBody, send, sendError } from "./http.mjs";
-import { disposeAllContexts } from "./contexts.mjs";
+import { disposeAllContexts, runningContextKeys } from "./contexts.mjs";
 import { closeAllTerminals, countLiveTerminals } from "./terminals.mjs";
 
 // The listening socket, handed over by startServer() once it is bound.
@@ -87,31 +87,65 @@ export async function shutdown(reason = "signal") {
 // What the CLI user has to do by hand, now that nothing restarts for them.
 const CLI_RESTART_HINT = `restart ${PRODUCT_ID} to apply`;
 
-/** @param {number} count */
-const terminalsWording = (count) => (count === 1 ? "1 terminal" : `${count} terminals`);
+// ---- what a stop would take down with it ------------------------------------
+// Two things outlive the page and die with the server: the agent turns still
+// running (a chat keeps working while you are in another one, or in no tab at
+// all) and the integrated terminals — a build, an ssh session, a `pi` halfway
+// through a task. Both counts come from the registries that own the processes,
+// never from the page: a tab that has been closed for an hour still believes
+// whatever it last saw.
 
-export async function handleShutdown({ res }) {
+/** @typedef {{ agents: number, terminals: number, busy: boolean }} WorkInProgress */
+
+/** @returns {WorkInProgress} */
+export function workInProgress() {
+  const agents = runningContextKeys().length;
+  const terminals = countLiveTerminals();
+  return { agents, terminals, busy: agents + terminals > 0 };
+}
+
+/** @param {number} count @param {string} noun */
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * "2 chats still running and 1 terminal open" — the subject of the sentence the
+ * caller finishes, so the same count reads the same in the desktop dialog, in
+ * the page and in the API error.
+ * @param {WorkInProgress} work
+ */
+export function describeWork(work) {
+  const parts = [];
+  if (work.agents > 0) parts.push(`${plural(work.agents, "chat")} still running`);
+  if (work.terminals > 0) parts.push(`${plural(work.terminals, "terminal")} open`);
+  return parts.join(" and ");
+}
+
+// `force` is the caller saying the user has seen the warning and chose to go
+// ahead. Same answer for both verbs, so the page can handle them the same way.
+/** @param {import("node:http").ServerResponse} res @param {string} verb */
+function refuseWhileBusy(res, verb) {
+  const work = workInProgress();
+  if (!work.busy) return false;
+  sendError(
+    res,
+    409,
+    "work_in_progress",
+    `${describeWork(work)}: the ${verb} will stop ${work.agents + work.terminals === 1 ? "it" : "them"}`,
+    { agents: work.agents, terminals: work.terminals },
+  );
+  return true;
+}
+
+export async function handleShutdown({ req, res }) {
+  const { force } = await jsonBody(req);
+  if (force !== true && refuseWhileBusy(res, "shutdown")) return;
   send(res, 200, { ok: true, stopping: true });
   return shutdown("api");
 }
 
 export async function handleRestart({ req, res }) {
-  // A restart takes every integrated terminal down with it — whatever is
-  // running in them, a build, an ssh session, an agent halfway through a task.
-  // The count comes from the registry, the only place that knows which
-  // processes are still alive, and never from the page. `force` is the caller
-  // saying the user has seen the warning and chose to go ahead.
   const { force } = await jsonBody(req);
-  const live = countLiveTerminals();
-  if (live > 0 && force !== true) {
-    return sendError(
-      res,
-      409,
-      "terminals_open",
-      `${terminalsWording(live)} will be closed by the restart`,
-      { terminals: live },
-    );
-  }
+  if (force !== true && refuseWhileBusy(res, "restart")) return;
   // Embedded (Electron): this process is the app, not a disposable wrapper
   // around the server — replacing it would take the window down with it.
   // The host restarts the server in place instead, once this response has

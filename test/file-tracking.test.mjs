@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { isAgentDirPath } from "../session-store.mjs";
+import { projectFileChanges, projectFileDiff } from "../contexts.mjs";
 
 // A stand-in for ~/.pi/agent: absolute, so the predicate sees the same shape it
 // sees in production, without depending on the machine's real home.
@@ -33,4 +34,27 @@ test("isAgentDirPath: non-paths are not excluded", () => {
   assert.equal(isAgentDirPath(undefined, AGENT_DIR), false);
   assert.equal(isAgentDirPath(null, AGENT_DIR), false);
   assert.equal(isAgentDirPath(42, AGENT_DIR), false);
+});
+
+const tracked = (pathName, writes, hunks = []) => ({ path: pathName, writes, hunks });
+
+test("project files retain separate source chats for the same path", () => {
+  const sources = new Map([
+    ["chat-a", new Map([["same.js", tracked("same.js", 1)]])],
+    ["chat-b", new Map([["same.js", tracked("same.js", 0, [{}])]])],
+  ]);
+
+  assert.deepEqual(projectFileChanges(sources), [
+    { path: "same.js", changes: 1, sourceKey: "chat-a" },
+    { path: "same.js", changes: 1, sourceKey: "chat-b" },
+  ]);
+  assert.equal(projectFileDiff(sources, "chat-a", "same.js")?.writes, 1);
+  assert.equal(projectFileDiff(sources, "chat-b", "same.js")?.writes, 0);
+});
+
+test("project diff rejects a source absent from the selected project registry", () => {
+  const sources = new Map([
+    ["chat-a", new Map([["same.js", tracked("same.js", 1)]])],
+  ]);
+  assert.equal(projectFileDiff(sources, "chat-b", "same.js"), null);
 });

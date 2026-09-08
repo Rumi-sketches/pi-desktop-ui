@@ -38,9 +38,13 @@ import {
   broadcastGlobal,
   broadcastUsage,
   createContext,
+  compactSkillBlock,
   extractToolText,
+  filesForProject,
+  diffForProjectFile,
   gitStatus,
   pickerModels,
+  refreshSessionMetrics,
   sanitizeArgs,
   sessionCommands,
   summarizeTool,
@@ -54,25 +58,24 @@ import {
 } from "./contexts.mjs";
 import { scanSessionFile } from "./analytics.mjs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { PromptQueueError, normalizePromptInput, queuedExtensionCommand } from "./prompt-queue.mjs";
 
 // ---- the event stream ------------------------------------------------------
 export async function handleEvents({ req, res, sessionKey }) {
+  let closed = false;
+  let detach = null;
+  req.once("close", () => {
+    closed = true;
+    detach?.();
+  });
   const ctx = await useContext(sessionKey);
+  if (closed || res.destroyed) return;
   openSseStream(res);
-  req.on("close", attachEventClient(ctx, res));
-  return;
+  detach = attachEventClient(ctx, res);
+  // A close queued between resolving the context and attaching the listener
+  // must not leave a dead response in either client set.
+  if (closed || res.destroyed) detach();
 }
-
-/**
- * @typedef {object} ChatUsage tokens and cost of a single chat.
- * @property {number} tokens
- * @property {number} input
- * @property {number} output
- * @property {number} cacheWrite
- * @property {number} cacheRead
- * @property {number} cost
- * @property {number} requests
- */
 
 /**
  * @typedef {object} StatePayload body of `GET /api/state`: everything the page
@@ -85,10 +88,12 @@ export async function handleEvents({ req, res, sessionKey }) {
  * @property {string|null} thinkingLevel reasoning level in use.
  * @property {{input: number, output: number, cost: number, requests: number}} totals
  *   server-wide cumulative counters, across every chat.
- * @property {ChatUsage} chat usage of this chat only.
- * @property {Record<string, ChatUsage>} chatByModel same, split per model.
- * @property {{used: number, window: number}} context context window occupancy.
+ * @property {object} metrics canonical session totals, per-model attribution,
+ *   optional Session work difference and nullable SDK context usage.
  * @property {boolean} streaming whether a turn is running right now.
+ * @property {Array<{id: string, type: "steer"|"followUp", text: string,
+ *   attachments: Array<{mimeType: string, bytes: number}>, bytes: number}>} queuedPrompts
+ *   cancellable prompts pending in this context; attachment data is never exposed.
  * @property {Awaited<ReturnType<typeof platformCapabilities>>} platform native
  *   operations this machine can honour; the UI hides the buttons that would fail.
  * @property {boolean} chatArchiving whether the archiving feature is on.
@@ -97,6 +102,7 @@ export async function handleEvents({ req, res, sessionKey }) {
 export async function handleGetState({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const { session } = ctx;
+  refreshSessionMetrics(ctx);
   /** @type {StatePayload} */
   const payload = {
     key: ctx.key,
@@ -106,10 +112,9 @@ export async function handleGetState({ res, sessionKey }) {
     current: session.model ? { provider: session.model.provider, id: session.model.id } : null,
     thinkingLevel: session.thinkingLevel,
     totals,
-    chat: ctx.chat,
-    chatByModel: ctx.chatByModel,
-    context: ctx.context,
-    streaming: ctx.running || session.isStreaming,
+    metrics: ctx.metrics,
+    streaming: contextIsBusy(ctx),
+    queuedPrompts: ctx.promptQueue.publicItems(),
     // the UI hides the native buttons this machine cannot honour
     platform: await platformCapabilities(),
     // when off, the sidebar goes back to a flat list with no trace of the feature
@@ -147,17 +152,15 @@ export async function handleSetModel({ req, res, sessionKey }) {
   const model = models.find((m) => m.provider === provider && m.id === id);
   if (!model) return send(res, 404, { error: "model not found or not authenticated" });
   await session.setModel(model);
-  // the context window depends on the model: recompute it right away so the
-  // topbar/composer bar reflects the new model instead of staying stale
-  // until the next message (which is when it used to get updated)
-  ctx.context = { used: ctx.context?.used ?? 0, window: model.contextWindow ?? 0 };
+  // getContextUsage() recomputes both window and percentage for the new model.
+  refreshSessionMetrics(ctx);
   broadcastUsage(ctx);
   return send(res, 200, {
     ok: true,
     current: { provider, id },
     thinkingLevel: session.thinkingLevel,
     thinkingLevels: supportedThinkingLevels(session.model),
-    context: ctx.context,
+    metrics: ctx.metrics,
   });
 }
 
@@ -302,6 +305,13 @@ export async function handleGetGitStatus({ res, sessionKey }) {
   return send(res, 200, await gitStatus(ctx.cwd));
 }
 
+function skillPresentationText(text) {
+  const skill = compactSkillBlock(text);
+  return skill
+    ? [`/skill:${skill.name}`, skill.arguments].filter(Boolean).join(" ")
+    : text;
+}
+
 // One chat as the sidebar wants it. Written once because two routes answer
 // with it (`/api/sessions` and `/api/search`): a field added to a list the
 // page renders the same way must never exist in one of the two only.
@@ -310,17 +320,18 @@ async function sessionEntry(s) {
   // (scanSessionFile is mtime-cached: repeated calls are free)
   const scan = await scanSessionFile(s.path).catch(() => null);
   const last = scan?.lastModel ?? null;
+  const firstMessage = skillPresentationText(s.firstMessage ?? "");
   return {
     path: s.path,
     id: s.id,
     cwd: s.cwd ?? "",
     name: s.name ?? "",
-    firstMessage: s.firstMessage ?? "",
-    // Summary of the first message when one has been generated, the
-    // truncation of it otherwise: titles.mjs never makes this wait. The
-    // creation date travels with it because listing a chat older than the
+    firstMessage,
+    // Summary of the first visible message when one has been generated, the
+    // truncation of it otherwise: expanded skill instructions stay server-side.
+    // The creation date travels with it because listing a chat older than the
     // title switch must not summarize it.
-    title: await titleFor(s.path, s.firstMessage ?? "", s.created),
+    title: await titleFor(s.path, firstMessage, s.created),
     messageCount: s.messageCount ?? 0,
     modified: s.modified,
     favorite: isFavorite(s.path),
@@ -364,13 +375,7 @@ const SEARCH_MAX_FILES = 300;
 // answered. Thinking blocks and tool calls are deliberately out — nobody
 // searches for a chat by the arguments of a grep it ran.
 function messageText(message) {
-  const content = message?.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((c) => c?.type === "text" && typeof c.text === "string")
-    .map((c) => c.text)
-    .join(" ");
+  return skillPresentationText(messageContentText(message, " "));
 }
 
 // True when every word shows up somewhere in the chat, each one possibly in a
@@ -448,7 +453,7 @@ export async function handleSearchMessages({ req, res, url, sessionKey }) {
 // context key the client sends back as `?s=`, its folder, and whether a run is
 // already going on in there.
 function sendContext(res, ctx) {
-  return send(res, 200, { ok: true, key: ctx.key, cwd: ctx.cwd, running: ctx.running });
+  return send(res, 200, { ok: true, key: ctx.key, cwd: ctx.cwd, running: contextIsBusy(ctx) });
 }
 
 export async function handleCreateSession({ res, sessionKey }) {
@@ -521,19 +526,15 @@ export async function handleGetCommands({ res, sessionKey }) {
 
 export async function handleGetFiles({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
-  return send(res, 200, {
-    files: [...ctx.files.values()].map((f) => ({
-      path: f.path,
-      changes: f.writes + f.hunks.length,
-    })),
-  });
+  return send(res, 200, { files: filesForProject(ctx.cwd) });
 }
 
 export async function handleGetFileDiff({ res, url, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const p = url.searchParams.get("path");
-  const f = p && ctx.files.get(p);
-  if (!f) return send(res, 404, { error: "file not tracked" });
+  const sourceKey = url.searchParams.get("source");
+  const f = p && sourceKey && diffForProjectFile(ctx.cwd, sourceKey, p);
+  if (!f) return send(res, 404, { error: "file not tracked for this project and source chat" });
   // A file whose *name* looks like a secret store (.env.secret, api-key.json,
   // …) still shows up as changed, but its text is redacted like settings.json
   // is in /api/config. Normal files keep the exact same payload as before.
@@ -543,6 +544,15 @@ export async function handleGetFileDiff({ res, url, sessionKey }) {
     write: f.writes > 0 ? { content: redact(f.content) } : null,
     hunks: f.hunks.map((h) => ({ oldText: redact(h.oldText), newText: redact(h.newText) })),
   });
+}
+
+function messageContentText(message, separator = "") {
+  if (typeof message?.content === "string") return message.content;
+  if (!Array.isArray(message?.content)) return "";
+  return message.content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join(separator);
 }
 
 export async function handleGetHistory({ res, sessionKey }) {
@@ -572,49 +582,54 @@ export async function handleGetHistory({ res, sessionKey }) {
     }
   }
   const idsAligned = entryIds.length === chatMsgs.length;
-  const msgs = chatMsgs.map((m, i) => ({
-    role: m.role,
-    text: (m.content ?? [])
-      .filter((c) => c.type === "text")
-      .map((c) => c.text)
-      .join(""),
-    // full ordered content of the turn (text, thinking, tool calls with their
-    // results): without this a refresh would drop everything but the text
-    blocks: (typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content ?? []))
-      .map((c) => {
-        if (c.type === "text") return c.text ? { type: "text", text: c.text } : null;
-        if (c.type === "thinking") return c.thinking ? { type: "thinking", text: c.thinking } : null;
-        if (c.type === "toolCall") {
-          const r = toolResults.get(c.id);
-          return {
-            type: "tool",
-            id: c.id,
-            name: c.name,
-            args: sanitizeArgs(c.arguments),
-            summary: summarizeTool(c.name, c.arguments),
-            // no result stored → the tool never finished (aborted turn)
-            status: r ? "end" : "start",
-            output: r?.output ?? "",
-            isError: r?.isError ?? false,
-          };
-        }
-        return null;
-      })
-      .filter(Boolean),
-    entryId: idsAligned ? (entryIds[i] ?? null) : null,
-    // which model produced this message (assistant only): the UI labels
-    // each turn with it, so a mid-chat model switch stays visible
-    ...(m.role === "assistant"
-      ? {
-          provider: m.provider ?? null,
-          model: m.model ?? null,
-          // why the turn ended: an error/abort has no content blocks, so
-          // this is all the UI has to explain the empty answer
-          stopReason: m.stopReason ?? null,
-          errorMessage: m.errorMessage ?? null,
-        }
-      : {}),
-  }));
+  const msgs = chatMsgs.map((m, i) => {
+    const rawText = messageContentText(m);
+    const skill = m.role === "user" ? compactSkillBlock(rawText) : null;
+    const blocks = skill
+      ? [skill]
+      : (typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content ?? []))
+        .map((c) => {
+          if (c.type === "text") return c.text ? { type: "text", text: c.text } : null;
+          if (c.type === "thinking") return c.thinking ? { type: "thinking", text: c.thinking } : null;
+          if (c.type === "toolCall") {
+            const r = toolResults.get(c.id);
+            return {
+              type: "tool",
+              id: c.id,
+              name: c.name,
+              args: sanitizeArgs(c.arguments),
+              summary: summarizeTool(c.name, c.arguments),
+              // no result stored → the tool never finished (aborted turn)
+              status: r ? "end" : "start",
+              output: r?.output ?? "",
+              isError: r?.isError ?? false,
+            };
+          }
+          return null;
+        })
+        .filter(Boolean);
+    return {
+      role: m.role,
+      // Never mirror the expanded SKILL.md body in the legacy text field.
+      text: skillPresentationText(rawText),
+      // Full ordered content of ordinary turns; skill invocations are reduced
+      // to one semantic block before crossing the server/browser boundary.
+      blocks,
+      entryId: idsAligned ? (entryIds[i] ?? null) : null,
+      // which model produced this message (assistant only): the UI labels
+      // each turn with it, so a mid-chat model switch stays visible
+      ...(m.role === "assistant"
+        ? {
+            provider: m.provider ?? null,
+            model: m.model ?? null,
+            // why the turn ended: an error/abort has no content blocks, so
+            // this is all the UI has to explain the empty answer
+            stopReason: m.stopReason ?? null,
+            errorMessage: m.errorMessage ?? null,
+          }
+        : {}),
+    };
+  });
   return send(res, 200, {
     key: ctx.key,
     messages: msgs,
@@ -626,29 +641,79 @@ export async function handleGetHistory({ res, sessionKey }) {
   });
 }
 
+function sendPromptQueueError(res, error) {
+  if (!(error instanceof PromptQueueError)) throw error;
+  return sendError(res, error.status, error.code, error.message);
+}
+
+const contextIsBusy = (ctx) => ctx.promptStarting || ctx.running || ctx.session.isStreaming;
+
 export async function handlePrompt({ req, res, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const { session } = ctx;
-  const { text, images } = await jsonBody(req);
-  const imgs = Array.isArray(images)
-    ? images
-        .filter((i) => i?.data && i?.mimeType)
-        .map((i) => ({ type: "image", data: i.data, mimeType: i.mimeType }))
-    : [];
-  if (!text?.trim() && imgs.length === 0) return send(res, 400, { error: "empty prompt" });
-  const opts = imgs.length ? { images: imgs } : undefined;
+  let input;
+  try {
+    input = normalizePromptInput(await jsonBody(req));
+  } catch (error) {
+    return sendPromptQueueError(res, error);
+  }
+
+  if (contextIsBusy(ctx)) {
+    // AgentSession's public steer/followUp methods preserve skill and prompt
+    // template expansion, but extension commands would execute immediately.
+    // Identify those before this app accepts ownership of a cancellable item.
+    const commands = await sessionCommands(ctx);
+    if (contextIsBusy(ctx)) {
+      const command = queuedExtensionCommand(input.text, commands);
+      if (command) {
+        return sendError(
+          res,
+          409,
+          "extension_command_not_queueable",
+          `extension command /${command.name} cannot be queued while the agent is running`,
+        );
+      }
+      try {
+        const queued = ctx.promptQueue.enqueue(input);
+        return send(res, 202, { ok: true, key: ctx.key, queued });
+      } catch (error) {
+        return sendPromptQueueError(res, error);
+      }
+    }
+  }
+
+  const images = input.images.map(({ data, mimeType }) => ({ type: "image", data, mimeType }));
+  const opts = images.length ? { images } : undefined;
   // writing in a done chat brings it back to life as "reopened"
   if (ctx.sessionFile && sessionStatusOf(ctx.sessionFile) === "done") {
     setSessionStatus(ctx.sessionFile, "reopened").then(() => broadcastGlobal({ kind: "sessions" }));
   }
+  // Cover the pre-agent_start window too: another POST received while model,
+  // auth and extension preflight run belongs to this run's cancellable queue.
+  ctx.promptStarting = true;
   session
-    .prompt(text ?? "", opts)
-    .catch((err) => broadcast(ctx, { kind: "error", message: String(err) }));
+    .prompt(input.text, opts)
+    .catch((err) => {
+      ctx.promptQueue.clear("error");
+      broadcast(ctx, { kind: "error", message: String(err) });
+    })
+    .finally(() => { ctx.promptStarting = false; });
   return send(res, 202, { ok: true, key: ctx.key });
+}
+
+export async function handleDeleteQueuedPrompt({ res, sessionKey, params }) {
+  const ctx = await useContext(sessionKey);
+  try {
+    const removed = ctx.promptQueue.cancel(params.id);
+    return send(res, 200, { ok: true, key: ctx.key, removed });
+  } catch (error) {
+    return sendPromptQueueError(res, error);
+  }
 }
 
 export async function handleAbort({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
+  ctx.promptQueue.clear("aborted");
   await ctx.session.abort();
   return send(res, 200, { ok: true });
 }

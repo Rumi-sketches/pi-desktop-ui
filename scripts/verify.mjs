@@ -262,6 +262,10 @@ async function checkHtmlCsp(port) {
 // under nosniff: the browser refuses the module and the UI stays blank.
 const PAGE_ASSET_TYPES = {
   "/app.js": "text/javascript; charset=utf-8",
+  "/ui-state.js": "text/javascript; charset=utf-8",
+  "/chat-cache.js": "text/javascript; charset=utf-8",
+  "/navigation.js": "text/javascript; charset=utf-8",
+  "/transport.js": "text/javascript; charset=utf-8",
   "/app.css": "text/css; charset=utf-8",
 };
 
@@ -519,7 +523,7 @@ async function main() {
   console.log("✓ smoke test: POST with foreign Origin -> 403");
   console.log("✓ smoke test: responses carry nosniff and no-store");
   console.log("✓ smoke test: GET / carries a restrictive Content-Security-Policy");
-  console.log("✓ smoke test: /app.js and /app.css are served with their own Content-Type");
+  console.log("✓ smoke test: page modules and /app.css are served with their own Content-Type");
   console.log(`✓ smoke test: ${vendorAssets} /vendor/ asset(s) named by the page are served`);
   console.log("✓ smoke test: POST with a malformed JSON body -> 400");
   console.log("✓ smoke test: GET with a malformed request target -> 400, server still serving");

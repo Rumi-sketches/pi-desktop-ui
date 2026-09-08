@@ -15,8 +15,9 @@
  * input and resize. No WebSocket, so the page stays a page.
  */
 import { isLoopbackPeer } from "./access-control.mjs";
-import { SSE_PING, SSE_PING_MS, jsonBody, openSseStream, send, sseSend, sseWrite } from "./http.mjs";
+import { SSE_PING, SSE_PING_MS, jsonBody, openSseStream, send, sendError, sseSend, sseWrite } from "./http.mjs";
 import { broadcastGlobal, useContext } from "./contexts.mjs";
+import { openFolder } from "./platform.mjs";
 import {
   closeTerminal,
   createTerminal,
@@ -25,6 +26,7 @@ import {
   isTerminalKind,
   listTerminals,
   resize,
+  restartTerminal,
   setTerminalsChangedListener,
   subscribe,
   writeTo,
@@ -171,6 +173,33 @@ export async function handleTerminalResize({ req, res, params }) {
     return send(res, 400, { error: "cols and rows must be positive integers" });
   }
   return send(res, 200, { ok: resize(params.id, cols, rows) });
+}
+
+/** POST /api/terminals/:id/open-folder — reveal this terminal's own cwd. */
+export async function handleOpenTerminalFolder({ req, res, params, openFolderImpl = openFolder }) {
+  if (!isLocalRequest(req)) return denyRemote(res);
+  const terminal = getTerminal(params.id);
+  if (!terminal) return notFound(res);
+  const opened = await openFolderImpl(terminal.cwd);
+  if (!opened.ok) {
+    return sendError(res, 501, "folder_unavailable", "opening this terminal's folder is not available");
+  }
+  return send(res, 200, { ok: true, cwd: terminal.cwd });
+}
+
+/** POST /api/terminals/:id/restart — atomically replace it with a clean PTY. */
+export async function handleRestartTerminal({ req, res, params, restartTerminalImpl = restartTerminal }) {
+  if (!isLocalRequest(req)) return denyRemote(res);
+  const restarted = restartTerminalImpl(params.id);
+  if ("reason" in restarted) {
+    if (restarted.reason === "unknown") return notFound(res);
+    return sendError(res, 500, "terminal_restart_failed", "the terminal could not be restarted");
+  }
+  return send(res, 200, {
+    ok: true,
+    previousId: restarted.previousId,
+    terminal: restarted.terminal,
+  });
 }
 
 /** DELETE /api/terminals/:id — kill the process and drop the row. */

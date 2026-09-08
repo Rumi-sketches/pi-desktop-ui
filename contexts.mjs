@@ -25,6 +25,7 @@
 import { execFile } from "node:child_process";
 import {
   createAgentSession,
+  parseSkillBlock,
   ModelRuntime,
   SessionManager,
   resolveModelScopeWithDiagnostics,
@@ -33,6 +34,8 @@ import {
 import { PRODUCT_ID } from "./product.mjs";
 import { SSE_PING, SSE_PING_MS, sseSend, sseWrite } from "./http.mjs";
 import { AGENT_DIR, isAgentDirPath, readSessionRecords, resolveFile } from "./session-store.mjs";
+import { configureTitleModelRuntime } from "./titles.mjs";
+import { createPromptQueueController } from "./prompt-queue.mjs";
 
 // ---- thinking levels -------------------------------------------------------
 // Mirrors getSupportedThinkingLevels() from @earendil-works/pi-ai (not directly
@@ -57,18 +60,18 @@ export function supportedThinkingLevels(model) {
 const allClients = new Set();
 export function broadcast(ctx, event) {
   if (!ctx) return;
-  for (const res of ctx.clients) sseSend(res, event);
+  const scoped = { ...event, key: ctx.key };
+  for (const res of ctx.clients) sseSend(res, scoped);
 }
 export function broadcastGlobal(event) {
   const ev = { ...event, scope: "global" };
   for (const res of allClients) sseSend(res, ev);
 }
 
-// The counters of one chat, pushed to the tabs watching it. Sent from two
-// places (the end of an assistant message and a model switch, which changes
-// the context window), so the shape is defined once.
+// Canonical metrics of one chat, pushed to the tabs watching it. The same
+// object is used by state and SSE so nullable context values cannot diverge.
 export function broadcastUsage(ctx) {
-  broadcast(ctx, { kind: "usage", totals, chat: ctx.chat, chatByModel: ctx.chatByModel, context: ctx.context });
+  broadcast(ctx, { kind: "usage", totals, metrics: ctx.metrics });
 }
 
 // A tab subscribing to a chat: it joins the context's own audience and the
@@ -79,7 +82,13 @@ export function broadcastUsage(ctx) {
 export function attachEventClient(ctx, res) {
   allClients.add(res);
   ctx.clients.add(res);
-  sseSend(res, { kind: "attached", key: ctx.key, cwd: ctx.cwd, running: ctx.running });
+  sseSend(res, {
+    kind: "attached",
+    key: ctx.key,
+    cwd: ctx.cwd,
+    running: ctx.promptStarting || ctx.running || ctx.session.isStreaming,
+    queuedPrompts: ctx.promptQueue.publicItems(),
+  });
   const ping = setInterval(() => sseWrite(res, SSE_PING), SSE_PING_MS);
   ping.unref();
   return () => {
@@ -100,10 +109,21 @@ let modelRuntime = null;
 export const getModelRuntime = () => modelRuntime;
 export async function startAgentRuntime() {
   modelRuntime = await ModelRuntime.create();
+  configureTitleModelRuntime(modelRuntime);
 }
 
 const DEFAULT_CWD = process.cwd();
 const contexts = new Map();
+// Agent-produced diffs belong to the project, not to the lifetime of a chat
+// context. Keep the source chat as a second identity so equal paths never merge.
+const projectFiles = new Map(); // cwd -> source session key -> path -> change
+function projectSourceFiles(cwd, sourceKey) {
+  const sources = projectFiles.get(cwd) ?? new Map();
+  projectFiles.set(cwd, sources);
+  const files = sources.get(sourceKey) ?? new Map();
+  sources.set(sourceKey, files);
+  return files;
+}
 // A draft chat — one with no session file yet — cannot be keyed by path: it is
 // keyed by its folder instead, so that reloading a tab reuses the running agent
 // rather than leaving one more context behind until CTX_IDLE_MS expires. The key
@@ -129,6 +149,12 @@ function adoptSessionFile(ctx) {
   if (contexts.get(file) && contexts.get(file) !== ctx) return;
   const draft = ctx.key;
   contexts.delete(draft);
+  const sources = projectFiles.get(ctx.cwd);
+  const draftFiles = sources?.get(draft);
+  if (draftFiles) {
+    sources.delete(draft);
+    sources.set(file, draftFiles);
+  }
   ctx.sessionFile = file;
   ctx.key = file;
   contexts.set(file, ctx);
@@ -136,17 +162,18 @@ function adoptSessionFile(ctx) {
   // The tab is still sending `draft:<cwd>` as `?s=`: tell it its chat has a
   // name now. Its own SSE stream is untouched (same context object), so this
   // must not be an `attached` event — the client would reset the turn state.
-  broadcast(ctx, { kind: "rekey", key: ctx.key, cwd: ctx.cwd });
+  broadcast(ctx, {
+    kind: "rekey",
+    key: ctx.key,
+    cwd: ctx.cwd,
+    queuedPrompts: ctx.promptQueue.publicItems(),
+  });
 }
 
 // server-wide cumulative counters (all chats)
 export const totals = { input: 0, output: 0, cost: 0, requests: 0 };
 
-// Tokens attributable to *one chat only*: fresh tokens per turn (prompt tokens
-// actually sent + cache writes + output). `cacheRead` is deliberately excluded:
-// it is the same context re-counted on every turn, which is what made the old
-// cumulative counter explode.
-const emptyChatUsage = () => ({
+const emptyUsage = () => ({
   tokens: 0,
   input: 0,
   output: 0,
@@ -156,47 +183,79 @@ const emptyChatUsage = () => ({
   requests: 0,
 });
 
-function accumulateChatUsage(target, u) {
-  const input = u.input ?? 0;
-  const output = u.output ?? 0;
-  const cacheWrite = u.cacheWrite ?? 0;
+function addUsage(target, usage) {
+  const input = usage.input ?? 0;
+  const output = usage.output ?? 0;
+  const cacheWrite = usage.cacheWrite ?? 0;
+  const cacheRead = usage.cacheRead ?? 0;
   target.input += input;
   target.output += output;
   target.cacheWrite += cacheWrite;
-  target.cacheRead += u.cacheRead ?? 0;
-  target.tokens += input + cacheWrite + output;
-  target.cost += u.cost?.total ?? 0;
+  target.cacheRead += cacheRead;
+  target.tokens += input + output + cacheWrite + cacheRead;
+  target.cost += usage.cost?.total ?? 0;
   target.requests += 1;
 }
 
-function addChatUsage(ctx, u, modelKey = "?") {
-  accumulateChatUsage(ctx.chat, u);
-  // same counters, broken down by the model that produced the message:
-  // switching LLM mid-chat stays visible in the top-right counter toggle
-  accumulateChatUsage((ctx.chatByModel[modelKey] ??= emptyChatUsage()), u);
+function usageFromStats(stats) {
+  return {
+    tokens: stats.tokens.total,
+    input: stats.tokens.input,
+    output: stats.tokens.output,
+    cacheWrite: stats.tokens.cacheWrite,
+    cacheRead: stats.tokens.cacheRead,
+    cost: stats.cost,
+    requests: stats.assistantMessages,
+  };
 }
 
-// "provider/model" of an assistant message, falling back to the session's
-// current model when the record doesn't carry it
-function messageModelKey(ctx, msg) {
-  if (msg?.provider && msg?.model) return `${msg.provider}/${msg.model}`;
-  const m = ctx.session?.model;
-  return m ? `${m.provider}/${m.id}` : "?";
-}
-
-// Rebuild the chat counter from a persisted session file (resume / open).
-async function replayChatUsage(ctx, file) {
-  ctx.chat = emptyChatUsage();
-  ctx.chatByModel = {};
-  if (!file) return;
-  try {
-    for await (const rec of readSessionRecords(file)) {
-      if (rec.type !== "message" || rec.message?.role !== "assistant") continue;
-      if (rec.message.usage) addChatUsage(ctx, rec.message.usage, messageModelKey(ctx, rec.message));
-    }
-  } catch {
-    /* unreadable session file: counter simply starts at zero */
+const USAGE_FIELDS = ["tokens", "input", "output", "cacheWrite", "cacheRead", "cost", "requests"];
+function usageDifference(total, attributed) {
+  const difference = emptyUsage();
+  for (const field of USAGE_FIELDS) {
+    const value = total[field] - attributed[field];
+    difference[field] = Math.abs(value) < 1e-12 ? 0 : value;
   }
+  return USAGE_FIELDS.some((field) => difference[field] !== 0) ? difference : null;
+}
+
+/**
+ * Build the only chat-metrics payload exposed to the browser. Totals and
+ * context come from AgentSession's public APIs. Per-model rows only attribute
+ * assistant usage carrying its own provider/model identity; every remaining
+ * SDK total is kept as Session work instead of guessed onto the current model.
+ */
+export function sessionMetrics(session) {
+  const stats = session.getSessionStats();
+  const total = usageFromStats(stats);
+  const byModel = {};
+  const attributed = emptyUsage();
+  for (const entry of session.sessionManager.getEntries()) {
+    if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
+    const message = entry.message;
+    if (!message.usage || !message.provider || !message.model) continue;
+    const key = `${message.provider}/${message.model}`;
+    addUsage((byModel[key] ??= emptyUsage()), message.usage);
+    addUsage(attributed, message.usage);
+  }
+  const context = session.getContextUsage() ?? null;
+  return {
+    total,
+    byModel,
+    sessionWork: usageDifference(total, attributed),
+    context: context
+      ? {
+          tokens: context.tokens,
+          contextWindow: context.contextWindow,
+          percent: context.percent,
+        }
+      : null,
+  };
+}
+
+export function refreshSessionMetrics(ctx) {
+  ctx.metrics = sessionMetrics(ctx.session);
+  return ctx.metrics;
 }
 
 // cwd recorded in the session file header (a chat may belong to another project)
@@ -232,7 +291,22 @@ function recordFileChange(ctx, toolName, args) {
     return;
   }
   ctx.files.set(p, entry);
+  projectSourceFiles(ctx.cwd, ctx.key).set(p, entry);
   broadcast(ctx, { kind: "file", path: p, count: entry.writes + entry.hunks.length });
+}
+
+// Persisted skill invocations contain the full SKILL.md body because that is
+// what the model consumed. The browser only needs the semantic invocation;
+// parse with the SDK that produced the format, then discard body and location.
+export function compactSkillBlock(text) {
+  if (typeof text !== "string") return null;
+  const parsed = parseSkillBlock(text);
+  if (!parsed) return null;
+  return {
+    type: "skill",
+    name: parsed.name,
+    arguments: parsed.userMessage ?? "",
+  };
 }
 
 // ---- tool call presentation ------------------------------------------------
@@ -325,18 +399,27 @@ function liveText(ctx, type, delta) {
   }
 }
 
+// pi-ai normalizes every provider, including OpenAI Responses/Codex, to the
+// same assistant delta types. Keep that contract intact at our SSE boundary:
+// provider metadata in `partial` must never decide whether reasoning is shown.
+export function assistantDeltaEvent(event) {
+  if (event?.type !== "message_update") return null;
+  const delta = event.assistantMessageEvent;
+  if (delta?.type === "text_delta") return { kind: "text", delta: delta.delta };
+  if (delta?.type === "thinking_delta") return { kind: "thinking", delta: delta.delta };
+  return null;
+}
+
 function wireSession(ctx) {
   ctx.session.subscribe((event) => {
-    if (event.type === "message_update") {
-      const ev = event.assistantMessageEvent;
-      if (ev.type === "text_delta") {
-        liveText(ctx, "text", ev.delta);
-        broadcast(ctx, { kind: "text", delta: ev.delta });
-      }
-      if (ev.type === "thinking_delta") {
-        liveText(ctx, "thinking", ev.delta);
-        broadcast(ctx, { kind: "thinking", delta: ev.delta });
-      }
+    // The cancellable app queue owns prompts until a public turn boundary.
+    // This runs before presentation updates so a dispatch event is observable
+    // before the next model call can start.
+    ctx.promptQueue.onSessionEvent(event);
+    const assistantDelta = assistantDeltaEvent(event);
+    if (assistantDelta) {
+      liveText(ctx, assistantDelta.kind, assistantDelta.delta);
+      broadcast(ctx, assistantDelta);
     } else if (event.type === "tool_execution_start") {
       recordFileChange(ctx, event.toolName, event.args);
       const ev = {
@@ -383,12 +466,6 @@ function wireSession(ctx) {
         totals.output += u.output ?? 0;
         totals.cost += u.cost?.total ?? 0;
         totals.requests += 1;
-        addChatUsage(ctx, u, messageModelKey(ctx, event.message));
-        ctx.context = {
-          used: u.totalTokens ?? 0,
-          window: ctx.session.model?.contextWindow ?? 0,
-        };
-        broadcastUsage(ctx);
       }
       // a failed/aborted turn is *not* an event of its own: the SDK closes the
       // assistant message with stopReason error|aborted + errorMessage and
@@ -405,7 +482,13 @@ function wireSession(ctx) {
       // name/preview/modified date fresh on every turn
       adoptSessionFile(ctx);
       broadcastGlobal({ kind: "sessions" });
+    } else if (event.type === "turn_end") {
+      // AgentSession notifies message_end listeners before persisting the
+      // message. At turn_end, stats include this response and its tool results.
+      refreshSessionMetrics(ctx);
+      broadcastUsage(ctx);
     } else if (event.type === "agent_start") {
+      ctx.promptStarting = false;
       ctx.running = true;
       ctx.live = [];
       // which model is answering this turn (it can change mid-chat): the UI
@@ -425,8 +508,10 @@ function wireSession(ctx) {
       // ends with no answer and no explanation, and session.prompt() never
       // rejects, so the /api/prompt .catch below never fires either.
       broadcast(ctx, { kind: "error", message: event.finalError });
-    } else if (event.type === "compaction_end" && event.errorMessage) {
-      broadcast(ctx, { kind: "error", message: event.errorMessage });
+    } else if (event.type === "compaction_end") {
+      refreshSessionMetrics(ctx);
+      broadcastUsage(ctx);
+      if (event.errorMessage) broadcast(ctx, { kind: "error", message: event.errorMessage });
     }
   });
 }
@@ -530,10 +615,8 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     extensionsResult,
     cwd,
     sessionFile: file,
-    chat: emptyChatUsage(),
-    chatByModel: {},
+    metrics: sessionMetrics(session),
     turnModel: null,
-    context: { used: 0, window: session.model?.contextWindow ?? 0 },
     files: new Map(),
     clients: new Set(),
     live: [],
@@ -541,10 +624,15 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     lastActive: Date.now(),
     commandsCache: null, // { at, data } — slash commands for /api/commands
     skillLoader: null, // DefaultResourceLoader used only to discover skills
+    promptStarting: false,
+    promptQueue: null,
   };
+  ctx.promptQueue = createPromptQueueController({
+    session,
+    emit: (event) => broadcast(ctx, event),
+  });
   contexts.set(ctx.key, ctx);
   wireSession(ctx);
-  await replayChatUsage(ctx, file);
   broadcastGlobal({ kind: "sessions" });
   return ctx;
 }
@@ -615,6 +703,25 @@ export const tabCwd = (sessionKey) => contexts.get(sessionKey)?.cwd ?? DEFAULT_C
 // sidebar marks both. The contexts themselves stay private.
 export const openContextKeys = () => [...contexts.keys()];
 export const runningContextKeys = () => [...contexts.values()].filter((c) => c.running).map((c) => c.key);
+
+// Project diff data keeps one row per source chat. The session key is opaque to
+// the client, but it is the identity needed to select the matching change.
+export function projectFileChanges(sources) {
+  if (!sources) return [];
+  return [...sources].flatMap(([sourceKey, files]) => [...files.values()].map((file) => ({
+    path: file.path,
+    changes: file.writes + file.hunks.length,
+    sourceKey,
+  })));
+}
+
+export function projectFileDiff(sources, sourceKey, filePath) {
+  return sources?.get(sourceKey)?.get(filePath) ?? null;
+}
+
+export const filesForProject = (cwd) => projectFileChanges(projectFiles.get(cwd));
+export const diffForProjectFile = (cwd, sourceKey, filePath) =>
+  projectFileDiff(projectFiles.get(cwd), sourceKey, filePath);
 // The live sessions, for the settings that can be applied without a restart.
 export const liveSessions = () => [...contexts.values()].map((c) => c.session);
 
@@ -645,6 +752,7 @@ export async function disposeAllContexts() {
     }
   }
   allClients.clear();
+  projectFiles.clear();
 }
 
 async function authMapForModels(models) {

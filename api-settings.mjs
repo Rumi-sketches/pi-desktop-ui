@@ -25,9 +25,14 @@ import {
   readSettingsFile,
   redactSecrets,
   saveSettingsFile,
+  isOpenAIUsageEnabled,
+  isTitleGenerationEnabled,
+  openAIUsageState,
   setArchivingEnabled,
   setFullSearchEnabled,
+  setOpenAIUsageEnabled,
   setPath,
+  setLunaTitleFallbackEnabled,
   setTitleGenerationEnabled,
   settingsSchema,
   titleGenerationState,
@@ -316,9 +321,20 @@ export async function handleGetTitleGeneration({ res }) {
 }
 
 export async function handleSetTitleGeneration({ req, res }) {
-  const { enabled } = await jsonBody(req);
-  if (typeof enabled !== "boolean") return send(res, 400, { error: "enabled must be a boolean" });
-  await setTitleGenerationEnabled(enabled);
+  const body = await jsonBody(req);
+  const hasPrimary = Object.hasOwn(body, "enabled");
+  const hasLuna = Object.hasOwn(body, "lunaTitleFallback");
+  if (!hasPrimary && !hasLuna) {
+    return send(res, 400, { error: "enabled or lunaTitleFallback must be a boolean" });
+  }
+  if (hasPrimary && typeof body.enabled !== "boolean") {
+    return send(res, 400, { error: "enabled must be a boolean" });
+  }
+  if (hasLuna && typeof body.lunaTitleFallback !== "boolean") {
+    return send(res, 400, { error: "lunaTitleFallback must be a boolean" });
+  }
+  if (hasPrimary) await setTitleGenerationEnabled(body.enabled);
+  if (hasLuna) await setLunaTitleFallbackEnabled(body.lunaTitleFallback);
   return send(res, 200, titleGenerationState());
 }
 
@@ -327,7 +343,11 @@ export async function handleSetTitleGeneration({ req, res }) {
 // the click that covers the ones already there, and it is the only thing that
 // summarizes them.
 export async function handleBackfillTitles({ res }) {
-  const queued = await queueMissingTitles(await SessionManager.listAll());
+  // Backfill remains an explicit second consent, but it cannot bypass the
+  // primary title-generation switch. Luna follows its own independent toggle.
+  const queued = isTitleGenerationEnabled()
+    ? await queueMissingTitles(await SessionManager.listAll())
+    : 0;
   return send(res, 200, { ...titleGenerationState(), queued });
 }
 
@@ -374,20 +394,42 @@ export async function handleGetUsage({ req, res, url }) {
   // same-origin proof itself, and a request without it silently degrades to
   // the cached answer rather than failing the UI with a 403.
   const force = url.searchParams.get("force") === "1" && provesSameOrigin(req, req.headers.host);
-  return send(res, 200, await fetchAllUsage({ force }));
+  return send(res, 200, await fetchAllUsage({
+    force,
+    openAIEnabled: isOpenAIUsageEnabled(),
+    modelRuntime: getModelRuntime(),
+  }));
+}
+
+async function publicUsageConfigStatus() {
+  const manual = await usageConfigStatus();
+  return {
+    ...manual,
+    openai: {
+      ...openAIUsageState(),
+      configured: getModelRuntime()?.isUsingOAuth?.("openai-codex") === true,
+    },
+  };
 }
 
 export async function handleGetUsageConfig({ res }) {
-  return send(res, 200, await usageConfigStatus());
+  return send(res, 200, await publicUsageConfigStatus());
 }
 
 export async function handleSaveUsageConfig({ req, res }) {
   const { provider, ...values } = await jsonBody(req);
-  // No catch on purpose: a rejected paste throws with `status = 400` and is
-  // echoed back, while an I/O failure reaches the generic handler as a 500.
-  // Turning both into 400 told the user to fix a paste that was fine.
-  await saveUsageConfig(provider, values);
-  return send(res, 200, { ok: true, status: await usageConfigStatus() });
+  if (provider === "openai-codex") {
+    if (typeof values.enabled !== "boolean") {
+      return sendError(res, 400, "invalid_enabled", "enabled must be a boolean");
+    }
+    await setOpenAIUsageEnabled(values.enabled);
+  } else {
+    // No catch on purpose: a rejected paste throws with `status = 400` and is
+    // echoed back, while an I/O failure reaches the generic handler as a 500.
+    // Turning both into 400 told the user to fix a paste that was fine.
+    await saveUsageConfig(provider, values);
+  }
+  return send(res, 200, { ok: true, status: await publicUsageConfigStatus() });
 }
 
 export async function handleTestUsageCredentials({ req, res }) {
@@ -409,7 +451,7 @@ export async function handleTestUsageCredentials({ req, res }) {
 export async function handleDeleteUsageCredentials({ res, params }) {
   // see POST above: validation answers 400, a failed write answers 500.
   await clearUsageConfig(params.provider);
-  return send(res, 200, { ok: true, status: await usageConfigStatus() });
+  return send(res, 200, { ok: true, status: await publicUsageConfigStatus() });
 }
 
 export async function handleGetAnalytics({ res }) {

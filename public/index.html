@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>pi desktop ui</title>
+<link rel="icon" href="/icon.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon.png">
 <!-- Libraries are served locally (see /vendor in server.mjs): the UI must work
      offline and must not leak traffic to a CDN. Fonts use the system stack. -->
 <link rel="stylesheet" href="/vendor/@highlightjs/cdn-assets/styles/github-dark.min.css">
@@ -19,6 +21,7 @@
      `FitAddon` the terminal view uses. -->
 <script src="/vendor/@xterm/xterm/lib/xterm.js"></script>
 <script src="/vendor/@xterm/addon-fit/lib/addon-fit.js"></script>
+<link rel="modulepreload" href="/provider-icons.js">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -146,7 +149,7 @@
 
 <!-- ============ MAIN ============ -->
 <div id="main">
-  <header>
+  <header id="mainHeader" data-view="chat">
     <div id="sidebarShowWrap">
       <button class="btn icon" id="sidebarShow" title="Show sidebar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
@@ -174,7 +177,7 @@
             <span class="sys" id="cwdMsg"></span>
             <button class="btn teal" id="cwdApply">Set folder</button>
           </div>
-          <div class="row">
+          <div class="row" id="cwdOpenRow">
             <button class="btn outline" id="explorerBtn" title="Open this folder in the system file manager">Open folder</button>
           </div>
           <div class="recentBox" id="recentBox">
@@ -190,6 +193,21 @@
       </div>
       <span class="sep" aria-hidden="true">/</span>
       <span id="chatTitle">New chat</span>
+    </div>
+
+    <div id="terminalHeader" class="hide">
+      <div class="terminalIdentity">
+        <svg class="terminalGlyph" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
+        <span class="terminalFolder" id="terminalFolder">Terminal</span>
+        <span class="terminalPath" id="terminalPath"></span>
+        <span class="chip terminalKind" id="terminalKind"></span>
+        <span class="chip terminalStatus" id="terminalStatus"></span>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn outline terminalAction" id="terminalOpenFolderBtn">Open folder</button>
+      <button class="btn outline terminalAction" id="terminalCopyPathBtn">Copy path</button>
+      <button class="btn outline terminalAction" id="terminalRestartBtn">Restart</button>
+      <button class="btn outline terminalAction danger" id="terminalCloseBtn">Close</button>
     </div>
 
     <!-- how many integrated terminals are running right now; the popover lists
@@ -227,6 +245,7 @@
   <div id="chatView">
     <div id="chatWrap"><div id="chat"></div></div>
     <div id="composerWrap">
+      <div id="responseSpinner" class="hide" role="status" aria-label="Waiting for the response text"></div>
       <form id="composer">
         <div class="cmdMenu" id="cmdMenu"></div>
         <div id="attachments"></div>
@@ -272,6 +291,10 @@
             <div class="usagePop" id="usagePop"></div>
           </div>
 
+          <div id="queueActions" class="hide" aria-label="Choose when to deliver this message">
+            <button type="button" class="queueAction steer" data-queue-type="steer" title="Deliver at the next model turn">Reindirizza</button>
+            <button type="button" class="queueAction follow-up" data-queue-type="followUp" title="Deliver after the current response">Dopo</button>
+          </div>
           <button type="submit" class="btn teal" id="sendBtn" title="Send (Ctrl+Enter)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
           </button>

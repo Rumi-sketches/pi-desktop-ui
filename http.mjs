@@ -241,18 +241,28 @@ async function serveVendor(res, pathname) {
 }
 
 // ---- page assets -----------------------------------------------------------
-// The page ships as three files (index.html + app.js + app.css) so the HTML can
-// carry a CSP without 'unsafe-inline'. This is a fixed whitelist, not a static
+// The page ships as fixed assets so the HTML can carry a CSP without
+// 'unsafe-inline'. This is a fixed whitelist, not a static
 // file server rooted at public/: the pathname is a key, never a path fragment,
 // so no traversal is possible.
 const PUBLIC_DIR = path.join(__dirname, "public");
 const PAGE_ASSETS = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "/ui-state.js": { file: "ui-state.js", type: "text/javascript; charset=utf-8" },
+  "/chat-cache.js": { file: "chat-cache.js", type: "text/javascript; charset=utf-8" },
+  "/navigation.js": { file: "navigation.js", type: "text/javascript; charset=utf-8" },
+  "/transport.js": { file: "transport.js", type: "text/javascript; charset=utf-8" },
+  "/provider-icons.js": { file: "provider-icons.js", type: "text/javascript; charset=utf-8" },
   "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+  // The app mark, for the tab and for whatever pins the page. `/favicon.ico`
+  // is not in the HTML: browsers ask for it on their own, and answering 404 to
+  // a request nobody made is still a 404 in the console.
+  "/icon.png": { file: "icon.png", type: "image/png" },
+  "/favicon.ico": { file: "icon.ico", type: "image/x-icon" },
 };
 
-// Not cached, unlike /vendor: these two change with every release of the UI,
-// and a stale app.js against a fresh server is a bug report nobody can explain.
+// Not cached, unlike /vendor: these change with every release of the UI, and a
+// stale browser module against a fresh server is a bug report nobody can explain.
 async function servePageAsset(res, asset) {
   try {
     const body = await readFile(path.join(PUBLIC_DIR, asset.file));

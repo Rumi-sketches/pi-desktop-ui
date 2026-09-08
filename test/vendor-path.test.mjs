@@ -8,9 +8,26 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { vendorFilePath } from "../http.mjs";
+import { PAGE_ROUTES, vendorFilePath } from "../http.mjs";
 
 const VENDOR_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "node_modules");
+
+test("the provider icon module is a served page asset", async () => {
+  const route = PAGE_ROUTES.find(([method, pathname]) => method === "GET" && pathname === "/provider-icons.js");
+  assert.ok(route);
+  let status;
+  let headers;
+  let body;
+  const res = {
+    writeHead(code, values) { status = code; headers = values; },
+    end(value) { body = value; },
+  };
+  const handler = /** @type {(bag: any) => Promise<void>} */ (route[2]);
+  await handler({ res, url: new URL("http://localhost/provider-icons.js") });
+  assert.equal(status, 200);
+  assert.equal(headers["Content-Type"], "text/javascript; charset=utf-8");
+  assert.match(body.toString("utf8"), /export function providerIcon/);
+});
 
 test("vendorFilePath: an allowed asset resolves inside node_modules", () => {
   assert.equal(vendorFilePath("/vendor/marked/lib/marked.esm.js"), path.join(VENDOR_ROOT, "marked/lib/marked.esm.js"));

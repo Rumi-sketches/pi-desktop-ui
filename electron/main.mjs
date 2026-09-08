@@ -12,15 +12,19 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startServer } from "../server.mjs";
+import { describeWork } from "../lifecycle.mjs";
 import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WINDOW_TITLE = PRODUCT_NAME;
 const WINDOW_SIZE = { width: 1200, height: 800, minWidth: 900, minHeight: 600 };
-// First one that exists wins; none of them ships today, so the app usually
-// falls back to Electron's own icon.
-const ICON = ["icon.png", "icon.ico", "favicon.png", "favicon.ico"]
+// First one that exists wins. Windows asks for the .ico first on purpose: it is
+// the format the taskbar and the window frame read at every size they need,
+// instead of resampling one bitmap themselves. Everywhere else it is the png.
+const ICON = (process.platform === "win32"
+  ? ["icon.ico", "icon.png", "favicon.ico", "favicon.png"]
+  : ["icon.png", "favicon.png", "icon.ico", "favicon.ico"])
   .map((name) => path.join(ROOT, "public", name))
   .find((file) => existsSync(file));
 // Handed to the OS browser and nothing else: a `file:` or custom-scheme link
@@ -35,6 +39,9 @@ let running = null;
 let serverOrigin = null;
 // In-flight restart, so a second click cannot start one on top of another.
 let restarting = null;
+// Set once the user has answered the "this will stop N chats" question, or by
+// any exit that must not ask it (a signal, the OS session ending).
+let closeConfirmed = false;
 
 function fail(what, err) {
   dialog.showErrorBox(WINDOW_TITLE, `${what}\n\n${errorMessage(err)}`);
@@ -170,6 +177,41 @@ function rebase(url, baseUrl) {
   }
 }
 
+// Closing the window stops the server, and with it every agent turn still
+// running and every integrated terminal. Worth a question rather than a
+// surprise — and asked here, on the window's own close, because by `before-quit`
+// the window is already gone and a "cancel" would leave an app with nothing on
+// screen. The counts come from the server, which owns the processes.
+function confirmClose(win) {
+  const work = running?.activity?.();
+  if (!work?.busy) return true;
+  const choice = dialog.showMessageBoxSync(win, {
+    type: "question",
+    buttons: ["Close anyway", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    title: WINDOW_TITLE,
+    message: `${describeWork(work)}.`,
+    detail: `Closing ${WINDOW_TITLE} stops the local server, and with it everything running in it.`,
+  });
+  return choice === 0;
+}
+
+// Only the last window is asked: the others (a chat opened in a "new tab") are
+// closing a view, not the server.
+const isLastWindow = () => BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).length <= 1;
+
+function guardClose(win) {
+  win.on("close", (event) => {
+    if (closeConfirmed || !isLastWindow()) return;
+    if (confirmClose(win)) {
+      closeConfirmed = true;
+      return;
+    }
+    event.preventDefault();
+  });
+}
+
 function focusExistingWindow() {
   const [win] = BrowserWindow.getAllWindows();
   if (!win) return;
@@ -178,12 +220,40 @@ function focusExistingWindow() {
   win.focus();
 }
 
-// The default menu binds Ctrl+W to "close window" and eats the key before the
-// page ever sees it; in the app Ctrl+W closes the *project tab*, and only quits
-// when there is none left. Editing and view roles are kept — losing them would
-// cost copy/paste, reload and the devtools.
+// No menu bar: this is a single-window app whose whole surface is the page, and
+// an "Edit / View" strip on top of it was only ever chrome. macOS is the
+// exception and not a stylistic one — there the application menu is where
+// copy/paste and Cmd+Q live, and an app without it cannot be quit properly.
+//
+// The default menu also bound Ctrl+W to "close window" and ate the key before
+// the page saw it; in the app Ctrl+W closes the *project tab* and only quits
+// when there is none left. Dropping the menu makes that true by construction.
 function installMenu() {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "editMenu" }, { role: "viewMenu" }]));
+  if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "viewMenu" }]));
+}
+
+// Reload and devtools used to come free with the View menu. They are worth
+// keeping — this app *is* a local web page and one bad render is one F5 away
+// from being fixed — so they are bound on the window itself instead. Nothing
+// else is: every other key belongs to the page.
+function installWindowShortcuts(contents) {
+  contents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const key = input.key.toLowerCase();
+    const devtools = key === "f12" || (input.control && input.shift && key === "i");
+    const reload = key === "f5" || (input.control && !input.shift && !input.alt && key === "r");
+    if (devtools) {
+      contents.toggleDevTools();
+      event.preventDefault();
+    } else if (reload) {
+      contents.reload();
+      event.preventDefault();
+    }
+  });
 }
 
 async function boot() {
@@ -206,8 +276,14 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", focusExistingWindow);
 
   // Every window, the popups the UI opens included, gets the same treatment.
-  app.on("browser-window-created", (_event, win) => win.once("ready-to-show", () => win.show()));
-  app.on("web-contents-created", (_event, contents) => guardNavigation(contents));
+  app.on("browser-window-created", (_event, win) => {
+    win.once("ready-to-show", () => win.show());
+    guardClose(win);
+  });
+  app.on("web-contents-created", (_event, contents) => {
+    guardNavigation(contents);
+    installWindowShortcuts(contents);
+  });
 
   // No dock/tray life on any platform, macOS included: this app *is* its
   // window, and closing it means shutting the server down.
@@ -218,6 +294,10 @@ if (!app.requestSingleInstanceLock()) {
   // held back for that one turn, then let through on the second pass, when
   // `running` is already null.
   app.on("before-quit", (event) => {
+    // Whatever asked for the quit before a window did — a signal, the OS session
+    // ending, the second-instance path — is not a click to be second-guessed:
+    // the windows about to close must not stop to ask.
+    closeConfirmed = true;
     if (!running) return;
     event.preventDefault();
     releaseServer().then(() => app.quit());

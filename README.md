@@ -40,9 +40,9 @@ forcing a provider refresh from `/api/usage` — is handled where it belongs, by
 to be same-origin.
 
 **The HTTP API is an implementation detail.** The routes under `/api/` exist to serve `public/`, not
-as a public contract: they are unversioned, undocumented on purpose, and free to change shape
-whenever the UI needs them to. Build a script on top of them if it helps you, but expect it to break,
-and do not read a missing header or a loose response shape as an API defect.
+as a supported integration API. Their current shapes are listed in [docs/api.md](docs/api.md) so the
+server and its own UI cannot drift apart, but they are unversioned and may change with the UI. A
+script built on them may need updates after any release.
 
 Before opening a security issue, describe the realistic attacker: who they are, and how they get past
 the guard in the first place. An issue that starts after that point is describing the design.
@@ -116,12 +116,20 @@ PORT=3778 npm start
 
 ## Features
 
-- **Multiple chats in parallel.** One agent context per chat, kept alive when you switch away: a run
-  keeps going in the background and the result is there when you come back.
+- **Multiple chats in parallel.** One agent context per chat stays alive when you switch away. The
+  last eight visited chats also keep their rendered view, scroll position, composer text and
+  in-memory attachments. Returning to one of them paints the cached view before HTTP sync starts.
 - **Streaming answers** with markdown, syntax highlighting, thinking blocks and tool calls rendered
-  as they arrive.
+  as they arrive. A text-free spinner waits for the first model text; thinking and tool activity do
+  not dismiss it.
+- **Steering and follow-up during a run.** The composer stays active and replaces the send arrow with
+  `Reindirizza` and `Dopo`. The first delivers at the next model turn, the second after the current
+  response. Pending messages appear as cancellable ghosts in their eventual transcript position.
+  The queue belongs to one chat, is cleared with that live context, and accepts at most 20 messages
+  or 32 MiB of decoded text and attachments.
 - **Sessions sidebar** with search, favorites, per-chat working folder, and forking a conversation
-  from any earlier message.
+  from any earlier message. Project tabs and `All` each remember their own chat, terminal or
+  settings view.
 - **Chat archiving** to keep the sidebar tidy (see below).
 - **Model switching** from the top bar, restricted to providers with valid credentials, plus a
   thinking-level selector.
@@ -129,11 +137,20 @@ PORT=3778 npm start
   written to `enabledModels` in `~/.pi/agent/settings.json`.
 - **Settings panel** over your real pi configuration: documented settings, providers and
   authentication, active tools, paths, and the raw `settings.json` / `models.json`.
+- **Chat metrics from pi's session APIs.** The header shows total tokens, context percentage (or `?`
+  when pi cannot calculate it) and cost. Totals include input, output, cache reads and cache writes;
+  the detail keeps per-model rows and labels unattributed work as `Session work`.
 - **Cost analytics** aggregated from `~/.pi/agent/sessions/**.jsonl`: tokens, requests and cost by
   day, model and project.
-- **Real account limits** for claude.ai and kimi.com, if you store those credentials.
+- **Real account limits** for claude.ai and kimi.com when you store those credentials. OpenAI Codex
+  account limits have a separate, default-off toggle and reuse pi's OAuth on the server without
+  copying its token into this app's settings.
+- **Optional chat titles.** Haiku title generation is default-off. A second default-off toggle allows
+  `openai-codex/gpt-5.6-luna` only when Haiku is unavailable. Existing chats require the separate
+  backfill action, and each chat has one shared budget of three remote attempts.
 - **Native helpers**: folder picker, reveal the working folder in the file manager, open a terminal
-  there.
+  there. An integrated terminal has its own folder, type and status header, plus copy path, restart
+  and close actions.
 - **Eight themes**, light and dark, plus an accent colour that applies over any of them.
 - **Offline friendly**: libraries and fonts are served locally, nothing is fetched from a CDN.
 
@@ -193,7 +210,9 @@ Be clear about what this tool is before exposing it to anything:
 - **`~/.pi/agent/web-usage.json` contains real session credentials.** If you configure the account
   limits widget, the claude.ai session cookie and the kimi.com token you paste are stored there in
   clear text. They grant access to your accounts: protect that file like a password, and don't
-  share or back it up carelessly.
+  share or back it up carelessly. OpenAI Codex usage is different: the app reads pi's existing OAuth
+  on the server and does not copy the token or full account ID into `web-usage.json` or browser
+  responses.
 
 ## Chat archiving
 

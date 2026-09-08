@@ -136,7 +136,81 @@ describe("terminal endpoints", () => {
   test("an unknown id is a 404, not a crash", async () => {
     assert.equal((await sendJson("POST", "/api/terminals/nope/input", { data: "x" })).status, 404);
     assert.equal((await sendJson("POST", "/api/terminals/nope/resize", { cols: 80, rows: 24 })).status, 404);
+    assert.equal((await sendJson("POST", "/api/terminals/nope/open-folder", {})).status, 404);
+    assert.equal((await sendJson("POST", "/api/terminals/nope/restart", {})).status, 404);
     assert.equal((await sendJson("DELETE", "/api/terminals/nope")).status, 404);
+  });
+
+  test("open-folder resolves the folder from the terminal resource", { skip }, async (t) => {
+    const { createTerminal, closeTerminal } = await import("../terminals.mjs");
+    const { handleOpenTerminalFolder } = await import("../api-terminals.mjs");
+    const terminal = createTerminal({ kind: "shell", cwd: os.tmpdir() });
+    t.after(() => closeTerminal(terminal.id));
+    let opened = null;
+    let status = 0;
+    /** @type {any} */
+    let payload = {};
+    const req = { headers: {}, socket: { remoteAddress: "127.0.0.1" } };
+    const res = {
+      writeHead(code) {
+        status = code;
+        return this;
+      },
+      end(body) {
+        payload = JSON.parse(body);
+      },
+    };
+
+    await handleOpenTerminalFolder({
+      req,
+      res,
+      params: { id: terminal.id },
+      openFolderImpl: async (cwd) => {
+        opened = cwd;
+        return { ok: true };
+      },
+    });
+
+    assert.equal(status, 200);
+    assert.equal(opened, terminal.cwd, "the handler must use the selected terminal's cwd");
+    assert.equal(payload.cwd, terminal.cwd);
+
+    await handleOpenTerminalFolder({
+      req,
+      res,
+      params: { id: terminal.id },
+      openFolderImpl: async () => ({ ok: false, reason: "unavailable" }),
+    });
+    assert.equal(status, 501);
+    assert.equal(payload.error.code, "folder_unavailable");
+  });
+
+  test("restart failure has its own observable error and does not report success", { skip }, async () => {
+    const { handleRestartTerminal } = await import("../api-terminals.mjs");
+    let status = 0;
+    /** @type {any} */
+    let payload = {};
+    const req = { headers: {}, socket: { remoteAddress: "127.0.0.1" } };
+    const res = {
+      writeHead(code) {
+        status = code;
+        return this;
+      },
+      end(body) {
+        payload = JSON.parse(body);
+      },
+    };
+
+    await handleRestartTerminal({
+      req,
+      res,
+      params: { id: "terminal-that-stays-put" },
+      restartTerminalImpl: () => ({ ok: false, reason: "spawn_failed" }),
+    });
+
+    assert.equal(status, 500);
+    assert.equal(payload.error.code, "terminal_restart_failed");
+    assert.match(payload.error.message, /could not be restarted/);
   });
 
   test("create → list → input → stream → delete", { skip }, async (t) => {
@@ -187,6 +261,35 @@ describe("terminal endpoints", () => {
     assert.equal((await sendJson("DELETE", `/api/terminals/${id}`)).status, 200);
     const after = await sendJson("GET", "/api/terminals");
     assert.ok(!after.body.terminals.some((terminal) => terminal.id === id), "a deleted terminal leaves the list");
+  });
+
+  test("restart replaces one terminal while close still removes it", { skip }, async (t) => {
+    const created = await sendJson("POST", "/api/terminals", { kind: "shell" });
+    assert.equal(created.status, 200);
+    let cleanupId = created.body.id;
+    t.after(async () => {
+      await sendJson("DELETE", `/api/terminals/${cleanupId}`);
+    });
+
+    const restarted = await sendJson("POST", `/api/terminals/${created.body.id}/restart`, {});
+    assert.equal(restarted.status, 200);
+    assert.equal(restarted.body.previousId, created.body.id);
+    assert.notEqual(restarted.body.terminal.id, created.body.id);
+    assert.equal(restarted.body.terminal.cwd, created.body.cwd);
+    assert.equal(restarted.body.terminal.kind, created.body.kind);
+    cleanupId = restarted.body.terminal.id;
+
+    assert.equal(
+      (await sendJson("POST", `/api/terminals/${created.body.id}/input`, { data: "x" })).status,
+      404,
+      "the replaced process must no longer accept requests",
+    );
+    const listed = (await sendJson("GET", "/api/terminals")).body.terminals;
+    assert.ok(!listed.some((terminal) => terminal.id === created.body.id));
+    assert.ok(listed.some((terminal) => terminal.id === cleanupId));
+
+    assert.equal((await sendJson("DELETE", `/api/terminals/${cleanupId}`)).status, 200);
+    assert.equal((await sendJson("DELETE", `/api/terminals/${cleanupId}`)).status, 404);
   });
 
   // A reconnecting browser sends back the id of the last frame it saw. What it
@@ -330,9 +433,14 @@ describe("terminal endpoints", () => {
 
     const refused = await sendJson("POST", "/api/restart", {});
     assert.equal(refused.status, 409, "a restart that would close a terminal is not carried out unasked");
-    assert.equal(refused.body.error.code, "terminals_open");
+    assert.equal(refused.body.error.code, "work_in_progress");
     assert.ok(refused.body.error.terminals >= 1, "the answer says how many terminals are at stake");
-    assert.match(refused.body.error.message, /will be closed/);
+    assert.match(refused.body.error.message, /terminal/);
+
+    // Same guard, same answer, on the other route that stops the server.
+    const refusedStop = await sendJson("POST", "/api/shutdown", {});
+    assert.equal(refusedStop.status, 409, "a shutdown that would close a terminal is not carried out unasked");
+    assert.equal(refusedStop.body.error.code, "work_in_progress");
 
     // The refusal is a refusal: the server is still up and the terminal alive.
     assert.equal((await sendJson("GET", "/api/terminals")).body.terminals.find((t2) => t2.id === id)?.exited, null);
@@ -351,6 +459,8 @@ describe("terminals are loopback only", () => {
     ["handleTerminalStream", "GET"],
     ["handleTerminalInput", "POST"],
     ["handleTerminalResize", "POST"],
+    ["handleOpenTerminalFolder", "POST"],
+    ["handleRestartTerminal", "POST"],
     ["handleDeleteTerminal", "DELETE"],
   ];
 
