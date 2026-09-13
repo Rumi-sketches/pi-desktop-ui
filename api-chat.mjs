@@ -741,6 +741,20 @@ export async function handleDeleteQueuedPrompt({ res, sessionKey, params }) {
   }
 }
 
+export async function handleSubmitForm({ req, res, sessionKey, params }) {
+  const ctx = await useContext(sessionKey);
+  const body = await jsonBody(req);
+  try {
+    const submitted = ctx.formBroker.submit(params.id, body?.values);
+    if (!submitted) {
+      return sendError(res, 409, "form_not_pending", "this form is no longer waiting for a response");
+    }
+    return send(res, 200, { ok: true, key: ctx.key, values: submitted });
+  } catch (error) {
+    return sendError(res, 400, "invalid_form_response", String(error.message ?? error));
+  }
+}
+
 export async function handleAbort({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
   ctx.promptQueue.clear("aborted");
