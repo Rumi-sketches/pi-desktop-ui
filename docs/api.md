@@ -14,8 +14,9 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
   capped at 32 MB. `GET /api/events` is the exception: it answers
   `text/event-stream`.
 - **Chat metrics.** The canonical `metrics` object contains `total`, `byModel`, optional
-  `sessionWork`, and `context`. Token totals include input, output, cache reads and cache writes.
-  `context.tokens` and `context.percent` remain `null` when pi cannot calculate current usage.
+  `sessionWork`, and `context`. `total` is cumulative processed usage and includes input, output,
+  cache reads and cache writes; it is not the current size of the conversation. `context.tokens`
+  is the current context size. It and `context.percent` remain `null` when pi cannot calculate them.
 - **Errors.** A failure never travels with a 200. Most routes answer the flat
   `{ error: "message" }`; routes with an error the client handles separately
   answer `{ error: { code, message } }`, where `code` is machine-readable

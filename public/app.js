@@ -651,17 +651,18 @@ function contextPercent(context) {
 function renderStats(chatState = activeChatState()) {
   const metrics = chatState.metrics;
   const c = metrics?.total ?? EMPTY_CHAT_USAGE;
-  const pct = contextPercent(metrics?.context);
+  const context = metrics?.context;
+  const pct = contextPercent(context);
   const pctLabel = pct === null ? '?' : `${pct.toFixed(0)}%`;
-  $('stats').textContent = `${fmt(c.tokens)} token · ${pctLabel} · ${money(c.cost)}`;
+  const contextTokens = context?.tokens === null || context?.tokens === undefined ? '?' : fmt(context.tokens);
+  $('stats').textContent = `${contextTokens} context · ${pctLabel} · ${money(c.cost)}`;
   $('stats').title =
-    `tokens in this chat: ${fmt(c.tokens)}\n` +
+    `current context: ${contextTokens}${context?.contextWindow > 0 ? ` / ${fmt(context.contextWindow)}` : ''} tokens (${pctLabel})\n` +
+    `cumulative tokens processed: ${fmt(c.tokens)}\n` +
     `${usageDetail(c)}\n` +
-    `context: ${pctLabel}\n` +
     `requests: ${c.requests} · estimated cost: ${money(c.cost)}\n` +
     `click for the per-model breakdown`;
   renderStatsMenu(c, metrics?.byModel, metrics?.sessionWork);
-  const context = metrics?.context;
   if (context?.contextWindow > 0 && pct !== null) {
     $('ctxFill').style.width = pct + '%';
     $('ctxFill').className = pct > 85 ? 'crit' : pct > 60 ? 'warn' : '';
@@ -677,7 +678,7 @@ function renderStats(chatState = activeChatState()) {
 // Counter popover: one row per model plus SDK work that has no model identity.
 function renderStatsMenu(c, byModel, sessionWork) {
   const rows = Object.entries(byModel ?? {}).sort((a, b) => b[1].cost - a[1].cost);
-  let html = '<div class="dd-group">All token buckets and cost, per model</div>';
+  let html = '<div class="dd-group">Cumulative processed tokens and cost, per model</div>';
   if (!rows.length && !sessionWork) html += '<div class="sys" style="padding:.4rem .55rem">no answer yet</div>';
   for (const [key, m] of rows) {
     const slash = key.indexOf('/');
@@ -691,7 +692,7 @@ function renderStatsMenu(c, byModel, sessionWork) {
       <span class="vals">${fmt(sessionWork.tokens)} tok · <b>${money(sessionWork.cost)}</b> · ${sessionWork.requests} req</span></div>`;
   }
   if (rows.length || sessionWork) {
-    html += `<div class="statsRow total" title="${esc(usageDetail(c))}"><span class="nm">Chat total</span>
+    html += `<div class="statsRow total" title="${esc(usageDetail(c))}"><span class="nm">Cumulative usage</span>
       <span class="vals">${fmt(c.tokens)} tok · <b>${money(c.cost)}</b> · ${c.requests} req</span></div>`;
   }
   $('statsMenu').innerHTML = html;

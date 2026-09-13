@@ -137,9 +137,10 @@ PORT=3778 npm start
   written to `enabledModels` in `~/.pi/agent/settings.json`.
 - **Settings panel** over your real pi configuration: documented settings, providers and
   authentication, active tools, paths, and the raw `settings.json` / `models.json`.
-- **Chat metrics from pi's session APIs.** The header shows total tokens, context percentage (or `?`
-  when pi cannot calculate it) and cost. Totals include input, output, cache reads and cache writes;
-  the detail keeps per-model rows and labels unattributed work as `Session work`.
+- **Chat metrics from pi's session APIs.** The header shows the current context size, context percentage
+  (or `?` when pi cannot calculate either value) and cumulative cost. The detail shows cumulative
+  processed tokens—including input, output, cache reads and cache writes—per model, and labels
+  unattributed work as `Session work`.
 - **Cost analytics** aggregated from `~/.pi/agent/sessions/**.jsonl`: tokens, requests and cost by
   day, model and project.
 - **Real account limits** for claude.ai and kimi.com when you store those credentials. OpenAI Codex
