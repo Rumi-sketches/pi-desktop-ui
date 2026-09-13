@@ -219,6 +219,10 @@ input, textarea, select { font: inherit; color: inherit; }
   flex-shrink: 0; display: flex; align-items: center; gap: .25rem; padding: .3rem .5rem;
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
+.electron #projTabs { -webkit-app-region: drag; padding-right: 140px; }
+.electron #projTabs button, .electron #projTabs .projTab, .electron #projTabs .dd-menu {
+  -webkit-app-region: no-drag;
+}
 #projTabs .logo-tile {
   width: 26px; height: 26px; border-radius: var(--r-2); display: grid; place-items: center; margin-right: .25rem;
   background: var(--teal); color: var(--on-accent); font-weight: var(--w-semi); font-size: 14px; flex: none;
@@ -1009,8 +1013,11 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 #drop .box { border: 1px dashed var(--teal); border-radius: var(--r-4); padding: 2.4rem 3.4rem; text-align: center; background: var(--panel-2); box-shadow: var(--elev-3); }
 #drop .box b { display: block; font-size: 1.05rem; font-weight: var(--w-semi); margin-bottom: .3rem; }
 #toasts { position: fixed; top: 1rem; right: 1rem; z-index: 300; display: flex; flex-direction: column; gap: .5rem; }
-.toast { background: var(--panel-2); border: 1px solid var(--line-2); border-left: 3px solid var(--crit); border-radius: var(--r-3); padding: .55rem .8rem; font-size: var(--fs-sm); max-width: 380px; box-shadow: var(--elev-2); }
+.toast { background: var(--panel-2); border: 1px solid var(--line-2); border-left: 3px solid var(--crit); border-radius: var(--r-3); padding: .55rem .8rem; font-size: var(--fs-sm); max-width: 380px; box-shadow: var(--elev-2); color: var(--txt); text-align: left; }
 .toast.ok { border-left-color: var(--teal); }
+.toast:is(button) { display: flex; align-items: center; gap: .8rem; cursor: pointer; }
+.toast:is(button):hover { background: var(--panel-3); border-color: var(--line-2); }
+.toastAction { margin-left: auto; color: var(--teal); font-weight: var(--w-semi); white-space: nowrap; }
 
 /* ---------- tasks panel (background chats/agents) ---------- */
 #tasksPanel { width: 0; flex-shrink: 0; overflow: hidden; background: var(--side-bg); border-left: 1px solid var(--line); transition: width .18s; display: flex; flex-direction: column; }

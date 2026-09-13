@@ -7,7 +7,7 @@
 // is what makes "close the window, the server is gone" true by construction:
 // there is no second process left to orphan.
 
-import { app, BrowserWindow, Menu, dialog, shell } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PRELOAD = path.join(ROOT, "electron", "preload.mjs");
 const WINDOW_TITLE = PRODUCT_NAME;
 const WINDOW_SIZE = { width: 1200, height: 800, minWidth: 900, minHeight: 600 };
 // First one that exists wins. Windows asks for the .ico first on purpose: it is
@@ -120,6 +121,7 @@ function guardNavigation(contents) {
   });
 }
 
+/** @returns {import("electron").BrowserWindowConstructorOptions} */
 function windowOptions() {
   return {
     ...WINDOW_SIZE,
@@ -128,12 +130,35 @@ function windowOptions() {
     // Show only once the page has painted: loading a URL means a blank white
     // frame for as long as the first response takes.
     show: false,
+    ...(process.platform === "win32" ? {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { color: "#f7f1e9", symbolColor: "#262220", height: 39 },
+    } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: PRELOAD,
     },
   };
+}
+
+const safeCssColor = (value) => typeof value === "string"
+  && value.length <= 64
+  && /^(?:#[\da-f]{6,8}|rgba?\([\d\s.,%]+\))$/i.test(value);
+
+function installTitleBarThemeBridge() {
+  ipcMain.on("window:title-bar-theme", (event, palette) => {
+    if (process.platform !== "win32" || !isInternal(event.sender.getURL())) return;
+    if (!safeCssColor(palette?.background) || !safeCssColor(palette?.foreground)) return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    try {
+      win.setTitleBarOverlay({ color: palette.background, symbolColor: palette.foreground, height: 39 });
+    } catch (err) {
+      console.error(`${PRODUCT_ID}: could not update the title bar (${errorMessage(err)})`);
+    }
+  });
 }
 
 function loadInto(win, url) {
@@ -265,6 +290,7 @@ async function boot() {
     return;
   }
   installMenu();
+  installTitleBarThemeBridge();
   loadInto(new BrowserWindow(windowOptions()), url);
 }
 

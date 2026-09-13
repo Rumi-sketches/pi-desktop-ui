@@ -291,6 +291,36 @@ test('returning from settings refreshes messages missed by the closed stream', a
   assert.equal(screen.history, 'history:a');
 });
 
+test('a chat notification opens the matching project tab', async () => {
+  const { context, uiState } = setup();
+  let opened = null;
+  Object.assign(context, {
+    allSessions: [{ path: 'notice', cwd: 'b' }],
+    loadSessions: async () => {},
+    toast() {},
+    openSession: async (session, options) => { opened = { session, options }; },
+  });
+  vm.runInContext(appFunction('openChatNotification'), context);
+  await context.openChatNotification('notice');
+  assert.equal(opened.session.path, 'notice');
+  assert.equal(opened.options.tabId, projectTabId('b'));
+  assert.equal(uiState.projects.has(opened.options.tabId), true);
+});
+
+test('settings section navigation scrolls only its content container', () => {
+  let request = null;
+  const view = {
+    scrollTop: 80,
+    getBoundingClientRect: () => ({ top: 100 }),
+    scrollTo: (options) => { request = options; },
+  };
+  const section = { getBoundingClientRect: () => ({ top: 460 }) };
+  const context = vm.createContext({ $: (id) => id === 'settingsView' ? view : section });
+  vm.runInContext(appFunction('scrollSettingsSection'), context);
+  assert.equal(context.scrollSettingsSection('sec-theme'), true);
+  assert.deepEqual({ ...request }, { top: 424, behavior: 'smooth' });
+});
+
 test('slash palette targets a command word after whitespace and replaces only that token', () => {
   const input = {
     value: 'Please /skill:release now',
