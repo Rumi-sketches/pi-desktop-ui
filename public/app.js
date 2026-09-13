@@ -1086,11 +1086,14 @@ async function cancelQueuedPrompt(id) {
 }
 function renderComposerState(chatState = activeChatState()) {
   const running = chatState.streaming;
+  // The streaming flag may be refreshed independently while the agent is
+  // still alive. The task closes only on agent_end, so it owns this indicator.
+  const activityRunning = !!chatState.agentTask && !chatState.agentTask.t1;
   $('runState').classList.toggle('on', running);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
-  $('responseSpinner').classList.toggle('hide', !running);
-  if (running) renderResponseActivity(chatState);
+  $('responseSpinner').classList.toggle('hide', !activityRunning);
+  if (activityRunning) renderResponseActivity(chatState);
   input.placeholder = running
     ? 'Scrivi una nuova istruzione mentre l’agente lavora…'
     : 'Ask me anything…  (drop files and images here)';
@@ -1116,7 +1119,7 @@ function renderResponseActivity(chatState = activeChatState()) {
 }
 setInterval(() => {
   const state = activeChatState();
-  if (state.streaming) renderResponseActivity(state);
+  if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
 }, 1000);
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
@@ -2675,8 +2678,13 @@ function setAgentTask(on, model, key = activeChatKey()) {
     owner.agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
   } else if (!on && owner.agentTask && !owner.agentTask.t1) {
     owner.agentTask.t1 = Date.now();
+    owner.responseStartedAt = null;
+    owner.responseActivityLabel = null;
   }
-  if (key === activeChatKey()) syncTasks();
+  if (key === activeChatKey()) {
+    syncTasks();
+    if (typeof renderComposerState === 'function') renderComposerState(owner);
+  }
 }
 function taskList(key = activeChatKey()) {
   const owner = taskOwner(key);
