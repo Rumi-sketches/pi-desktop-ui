@@ -17,7 +17,7 @@ import {
   createNavigationSynchronizer,
   terminalHeaderState,
 } from './navigation.js';
-import { createTransport } from './transport.js';
+import { createTransport, withSessionKey } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
@@ -2162,6 +2162,13 @@ async function loadHistory({
     for (const b of blocks) {
       if (b.type === 'text') {
         lastText = bubble(m.role === 'user' ? 'user' : 'assistant', b.text ?? '', body);
+      } else if (b.type === 'image' && m.entryId && Number.isInteger(b.contentIndex)) {
+        appendMessageImage(body, {
+          src: withSessionKey(
+            `/api/attachment?entry=${encodeURIComponent(m.entryId)}&block=${b.contentIndex}`,
+            key,
+          ),
+        });
       } else if (b.type === 'skill' && m.role === 'user') {
         lastText = skillInvocationElement(b);
         body.appendChild(lastText);
@@ -4062,6 +4069,20 @@ function setComposerSubmitting(value) {
   composerSubmitting = value;
   $('sendBtn').disabled = value;
   $('queueActions').querySelectorAll('button').forEach((button) => { button.disabled = value; });
+}
+function appendMessageImage(body, { src, alt = 'Attached image', title = alt }) {
+  let media = body.querySelector(':scope > .media');
+  if (!media) {
+    media = document.createElement('div');
+    media.className = 'media';
+    body.appendChild(media);
+  }
+  const image = document.createElement('img');
+  image.src = src;
+  image.alt = alt;
+  image.title = `${title} — click to enlarge`;
+  media.appendChild(image);
+  return image;
 }
 function acceptedUserTurn(text, attachments) {
   const turn = document.createElement('div');
