@@ -71,6 +71,8 @@ import {
   AgentBootstrapError,
   agentBootstrapFiles,
   deleteAgentBootstrapFile,
+  effectiveAgentPrompt,
+  resetAgentBootstrapFile,
   resolveAgentBootstrapFile,
   saveAgentBootstrapFile,
 } from "./agent-bootstrap.mjs";
@@ -86,6 +88,7 @@ async function bootstrapPayload(ctx) {
   const active = new Set(session.getActiveToolNames?.() ?? []);
   return {
     cwd,
+    effectivePrompt: effectiveAgentPrompt(session),
     files: await agentBootstrapFiles(session, cwd),
     toolsMode: configuredTools === null ? "pi-default" : "custom",
     tools: (session.getAllTools?.() ?? []).map((tool) => ({
@@ -122,6 +125,18 @@ export async function handleDeleteAgentBootstrapFile({ req, res, sessionKey }) {
     await deleteAgentBootstrapFile(ctx.session, ctx.cwd, id);
     await reloadEmptyBootstrapContexts();
     return send(res, 200, { ok: true, bootstrap: await bootstrapPayload(ctx) });
+  } catch (error) {
+    return sendBootstrapError(res, error);
+  }
+}
+
+export async function handleResetAgentBootstrapFile({ req, res, sessionKey }) {
+  const ctx = await useContext(sessionKey);
+  const { id } = await jsonBody(req);
+  try {
+    const result = await resetAgentBootstrapFile(ctx.session, ctx.cwd, id);
+    await reloadEmptyBootstrapContexts();
+    return send(res, 200, { ok: true, restored: result.restored, bootstrap: await bootstrapPayload(ctx) });
   } catch (error) {
     return sendBootstrapError(res, error);
   }
