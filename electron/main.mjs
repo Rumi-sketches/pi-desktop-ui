@@ -17,7 +17,11 @@ import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PRELOAD = path.join(ROOT, "electron", "preload.mjs");
+// Sandboxed preloads run in Electron's restricted CommonJS environment.  An
+// `.mjs` preload is treated as an ES module and is not executed there, leaving
+// the renderer without the title-bar bridge (and the Windows caption buttons
+// stuck on the light startup colour). Keep this tiny bridge explicitly CJS.
+const PRELOAD = path.join(ROOT, "electron", "preload.cjs");
 const WINDOW_TITLE = PRODUCT_NAME;
 const WINDOW_SIZE = { width: 1200, height: 800, minWidth: 900, minHeight: 600 };
 // First one that exists wins. Windows asks for the .ico first on purpose: it is
