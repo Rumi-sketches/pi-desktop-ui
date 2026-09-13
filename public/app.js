@@ -2214,6 +2214,15 @@ function selectCurrentChatState(key = renderedChatKey) {
 function saveProjTabs() {
   localStorage.setItem('piProjTabs', JSON.stringify({ tabs: projState.tabs, active: activeProjectCwd() }));
 }
+function reorderProjectTabs(tabs, source, target, after) {
+  const from = tabs.indexOf(source);
+  const targetIndex = tabs.indexOf(target);
+  if (from < 0 || targetIndex < 0 || from === targetIndex) return tabs;
+  const reordered = tabs.filter((tab) => tab !== source);
+  reordered.splice(reordered.indexOf(target) + (after ? 1 : 0), 0, source);
+  return reordered;
+}
+let draggedProjectCwd = null;
 function renderProjTabs() {
   const list = $('projTabList');
   list.innerHTML = '';
@@ -2237,17 +2246,19 @@ function renderProjTabs() {
       x.addEventListener('click', (e) => { e.stopPropagation(); closeProjTab(cwd); });
       t.appendChild(x);
       t.addEventListener('dragstart', (e) => {
+        draggedProjectCwd = cwd;
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', cwd);
         requestAnimationFrame(() => t.classList.add('dragging'));
       });
       t.addEventListener('dragend', () => {
+        draggedProjectCwd = null;
         $$('.projTab').forEach((tab) => tab.classList.remove('dragging', 'drop-before', 'drop-after'));
       });
       t.addEventListener('dragover', (e) => {
-        const source = e.dataTransfer.getData('text/plain');
-        if (!source || source === cwd) return;
+        if (!draggedProjectCwd || draggedProjectCwd === cwd) return;
         e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
         const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
         t.classList.toggle('drop-before', !after);
         t.classList.toggle('drop-after', after);
@@ -2255,14 +2266,11 @@ function renderProjTabs() {
       t.addEventListener('dragleave', () => t.classList.remove('drop-before', 'drop-after'));
       t.addEventListener('drop', (e) => {
         e.preventDefault();
-        const source = e.dataTransfer.getData('text/plain');
-        const from = projState.tabs.indexOf(source);
-        const target = projState.tabs.indexOf(cwd);
-        if (from < 0 || target < 0 || from === target) return;
+        const source = draggedProjectCwd || e.dataTransfer.getData('text/plain');
         const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
-        projState.tabs.splice(from, 1);
-        const insertAt = projState.tabs.indexOf(cwd) + (after ? 1 : 0);
-        projState.tabs.splice(insertAt, 0, source);
+        const reordered = reorderProjectTabs(projState.tabs, source, cwd, after);
+        if (reordered === projState.tabs) return;
+        projState.tabs = reordered;
         saveProjTabs();
         renderProjTabs();
       });
