@@ -29,6 +29,16 @@ test('chat links distinguish local files from web navigation', () => {
   assert.equal(context.isLocalLink('file:///C:/work/project/app.js'), true);
 });
 
+test('project tabs reorder on either side of the drop target', () => {
+  const context = vm.createContext({});
+  vm.runInContext(appFunction('reorderProjectTabs'), context);
+
+  assert.deepEqual([...context.reorderProjectTabs(['a', 'b', 'c'], 'a', 'b', true)], ['b', 'a', 'c']);
+  assert.deepEqual([...context.reorderProjectTabs(['a', 'b', 'c'], 'c', 'b', false)], ['a', 'c', 'b']);
+  const unchanged = ['a', 'b'];
+  assert.equal(context.reorderProjectTabs(unchanged, '', 'b', false), unchanged);
+});
+
 function setup() {
   const uiState = createUiState();
   for (const key of ['a', 'b']) uiState.chatState(key).cwd = key;
