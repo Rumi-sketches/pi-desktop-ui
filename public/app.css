@@ -403,7 +403,12 @@ body.sb-resizing #sidebar { transition: none; }
 #conn.off .d { background: var(--crit); }
 
 /* ---------- main ---------- */
-#main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+#main {
+  flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative;
+  /* The sidebar is resizable, so header breakpoints must follow the space left
+     to the main pane rather than the width of the whole window. */
+  container-type: inline-size;
+}
 header {
   display: flex; align-items: center; gap: .5rem; padding: .5rem 1rem;
   border-bottom: 1px solid var(--line); background: var(--bg); z-index: 5;
@@ -414,6 +419,9 @@ header {
    the chips shrink and ellipsize instead. */
 header > * { flex-shrink: 0; min-width: 0; }
 header .dd { flex: 0 1 auto; }
+/* A flex item may shrink while its button keeps its intrinsic width. Constrain
+   the trigger too, otherwise it paints over the controls that follow it. */
+header .dd > button { max-width: 100%; }
 /* header chips (branch, terminals): flat, hairline, no raised edge */
 header .chip {
   min-width: 0; overflow: hidden; padding: .28rem .55rem; border-radius: var(--r-2);
@@ -516,6 +524,27 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 #abort:hover { background: var(--panel-3); border-color: var(--line-2); transform: none; box-shadow: none; }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); animation: pulse 1.1s infinite; flex: none; }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
+
+/* ---------- compact main header -------------------------------------------
+   Hide secondary information in priority order as the resizable main pane
+   narrows. This also covers a wide window with a wide sidebar or diff panel. */
+@container (max-width: 850px) {
+  #mainHeader[data-view="chat"] > #ctxBar,
+  #mainHeader[data-view="chat"] > #statsDd { display: none; }
+  #terminalOpenFolderBtn, #terminalCopyPathBtn { display: none; }
+}
+@container (max-width: 650px) {
+  #mainHeader[data-view="chat"] .crumb .sep,
+  #mainHeader[data-view="chat"] #chatTitle,
+  #gitChip .gb,
+  #gitChip .caret { display: none; }
+  #terminalHeader .terminalKind { display: none; }
+}
+@container (max-width: 480px) {
+  #mainHeader[data-view="chat"] > .crumb { display: none; }
+  #terminalHeader .terminalPath,
+  #terminalHeader .terminalStatus { display: none; }
+}
 
 /* ---------- account usage dot (provider limits, in composer) ----------------
    one small ring = the shortest returned window; the full breakdown lives in

@@ -13,6 +13,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["*.mjs", "public/app.js", "electron/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "bin/**/*.mjs"],
+  "include": ["*.mjs", "public/app.js", "electron/**/*.mjs", "electron/**/*.cjs", "scripts/**/*.mjs", "test/**/*.mjs", "bin/**/*.mjs"],
   "exclude": ["node_modules"]
 }
