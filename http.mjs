@@ -215,13 +215,14 @@ const VENDOR_ALLOWED = [
   "@xterm/xterm/lib/",
   "@xterm/xterm/css/",
   "@xterm/addon-fit/lib/",
-  "@lobehub/icons-static-svg/icons/",
+  "@lobehub/icons-static-png/light/",
+  "@lobehub/icons-static-png/dark/",
 ];
 const VENDOR_TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".map": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
+  ".png": "image/png",
 };
 
 export function vendorFilePath(pathname) {

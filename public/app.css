@@ -621,12 +621,20 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .logo svg, .logo img { display: block; width: 100%; height: 100%; }
 .logo img { object-fit: contain; }
 .logo.lg { width: 23px; height: 23px; border-radius: var(--r-2); }
-.logo-neutral { display: none; }
-/* Official marks are never recolored. A restricted mark is replaced wholesale
-   by the neutral symbol in mono mode. `.fixed` previews ignore the active mode;
-   the mono card below still demonstrates the replacement explicitly. */
+.logo-mono, .logo-neutral { display: none; }
+.logo-img-dark { display: block; }
+.logo-img-light { display: none; }
+[data-theme="daylight"] .logo-img-dark, [data-theme="paseo"] .logo-img-dark { display: none; }
+[data-theme="daylight"] .logo-img-light, [data-theme="paseo"] .logo-img-light { display: block; }
+/* Branded PNGs and their monochrome variants are transparent. Restricted marks
+   still fall back to the neutral symbol in mono mode. `.fixed` previews ignore
+   the active global mode so each settings card demonstrates its own variant. */
 [data-logo="mono"] .logo:not(.fixed),
-.logoStyleCard[data-l="mono"] .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+.logoStyleCard[data-l="mono"] .logo { background: transparent !important; color: var(--txt-dim) !important; }
+[data-logo="mono"] .logo:not(.fixed)[data-mono="image"] .logo-brand,
+.logoStyleCard[data-l="mono"] .logo[data-mono="image"] .logo-brand { display: none; }
+[data-logo="mono"] .logo:not(.fixed)[data-mono="image"] .logo-mono,
+.logoStyleCard[data-l="mono"] .logo[data-mono="image"] .logo-mono { display: grid; }
 [data-logo="mono"] .logo:not(.fixed)[data-mono="neutral"] .logo-brand,
 .logoStyleCard[data-l="mono"] .logo[data-mono="neutral"] .logo-brand { display: none; }
 [data-logo="mono"] .logo:not(.fixed)[data-mono="neutral"] .logo-neutral,
@@ -639,10 +647,10 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
    flyout. It stays glued to the provider menu edge, like an extension of it. */
 .dd-flyout {
   position: fixed; z-index: 200; min-width: 300px; max-height: 60vh; overflow-y: auto; padding: .35rem;
-  background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 0 var(--r-4) var(--r-4) 0;
+  background: var(--panel-2); border: 1px solid var(--line-2); border-radius: var(--r-4);
   box-shadow: var(--elev-3); display: none;
 }
-.dd-flyout.flip { border-radius: var(--r-4) 0 0 var(--r-4); }
+.dd-flyout.flip { border-radius: var(--r-4); }
 .dd-flyout.on { display: block; }
 .dd-sub.open > .dd-item { background: var(--panel-3); }
 .dd-sub > .dd-item.hasSel { box-shadow: inset 0 0 0 1px var(--accent-line); }
@@ -1060,7 +1068,7 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .themeCard .nm { font-size: var(--fs-sm); }
 /* preview of the provider logos in both variants */
 .logoStyleCard .prev { display: flex; gap: .3rem; margin-bottom: .45rem; }
-.logoStyleCard[data-l="mono"] .prev .logo { background: transparent !important; color: var(--txt-dim) !important; box-shadow: inset 0 0 0 1px var(--line-2); }
+.logoStyleCard[data-l="mono"] .prev .logo { background: transparent !important; color: var(--txt-dim) !important; }
 
 /* tool call cards: click to see what the model is doing */
 .toolCard { border: 1px solid var(--line); border-radius: var(--r-3); background: var(--card-bg); overflow: hidden; margin: .15rem 0; }

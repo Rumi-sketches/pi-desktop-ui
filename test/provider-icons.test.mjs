@@ -21,7 +21,8 @@ test('Claude, OpenAI and GLM use the local Lobe Icons package', () => {
     const record = PROVIDER_ICONS[name];
     assert.equal(record.icon.kind, 'brand');
     assert.match(record.source, /lobehub\/lobe-icons/);
-    assert.match(record.icon.svg, /\/vendor\/@lobehub\/icons-static-svg\/icons\//);
+    assert.match(record.icon.svg, /\/vendor\/@lobehub\/icons-static-png\/(light|dark)\//);
+    assert.match(record.icon.monoSvg, /\/vendor\/@lobehub\/icons-static-png\/(light|dark)\//);
   }
 });
 
@@ -45,6 +46,7 @@ test('provider and model aliases resolve without stealing known providers', () =
   assert.equal(providerIcon('custom-provider', 'gpt-compatible').id, 'openai');
   assert.equal(providerIcon('anthropic', 'gpt-compatible').id, 'anthropic');
   assert.equal(providerIcon('zai', 'glm-5').id, 'glm');
+  assert.equal(providerIcon('zai-coding-plan', 'glm-5').id, 'glm');
   assert.equal(providerIcon('', 'GLM-4.7').id, 'glm');
 });
 
@@ -64,6 +66,8 @@ test('unknown providers and restricted mono mode use the neutral mark', () => {
   assert.match(html, /data-mono="neutral"/);
   assert.match(html, /logo-brand/);
   assert.match(html, /logo-neutral/);
+  assert.match(providerIconHtml('glm', 'glm-5'), /chatglm-color\.png/);
+  assert.match(providerIconHtml('glm', 'glm-5'), /logo-mono/);
   assert.match(cssSource, /data-mono="neutral"[^}]*logo-brand/);
   assert.match(cssSource, /data-mono="neutral"[^}]*logo-neutral/);
 });
