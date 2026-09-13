@@ -131,13 +131,20 @@ export async function pickFolder(initial) {
 /* ------------------------------- open folder ------------------------------ */
 
 const FILE_MANAGER = {
-  [WINDOWS]: "explorer.exe",
+  // Packaged Electron applications do not necessarily inherit a PATH that
+  // `where explorer.exe` can search. Explorer is an OS component, so address
+  // it by its stable absolute location instead.
+  [WINDOWS]: path.join(process.env.SystemRoot ?? "C:\\Windows", "explorer.exe"),
   [MACOS]: "open",
 };
 
 const fileManager = () => FILE_MANAGER[process.platform] ?? "xdg-open";
 
-const canOpenFolder = once(() => hasCommand(fileManager()));
+const canOpenFolder = once(() => (
+  process.platform === WINDOWS || process.platform === MACOS
+    ? Promise.resolve(true)
+    : hasCommand(fileManager())
+));
 
 /**
  * Reveal `dir` in the system file manager.
@@ -164,6 +171,12 @@ export async function openTextFile(file) {
   if (!(await canOpenTextFile())) return UNAVAILABLE;
   const args = process.platform === MACOS ? ["-a", "TextEdit", file] : [file];
   return (await detach(textEditor(), args, { windowsHide: false })) ? { ok: true } : UNAVAILABLE;
+}
+
+/** Open a file or directory with the OS default application. */
+export async function openPath(target) {
+  if (!(await canOpenFolder())) return UNAVAILABLE;
+  return (await detach(fileManager(), [target])) ? { ok: true } : UNAVAILABLE;
 }
 
 /* ------------------------------ open terminal ----------------------------- */

@@ -9,7 +9,9 @@
  * the answer — so the rules live in one place and the HTTP layer in another.
  */
 import path from "node:path";
-import { pickFolder, openFolder, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
+import { stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
 import { terminateTerminalsForChat } from "./terminals.mjs";
 import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "./http.mjs";
 import { titleFor } from "./titles.mjs";
@@ -308,6 +310,37 @@ export async function handleGetGitStatus({ res, sessionKey }) {
   const status = await gitStatus(ctx.cwd);
   if (!status.repo) return send(res, 200, status);
   return send(res, 200, { ...status, branches: await gitBranches(ctx.cwd).catch(() => []) });
+}
+
+export function resolveLocalLink(href, cwd) {
+  if (!isNonEmptyString(href) || href.includes("\0")) return null;
+  let value = href.trim();
+  try {
+    if (/^file:/i.test(value)) value = fileURLToPath(value);
+    else value = decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  value = value.replace(/#L\d+(?:C\d+)?$/i, "");
+  value = value.replace(/:(\d+)(?::\d+)?$/, "");
+  // Markdown file links commonly encode a Windows absolute path as /C:/… .
+  if (process.platform === "win32" && /^\/[a-z]:[\\/]/i.test(value)) value = value.slice(1);
+  return path.resolve(cwd, value);
+}
+
+export async function handleOpenLocalPath({ req, res, sessionKey, openPathImpl = openPath }) {
+  const ctx = await useContext(sessionKey);
+  const { href } = await jsonBody(req);
+  const target = resolveLocalLink(href, ctx.cwd);
+  if (!target) return sendError(res, 400, "invalid_path", "the link is not a valid local path");
+  try {
+    await stat(target);
+  } catch {
+    return sendError(res, 404, "path_not_found", "the linked file or folder does not exist");
+  }
+  const opened = await openPathImpl(target);
+  if (!opened.ok) return sendError(res, 501, "path_unavailable", "opening local paths is not available on this system");
+  return send(res, 200, { ok: true, path: target });
 }
 
 export async function handleSwitchGitBranch({ req, res, sessionKey }) {

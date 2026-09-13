@@ -68,6 +68,7 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `GET /api/recent-cwds` | – | `{ recent[] }` | – |
 | `DELETE /api/recent-cwds` | `?path=…` | `{ recent[] }` without that entry | – |
 | `POST /api/open-explorer` *[s]* | – | `{ ok, cwd }`, folder revealed in the system file manager | `501` not available on this system |
+| `POST /api/open-local-path` *[s]* | `{ href }` — absolute, `file:` or chat-folder-relative link, optionally ending in `:line[:column]` or `#Lline` | `{ ok, path }`, opened with the OS default application | `400` invalid path · `404` missing path · `501` not available on this system |
 | `POST /api/open-terminal` *[s]* | – | `{ ok, cwd }`, terminal opened in the folder running `pi` | `501` not available on this system |
 | `POST /api/type-command` *[s]* | `{ command }` — single line, ≤ 2000 chars | `{ ok, cwd }`, terminal opened with the command typed at the prompt, **not** executed | `400` missing/multi-line/too long command · `501` not available on this system (Windows only) |
 | `POST /api/favorites` | `{ path, favorite }` | `{ ok, favorites[] }` | `400` missing path |
