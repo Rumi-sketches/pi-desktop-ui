@@ -85,6 +85,12 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `GET /api/settings` | – | `{ path, agentDir, sections[], raw, extras[], thinkingLevels[] }` — documented schema plus current values | – |
 | `POST /api/settings` | `{ key, value }` | `{ ok, key, value, restart }`; `restart` is false when the change was applied to the live sessions | `400` missing key, unknown setting, non-numeric number, non-array list |
 | `GET /api/config` *[s]* | – | `{ platform, cwd, sessionFile, sessionId, current, providers[], models[], tools[], options, paths, rawSettings, rawModels, node }`, secrets redacted | – |
+| `GET /api/agent-bootstrap` *[s]* | – | `{ cwd, files[], toolsMode, tools[], commands[] }`; file contents are returned only for editable prompt resources up to 512 KiB | – |
+| `PUT /api/agent-bootstrap/file` *[s]* | `{ id, content }`, where `id` came from the bootstrap catalog | `{ ok, bootstrap }` after an atomic write and empty-draft reload | `400` invalid/read-only/symlink resource · `404` id absent from the current catalog · `413` content over 512 KiB |
+| `DELETE /api/agent-bootstrap/file` *[s]* | `{ id }` | `{ ok, bootstrap }` after removing the prompt override and reloading empty drafts | `400` read-only/symlink resource · `404` id absent from the current catalog |
+| `POST /api/agent-bootstrap/file/open` *[s]* | `{ id }` | `{ ok }` after opening the catalogued file in Notepad/TextEdit/the platform editor | `404` missing or stale resource · `501` native editor unavailable |
+| `PUT /api/agent-bootstrap/tools` *[s]* | `{ tools: string[] \| null }`; `null` restores pi defaults | `{ ok, bootstrap }`; the selection is persisted for desktop sessions and applied to empty drafts | `400` invalid list or unknown tool |
+| `POST /api/agent-bootstrap/reload` *[s]* | – | `{ ok, bootstrap }` after reloading resources and configured tools for the current chat's next turn | `409` `agent_busy` |
 | `GET /api/network` | – | LAN access state, detected LAN ip | – |
 | `POST /api/network` | `{ lanAccess }` or `{ regenerate: true }` or `{ reveal: true }` | network state, or `{ url }` for `reveal` (one-shot access URL) | `400` nothing to change, or LAN access is off |
 | `GET /api/usage` | `?force=1` refetches instead of serving the 45-second cache. A forced refresh needs same-origin proof; without it the route returns cached data | Account limits for Claude, Kimi, and OpenAI Codex. OpenAI stays disabled until its separate opt-in is on | – |

@@ -44,6 +44,7 @@ import {
   diffForProjectFile,
   gitStatus,
   pickerModels,
+  prepareFirstPrompt,
   refreshSessionMetrics,
   sanitizeArgs,
   sessionCommands,
@@ -682,6 +683,16 @@ export async function handlePrompt({ req, res, sessionKey }) {
     }
   }
 
+  // Claim the run before refreshing bootstrap resources: a concurrent send is
+  // queued instead of racing a second reload/first prompt into this context.
+  ctx.promptStarting = true;
+  try {
+    await prepareFirstPrompt(ctx);
+  } catch (error) {
+    ctx.promptStarting = false;
+    throw error;
+  }
+
   const images = input.images.map(({ data, mimeType }) => ({ type: "image", data, mimeType }));
   const opts = images.length ? { images } : undefined;
   // writing in a done chat brings it back to life as "reopened"
@@ -690,7 +701,6 @@ export async function handlePrompt({ req, res, sessionKey }) {
   }
   // Cover the pre-agent_start window too: another POST received while model,
   // auth and extension preflight run belongs to this run's cancellable queue.
-  ctx.promptStarting = true;
   session
     .prompt(input.text, opts)
     .catch((err) => {

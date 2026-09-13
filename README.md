@@ -135,8 +135,10 @@ PORT=3778 npm start
   thinking-level selector.
 - **Enabled providers and models**: pick which providers/models show up in the picker; the choice is
   written to `enabledModels` in `~/.pi/agent/settings.json`.
-- **Settings panel** over your real pi configuration: documented settings, providers and
-  authentication, active tools, paths, and the raw `settings.json` / `models.json`.
+- **Settings panel** over your real pi configuration: edit the global/project `AGENTS.md`,
+  `SYSTEM.md` and `APPEND_SYSTEM.md` inputs, open every loaded resource in the native text editor,
+  choose the tools used by desktop sessions, and inspect slash commands, providers, paths and raw
+  `settings.json` / `models.json`.
 - **Chat metrics from pi's session APIs.** The header shows the current context size, context percentage
   (or `?` when pi cannot calculate either value) and cumulative cost. The detail shows cumulative
   processed tokens—including input, output, cache reads and cache writes—per model, and labels

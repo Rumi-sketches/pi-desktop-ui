@@ -906,6 +906,42 @@ body.sb-closed #chatView.hero #checkoutTray { max-width: 1048px; }
 .toolItem .d { color: var(--faint); font-size: .78rem; }
 pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-3); padding: .8rem; overflow: auto; max-height: 320px; font-size: .76rem; }
 
+.bootstrapHeading { margin: 1rem 0 .45rem; font-size: .82rem; color: var(--teal); }
+.bootstrapEditors { overflow: hidden; }
+.bootstrapFile { border-bottom: 1px solid var(--line); }
+.bootstrapFile:last-child { border-bottom: none; }
+.bootstrapFile > summary, .bootstrapCatalog > summary {
+  display: flex; justify-content: space-between; gap: .8rem; align-items: center;
+  padding: .75rem 1rem; cursor: pointer;
+}
+.bootstrapFile > summary > span:first-child, .bootstrapResource > span:first-child { min-width: 0; }
+.bootstrapFile summary b, .bootstrapResource b { display: block; font-size: .82rem; }
+.bootstrapFile summary code, .bootstrapResource code {
+  display: block; margin-top: .15rem; color: var(--faint); font-size: .7rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bootstrapBadges { display: flex; gap: .35rem; align-items: center; flex: 0 0 auto; }
+.bootstrapEditor {
+  display: block; width: calc(100% - 2rem); margin: 0 1rem .65rem; resize: vertical;
+  min-height: 120px; padding: .65rem; color: var(--txt); background: var(--code-bg);
+  border: 1px solid var(--line-2); border-radius: var(--r-3); font: .76rem/1.5 var(--font-mono);
+}
+.bootstrapEditor:focus { outline: none; border-color: var(--teal); }
+.bootstrapActions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: 0 1rem .8rem; }
+.bootstrapNotice { padding: 0 1rem .7rem; }
+.bootstrapCatalog { margin-top: .7rem; }
+.bootstrapCatalog > summary .sys { margin-left: auto; }
+.bootstrapResourceList { max-height: 360px; overflow: auto; padding: 0 1rem .65rem; }
+.bootstrapResource { display: flex; justify-content: space-between; align-items: center; gap: .7rem; padding: .45rem 0; border-top: 1px solid var(--line); }
+.btn.mini { padding: .24rem .45rem; font-size: .68rem; }
+.btn.danger { color: var(--crit); border-color: var(--crit); }
+.bootstrapTools { padding: .8rem 1rem; }
+.bootstrapToolGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .45rem; }
+.bootstrapTool { display: flex; gap: .45rem; align-items: center; padding: .45rem .55rem; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-3); cursor: pointer; }
+.bootstrapTool b { display: block; font: .78rem var(--font-mono); }
+.bootstrapTool small { display: block; margin-top: .08rem; color: var(--faint); font-size: .66rem; }
+.bootstrapTools > .bootstrapActions { padding: .8rem 0 0; }
+
 /* settings form */
 .setRow { display: grid; grid-template-columns: 1fr 260px; gap: .8rem; align-items: start; padding: .7rem 0; border-bottom: 1px solid var(--line); }
 .setRow:last-child { border-bottom: none; }
@@ -1112,6 +1148,8 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   .setRow { grid-template-columns: 1fr; gap: .35rem; }
   .setRow .ctl { justify-content: flex-start; }
   .setRow input[type=text], .setRow input[type=number], .setRow select { font-size: 16px; }
+  .bootstrapFile > summary, .bootstrapResource { align-items: flex-start; flex-direction: column; }
+  .bootstrapBadges { flex-wrap: wrap; }
   .kv { grid-template-columns: 1fr; gap: .1rem .5rem; }
   .themeGrid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 

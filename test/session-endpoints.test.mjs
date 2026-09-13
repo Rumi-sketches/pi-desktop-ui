@@ -111,6 +111,83 @@ async function sendJson(method, pathname, body) {
 
 const postJson = (pathname, body) => sendJson("POST", pathname, body);
 
+describe("the agent bootstrap routes", () => {
+  test("catalogued prompt files can be created and removed, arbitrary ids cannot", async () => {
+    const initial = await getJson("/api/agent-bootstrap");
+    assert.equal(initial.status, 200);
+    const globalAgents = initial.body.files.find((file) => file.key === "global-agents");
+    assert.ok(globalAgents);
+    assert.equal(globalAgents.exists, false);
+
+    const saved = await sendJson("PUT", "/api/agent-bootstrap/file", {
+      id: globalAgents.id,
+      content: "# Global instructions\n\nUse the bootstrap fixture.\n",
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.bootstrap.files.find((file) => file.key === "global-agents").active, true);
+    assert.match(await readFile(path.join(agentDir, "AGENTS.md"), "utf8"), /bootstrap fixture/);
+
+    const arbitrary = await sendJson("PUT", "/api/agent-bootstrap/file", { id: "not-catalogued", content: "x" });
+    assert.equal(arbitrary.status, 404);
+    assert.equal(arbitrary.body.error.code, "resource_not_found");
+    const arbitraryOpen = await postJson("/api/agent-bootstrap/file/open", { id: "not-catalogued" });
+    assert.equal(arbitraryOpen.status, 404);
+
+    const removed = await sendJson("DELETE", "/api/agent-bootstrap/file", { id: globalAgents.id });
+    assert.equal(removed.status, 200);
+    assert.equal(existsSync(path.join(agentDir, "AGENTS.md")), false);
+  });
+
+  test("the desktop tool selection persists and null restores pi defaults", async () => {
+    const custom = await sendJson("PUT", "/api/agent-bootstrap/tools", { tools: ["read"] });
+    assert.equal(custom.status, 200);
+    assert.equal(custom.body.bootstrap.toolsMode, "custom");
+    assert.deepEqual(JSON.parse(await readFile(path.join(agentDir, "web-ui-agent-bootstrap.json"), "utf8")), { tools: ["read"] });
+
+    const reset = await sendJson("PUT", "/api/agent-bootstrap/tools", { tools: null });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.body.bootstrap.toolsMode, "pi-default");
+  });
+
+  test("a file saved outside the UI after draft creation reaches its first prompt", async () => {
+    const { createContext, getModelRuntime } = await import("../contexts.mjs");
+    const projectDir = path.join(agentDir, "bootstrap-project");
+    await mkdir(projectDir, { recursive: true });
+    const runtime = getModelRuntime();
+    let observedSystemPrompt = "";
+    const answer = {
+      role: "assistant", provider: "bootstrap-fixture", model: "prompt", api: "bootstrap-fixture",
+      content: [{ type: "text", text: "Ready." }], stopReason: "stop", timestamp: Date.now(),
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    };
+    runtime.registerProvider("bootstrap-fixture", {
+      baseUrl: "http://127.0.0.1:1", apiKey: "fixture", api: "bootstrap-fixture",
+      models: [{ id: "prompt", name: "Prompt fixture", reasoning: false, input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 100 }],
+      streamSimple: (_model, context) => {
+        observedSystemPrompt = context.systemPrompt;
+        return {
+          result: async () => answer,
+          async *[Symbol.asyncIterator]() { yield { type: "done", reason: "stop", message: answer }; },
+        };
+      },
+    });
+    const ctx = await createContext({ cwd: projectDir, mode: "new" });
+    await ctx.session.setModel(runtime.getModel("bootstrap-fixture", "prompt"));
+
+    const sentinel = "NOTEPAD_SAVE_REACHED_FIRST_PROMPT";
+    await writeFile(path.join(agentDir, "AGENTS.md"), sentinel, "utf8");
+    const accepted = await postJson(`/api/prompt?s=${encodeURIComponent(ctx.key)}`, { text: "fixture request" });
+    assert.equal(accepted.status, 202);
+    for (let attempt = 0; attempt < 100 && !observedSystemPrompt; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.match(observedSystemPrompt, new RegExp(sentinel));
+    await rm(path.join(agentDir, "AGENTS.md"), { force: true });
+  });
+});
+
 test("live usage includes the just-persisted SDK response without a state refresh", async () => {
   const { createContext, getModelRuntime } = await import("../contexts.mjs");
   const runtime = getModelRuntime();
