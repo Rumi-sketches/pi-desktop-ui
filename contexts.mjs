@@ -36,6 +36,7 @@ import { SSE_PING, SSE_PING_MS, sseSend, sseWrite } from "./http.mjs";
 import { AGENT_DIR, isAgentDirPath, readSessionRecords, resolveFile } from "./session-store.mjs";
 import { configureTitleModelRuntime } from "./titles.mjs";
 import { createPromptQueueController } from "./prompt-queue.mjs";
+import { InteractiveFormBroker, createInteractiveFormTool } from "./interactive-forms.mjs";
 
 // ---- thinking levels -------------------------------------------------------
 // Mirrors getSupportedThinkingLevels() from @earendil-works/pi-ai (not directly
@@ -362,6 +363,8 @@ export function summarizeTool(name, args) {
     return "";
   };
   switch (name) {
+    case "request_form":
+      return first("title");
     case "bash":
       return clip(first("command", "cmd", "script"), 300);
     case "read":
@@ -593,7 +596,13 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
   } else {
     sessionManager = SessionManager.continueRecent(cwd);
   }
-  const { session, extensionsResult } = await createAgentSession({ cwd, sessionManager, modelRuntime });
+  const formBroker = new InteractiveFormBroker();
+  const { session, extensionsResult } = await createAgentSession({
+    cwd,
+    sessionManager,
+    modelRuntime,
+    customTools: [createInteractiveFormTool(formBroker)],
+  });
   const file = session.sessionManager?.getSessionFile?.() ?? null;
   // `continueRecent` may land on a chat that is already open elsewhere, and a
   // draft chat (no file at all) belongs to its folder: either way the context is
@@ -626,6 +635,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     skillLoader: null, // DefaultResourceLoader used only to discover skills
     promptStarting: false,
     promptQueue: null,
+    formBroker,
   };
   ctx.promptQueue = createPromptQueueController({
     session,

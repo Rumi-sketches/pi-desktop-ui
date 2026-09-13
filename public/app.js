@@ -57,6 +57,11 @@ const chatCache = createChatCache({
     savePersistedComposerDrafts();
   },
 });
+let persistedFormDrafts = {};
+try { persistedFormDrafts = JSON.parse(sessionStorage.getItem('piFormDrafts') || '{}'); } catch {}
+function savePersistedFormDrafts() {
+  try { sessionStorage.setItem('piFormDrafts', JSON.stringify(persistedFormDrafts)); } catch {}
+}
 const uiState = createUiState({ chatCache });
 const navigation = createNavigationController({
   state: uiState,
@@ -557,9 +562,254 @@ function appendText(div, delta) {
 }
 /* ---- tool calls: expandable card showing exactly what the model is doing ---- */
 const toolCards = new Map(); // toolCallId -> element
+
+function formResult(output) {
+  try {
+    const parsed = JSON.parse(output ?? '');
+    return parsed?.status === 'submitted' && parsed.values && typeof parsed.values === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function formControls(card, fieldId) {
+  return $$('[data-form-field]', card).filter((control) => control.dataset.formField === fieldId);
+}
+
+function setInteractiveFormValues(card, definition, values) {
+  for (const field of definition.fields ?? []) {
+    const controls = formControls(card, field.id);
+    const value = values?.[field.id];
+    if (field.type === 'checkbox') {
+      if (controls[0]) controls[0].checked = value === true;
+    } else if (field.type === 'multiselect') {
+      const selected = new Set(Array.isArray(value) ? value : []);
+      controls.forEach((control) => { control.checked = selected.has(control.value); });
+    } else if (field.type === 'radio') {
+      controls.forEach((control) => { control.checked = control.value === value; });
+    } else if (controls[0]) {
+      controls[0].value = value ?? '';
+    }
+  }
+}
+
+function finishInteractiveForm(card, definition, { values = null, error = false } = {}) {
+  if (values) setInteractiveFormValues(card, definition, values);
+  card.classList.toggle('submitted', !!values && !error);
+  card.classList.toggle('formError', error);
+  const fieldset = card.querySelector('.formFields');
+  if (fieldset) fieldset.disabled = true;
+  const button = card.querySelector('.formSubmit');
+  if (button) button.disabled = true;
+  const status = card.querySelector('.formStatus');
+  if (status) status.textContent = error ? 'Unavailable' : 'Submitted';
+  if (card.dataset.draftKey) {
+    delete persistedFormDrafts[card.dataset.draftKey];
+    savePersistedFormDrafts();
+  }
+}
+
+function optionControl(field, option, inputType) {
+  const label = document.createElement('label');
+  label.className = 'formOption';
+  const input = document.createElement('input');
+  input.type = inputType;
+  input.name = field.id;
+  input.value = option.value;
+  input.dataset.formField = field.id;
+  input.required = inputType === 'radio' && !!field.required;
+  const copy = document.createElement('span');
+  copy.className = 'formOptionCopy';
+  const name = document.createElement('span');
+  name.className = 'formOptionLabel';
+  name.textContent = option.label;
+  copy.appendChild(name);
+  if (option.description) {
+    const description = document.createElement('span');
+    description.className = 'formOptionDescription';
+    description.textContent = option.description;
+    copy.appendChild(description);
+  }
+  label.append(input, copy);
+  return label;
+}
+
+let formControlSequence = 0;
+function interactiveFormField(field) {
+  const row = document.createElement(field.type === 'radio' || field.type === 'multiselect' ? 'fieldset' : 'div');
+  row.className = 'formField';
+  const label = document.createElement(field.type === 'radio' || field.type === 'multiselect' ? 'legend' : 'label');
+  label.className = 'formLabel';
+  label.textContent = field.label;
+  if (field.required) {
+    const required = document.createElement('span');
+    required.className = 'formRequired';
+    required.textContent = 'Required';
+    label.appendChild(required);
+  }
+  row.appendChild(label);
+  if (field.description) {
+    const description = document.createElement('div');
+    description.className = 'formHint';
+    description.textContent = field.description;
+    row.appendChild(description);
+  }
+  if (field.type === 'radio' || field.type === 'multiselect') {
+    const options = document.createElement('div');
+    options.className = 'formOptions';
+    for (const option of field.options ?? []) {
+      options.appendChild(optionControl(field, option, field.type === 'radio' ? 'radio' : 'checkbox'));
+    }
+    row.appendChild(options);
+    return row;
+  }
+  if (field.type === 'checkbox') {
+    const choice = document.createElement('label');
+    choice.className = 'formBoolean';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = field.id;
+    input.dataset.formField = field.id;
+    input.required = !!field.required;
+    const text = document.createElement('span');
+    text.textContent = field.placeholder || 'Yes';
+    choice.append(input, text);
+    row.appendChild(choice);
+    return row;
+  }
+  let control;
+  if (field.type === 'textarea') {
+    control = document.createElement('textarea');
+    control.rows = 3;
+  } else if (field.type === 'select') {
+    control = document.createElement('select');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = field.placeholder || 'Select an option…';
+    placeholder.disabled = !!field.required;
+    placeholder.selected = true;
+    control.appendChild(placeholder);
+    for (const option of field.options ?? []) {
+      const element = document.createElement('option');
+      element.value = option.value;
+      element.textContent = option.label;
+      control.appendChild(element);
+    }
+  } else {
+    control = document.createElement('input');
+    control.type = field.type;
+  }
+  control.name = field.id;
+  control.dataset.formField = field.id;
+  control.required = !!field.required;
+  control.id = `model-form-field-${++formControlSequence}`;
+  label.setAttribute('for', control.id);
+  if (field.placeholder && field.type !== 'select') control.placeholder = field.placeholder;
+  row.appendChild(control);
+  return row;
+}
+
+function interactiveFormValues(card, definition) {
+  const values = {};
+  for (const field of definition.fields ?? []) {
+    const controls = formControls(card, field.id);
+    if (field.type === 'checkbox') values[field.id] = !!controls[0]?.checked;
+    else if (field.type === 'multiselect') values[field.id] = controls.filter((control) => control.checked).map((control) => control.value);
+    else if (field.type === 'radio') values[field.id] = controls.find((control) => control.checked)?.value ?? '';
+    else values[field.id] = controls[0]?.value ?? '';
+  }
+  return values;
+}
+
+function renderInteractiveForm(ev) {
+  let card = ev.id ? toolCards.get(ev.id) : null;
+  if (!card && ev.status === 'start') {
+    const definition = ev.args ?? {};
+    card = document.createElement('section');
+    card.className = 'interactiveForm';
+    card.dataset.definition = JSON.stringify(definition);
+    const head = document.createElement('div');
+    head.className = 'formHead';
+    const heading = document.createElement('div');
+    const title = document.createElement('h3');
+    title.textContent = definition.title || 'A few details';
+    heading.appendChild(title);
+    if (definition.description) {
+      const description = document.createElement('p');
+      description.textContent = definition.description;
+      heading.appendChild(description);
+    }
+    const status = document.createElement('span');
+    status.className = 'formStatus';
+    status.textContent = 'Needs your input';
+    status.setAttribute('aria-live', 'polite');
+    head.append(heading, status);
+    const form = document.createElement('form');
+    form.className = 'modelForm';
+    const fields = document.createElement('fieldset');
+    fields.className = 'formFields';
+    for (const field of definition.fields ?? []) fields.appendChild(interactiveFormField(field));
+    const actions = document.createElement('div');
+    actions.className = 'formActions';
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn teal formSubmit';
+    submit.textContent = definition.submitLabel || 'Submit';
+    actions.appendChild(submit);
+    form.append(fields, actions);
+    card.append(head, form);
+    currentTurn.appendChild(card);
+    if (ev.id) toolCards.set(ev.id, card);
+    const ownerKey = renderedChatKey;
+    const draftKey = `${ownerKey ?? ''}\n${ev.id ?? ''}`;
+    card.dataset.draftKey = draftKey;
+    if (persistedFormDrafts[draftKey]) setInteractiveFormValues(card, definition, persistedFormDrafts[draftKey]);
+    const rememberDraft = () => {
+      persistedFormDrafts[draftKey] = interactiveFormValues(card, definition);
+      savePersistedFormDrafts();
+    };
+    addChatListener(form, 'input', rememberDraft);
+    addChatListener(form, 'change', rememberDraft);
+    addChatListener(form, 'submit', async (event) => {
+      event.preventDefault();
+      const missingMulti = (definition.fields ?? []).find((field) => field.type === 'multiselect'
+        && field.required && !formControls(card, field.id).some((control) => control.checked));
+      if (missingMulti) {
+        const first = formControls(card, missingMulti.id)[0];
+        first?.setCustomValidity('Select at least one option');
+        first?.reportValidity();
+        first?.setCustomValidity('');
+        return;
+      }
+      if (!form.reportValidity()) return;
+      submit.disabled = true;
+      status.textContent = 'Submitting…';
+      const result = await post(`/api/forms/${encodeURIComponent(ev.id)}/respond`, {
+        values: interactiveFormValues(card, definition),
+      }, { key: ownerKey, guardChat: true, followKey: false, quiet: ['form_not_pending'] });
+      if (result.error) {
+        submit.disabled = false;
+        status.textContent = result.code === 'form_not_pending' ? 'No longer active' : 'Needs your input';
+        if (result.code === 'form_not_pending') finishInteractiveForm(card, definition, { error: true });
+        return;
+      }
+      finishInteractiveForm(card, definition, { values: result.values });
+    });
+  }
+  if (!card) return null;
+  let definition = {};
+  try { definition = JSON.parse(card.dataset.definition || '{}'); } catch {}
+  if (ev.status === 'end') {
+    const result = formResult(ev.output);
+    finishInteractiveForm(card, definition, { values: result?.values ?? null, error: !!ev.isError || !result });
+  }
+  return card;
+}
+
 function renderTool(ev) {
   return mutateTranscript(() => {
     if (!currentTurn) currentTurn = newTurn('pi');
+    if (ev.name === 'request_form') return renderInteractiveForm(ev);
     let card = ev.id ? toolCards.get(ev.id) : null;
     if (!card) {
       card = document.createElement('div');

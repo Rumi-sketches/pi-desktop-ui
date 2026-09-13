@@ -122,6 +122,10 @@ PORT=3778 npm start
 - **Streaming answers** with markdown, syntax highlighting, thinking blocks and tool calls rendered
   as they arrive. A text-free spinner waits for the first model text; thinking and tool activity do
   not dismiss it.
+- **Native interactive forms.** The built-in `request_form` tool lets the model collect related text,
+  numeric, date, single-choice, multi-choice and confirmation fields in one accessible form. The tool
+  waits for a validated submission and then continues the same turn; completed forms remain readable
+  in chat history.
 - **Steering and follow-up during a run.** The composer stays active and replaces the send arrow with
   `Reindirizza` and `Dopo`. The first delivers at the next model turn, the second after the current
   response. Pending messages appear as cancellable ghosts in their eventual transcript position.
