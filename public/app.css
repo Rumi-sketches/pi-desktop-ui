@@ -638,11 +638,12 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 
 /* ---------- chat ---------- */
 #chatView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-#chatWrap { flex: 1; overflow-y: auto; position: relative; background-color: var(--bg); }
+#chatWrap { flex: 1; overflow-y: auto; overflow-x: clip; position: relative; background-color: var(--bg); }
 #chat { max-width: 900px; margin: 0 auto; padding: 1.1rem 1.2rem 1.6rem; display: flex; flex-direction: column; gap: 1.05rem; position: relative; transition: max-width .18s; }
 /* with the sidebar closed the text gets even more room */
 body.sb-closed #chat { max-width: 1100px; }
 /* assistant: flat and full width, no avatar tile — only the model name above */
+.turn { min-width: 0; max-width: 100%; }
 .turn.pi { display: block; }
 .turn .body { min-width: 0; }
 .who { display: flex; align-items: center; gap: .35rem; font: var(--w-semi) .66rem var(--font-ui); color: var(--faint); text-transform: uppercase; letter-spacing: .09em; margin-bottom: .15rem; }
@@ -656,15 +657,15 @@ body.sb-closed #chat { max-width: 1100px; }
   padding: .45rem .75rem; color: var(--txt); line-height: 1.5;
 }
 .turn.user .msgActions { justify-content: flex-end; }
-.msg { white-space: pre-wrap; line-height: 1.62; }
+.msg { min-width: 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.62; }
 .msg.md { white-space: normal; }
 .msg.md > *:first-child { margin-top: 0; }
 .msg.md > *:last-child { margin-bottom: 0; }
 .msg.md p { margin: .5rem 0; }
-.msg.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-3); padding: .8rem .9rem; overflow-x: auto; white-space: pre; }
+.msg.md pre { max-width: 100%; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-3); padding: .8rem .9rem; overflow-x: auto; white-space: pre; }
 .msg.md code { font-family: var(--font-mono); font-size: .85em; }
 .msg.md :not(pre) > code { background: var(--panel-2); padding: .08rem .35rem; border-radius: var(--r-1); }
-.msg.md table { border-collapse: collapse; margin: .6rem 0; }
+.msg.md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: .6rem 0; }
 .msg.md th, .msg.md td { border: 1px solid var(--line); padding: .3rem .65rem; }
 .msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
 .msg.md a { color: var(--teal); }
