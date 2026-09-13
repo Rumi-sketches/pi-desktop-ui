@@ -197,7 +197,7 @@ export function openSseStream(res) {
 }
 
 // ---- vendored browser libraries --------------------------------------------
-// marked, highlight.js, DOMPurify and xterm.js are served from node_modules instead of a CDN, so
+// Browser libraries and the small LLM icon set are served from node_modules instead of a CDN, so
 // the UI works offline and no third party sees the traffic of a page that drives an
 // agent. Only the sub-trees listed here are reachable.
 const VENDOR_PREFIX = "/vendor/";
@@ -215,11 +215,13 @@ const VENDOR_ALLOWED = [
   "@xterm/xterm/lib/",
   "@xterm/xterm/css/",
   "@xterm/addon-fit/lib/",
+  "@lobehub/icons-static-svg/icons/",
 ];
 const VENDOR_TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
 };
 
 export function vendorFilePath(pathname) {

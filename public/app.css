@@ -618,7 +618,8 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .dd-item .sub { margin-left: auto; }
 .logo { width: 17px; height: 17px; border-radius: var(--r-1); flex-shrink: 0; display: grid; place-items: center; overflow: hidden; }
 .logo-mark { width: 100%; height: 100%; display: grid; place-items: center; }
-.logo svg { display: block; width: 100%; height: 100%; }
+.logo svg, .logo img { display: block; width: 100%; height: 100%; }
+.logo img { object-fit: contain; }
 .logo.lg { width: 23px; height: 23px; border-radius: var(--r-2); }
 .logo-neutral { display: none; }
 /* Official marks are never recolored. A restricted mark is replaced wholesale

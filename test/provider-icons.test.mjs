@@ -16,11 +16,13 @@ test('every provider record documents an official source and usage constraint', 
   }
 });
 
-test('OpenAI never uses the removed Simple Icons mark', () => {
-  const record = PROVIDER_ICONS.openai;
-  assert.equal(record.icon.kind, 'neutral');
-  assert.doesNotMatch(record.source, /simple-icons/i);
-  assert.match(record.constraint, /Simple Icons.*forbidden/i);
+test('Claude, OpenAI and GLM use the local Lobe Icons package', () => {
+  for (const name of ['anthropic', 'openai', 'glm']) {
+    const record = PROVIDER_ICONS[name];
+    assert.equal(record.icon.kind, 'brand');
+    assert.match(record.source, /lobehub\/lobe-icons/);
+    assert.match(record.icon.svg, /\/vendor\/@lobehub\/icons-static-svg\/icons\//);
+  }
 });
 
 test('the current official OpenRouter glyph stays fixed in brand mode', () => {
@@ -42,13 +44,15 @@ test('provider and model aliases resolve without stealing known providers', () =
   assert.equal(providerIcon('', 'llama-4').id, 'meta');
   assert.equal(providerIcon('custom-provider', 'gpt-compatible').id, 'openai');
   assert.equal(providerIcon('anthropic', 'gpt-compatible').id, 'anthropic');
+  assert.equal(providerIcon('zai', 'glm-5').id, 'glm');
+  assert.equal(providerIcon('', 'GLM-4.7').id, 'glm');
 });
 
 test('only marks with verified permission use a brand asset', () => {
   const branded = Object.entries(PROVIDER_ICONS)
     .filter(([, record]) => record.icon.kind === 'brand')
     .map(([name]) => name);
-  assert.deepEqual(branded, ['openrouter']);
+  assert.deepEqual(branded, ['anthropic', 'openai', 'glm', 'openrouter']);
 });
 
 test('unknown providers and restricted mono mode use the neutral mark', () => {

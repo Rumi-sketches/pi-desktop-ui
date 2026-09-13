@@ -13,6 +13,17 @@ const NEUTRAL_ICON = Object.freeze({
 
 const OPENROUTER_SVG = '<svg width="1024" height="730" viewBox="0 0 1024 730" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M795.893 0C915.776 0 1012.95 97.9963 1012.95 218.88C1012.95 339.764 915.776 437.76 795.893 437.76L1011.2 654.869C1038.55 682.447 1019.18 729.6 980.504 729.6H361.77C161.97 729.6 0 566.273 0 364.8C0 163.327 161.97 0 361.77 0L795.893 0ZM361.77 145.92C241.89 145.92 144.708 243.916 144.708 364.8C144.708 485.684 241.89 583.68 361.77 583.68C481.649 583.68 578.831 485.684 578.831 364.8C578.831 243.916 481.649 145.92 361.77 145.92Z" fill="#7624F4"/></svg>';
 
+const LOBE_ICON_ROOT = '/vendor/@lobehub/icons-static-svg/icons';
+function lobeIcon(slug, label) {
+  return Object.freeze({
+    kind: 'brand',
+    bg: '#ffffff',
+    fg: '#111111',
+    svg: `<img src="${LOBE_ICON_ROOT}/${slug}.svg" alt="" aria-hidden="true" title="${label}">`,
+    mono: 'brand',
+  });
+}
+
 // `source` is the asset source when a brand mark is embedded, otherwise the
 // official page that establishes why the neutral mark is required. `terms`
 // records the governing guidance. A missing public permission is not treated as
@@ -20,17 +31,24 @@ const OPENROUTER_SVG = '<svg width="1024" height="730" viewBox="0 0 1024 730" fi
 export const PROVIDER_ICONS = Object.freeze({
   anthropic: Object.freeze({
     aliases: ['anthropic', 'claude', 'fable', 'opus', 'sonnet', 'haiku'],
-    source: 'https://www.anthropic.com/',
-    terms: 'https://www.anthropic.com/legal/consumer-terms',
-    constraint: 'No public third-party logo permission was verified; use the neutral symbol.',
-    icon: NEUTRAL_ICON,
+    source: 'https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/claude.svg',
+    terms: 'https://github.com/lobehub/lobe-icons/blob/master/LICENSE',
+    constraint: 'Claude mark supplied by the MIT-licensed Lobe Icons static SVG package.',
+    icon: lobeIcon('claude', 'Claude'),
   }),
   openai: Object.freeze({
     aliases: ['openai', 'openai-codex', 'chatgpt', 'gpt', 'codex', 'o1', 'o3', 'o4'],
-    source: 'https://openai.com/brand/',
-    terms: 'https://openai.com/brand/#usage-terms',
-    constraint: 'Only exact current assets may be used; the removed Simple Icons glyph is forbidden, so use the neutral symbol.',
-    icon: NEUTRAL_ICON,
+    source: 'https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/openai.svg',
+    terms: 'https://github.com/lobehub/lobe-icons/blob/master/LICENSE',
+    constraint: 'OpenAI mark supplied by the MIT-licensed Lobe Icons static SVG package.',
+    icon: lobeIcon('openai', 'OpenAI'),
+  }),
+  glm: Object.freeze({
+    aliases: ['glm', 'chatglm', 'zhipu', 'zhipuai', 'zhipu-ai', 'z.ai', 'z-ai', 'zai'],
+    source: 'https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/chatglm.svg',
+    terms: 'https://github.com/lobehub/lobe-icons/blob/master/LICENSE',
+    constraint: 'ChatGLM mark supplied by the MIT-licensed Lobe Icons static SVG package.',
+    icon: lobeIcon('chatglm', 'GLM'),
   }),
   google: Object.freeze({
     aliases: ['google', 'google-gemini-cli', 'gemini'],
