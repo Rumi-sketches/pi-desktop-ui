@@ -45,7 +45,8 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `DELETE /api/queued-prompts/:id` *[s]* | `:id` = opaque queue id | `{ ok, key, removed }`; only a still-pending item can be cancelled | `404` `queued_prompt_not_found` in this chat · `409` `queued_prompt_delivered` or `queued_prompt_removed` |
 | `POST /api/abort` *[s]* | – | `{ ok }`; pending app-owned prompts are discarded before aborting the run | – |
 | `GET /api/commands` *[s]* | – | `{ commands[] }` (extensions, prompt templates, skills) | – |
-| `GET /api/git` *[s]* | – | git status of the chat's folder | – |
+| `GET /api/git` *[s]* | – | git status of the chat's folder, including local branches | – |
+| `POST /api/git/branch` *[s]* | `{ branch }` naming an existing local branch | updated git status | `400` missing branch · `409` branch missing or checkout blocked by working-tree changes |
 | `GET /api/files` *[s]* | – | `{ files: [{ path, changes }] }` touched by this chat | – |
 | `GET /api/files/diff` *[s]* | `?path=…` | `{ path, write, hunks[] }`, secrets redacted | `404` file not tracked by this chat |
 

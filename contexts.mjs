@@ -851,3 +851,16 @@ export async function gitStatus(cwd) {
   gitCache.set(cwd, { at: Date.now(), data });
   return data;
 }
+
+export async function gitBranches(cwd) {
+  const output = await runGit(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+  return output.split("\n").map((branch) => branch.trim()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
+export async function switchGitBranch(cwd, branch) {
+  const branches = await gitBranches(cwd);
+  if (!branches.includes(branch)) throw new Error("branch does not exist in this repository");
+  await runGit(cwd, ["switch", branch]);
+  gitCache.delete(cwd);
+  return gitStatus(cwd);
+}

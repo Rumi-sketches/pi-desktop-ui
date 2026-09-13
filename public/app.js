@@ -1932,12 +1932,44 @@ function renderProjTabs() {
     nm.textContent = label;
     t.appendChild(nm);
     if (cwd) {
+      t.draggable = true;
+      t.dataset.cwd = cwd;
       const x = document.createElement('span');
       x.className = 'x';
       x.textContent = '×';
       x.title = 'Close this project tab (chats are kept)';
       x.addEventListener('click', (e) => { e.stopPropagation(); closeProjTab(cwd); });
       t.appendChild(x);
+      t.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', cwd);
+        requestAnimationFrame(() => t.classList.add('dragging'));
+      });
+      t.addEventListener('dragend', () => {
+        $$('.projTab').forEach((tab) => tab.classList.remove('dragging', 'drop-before', 'drop-after'));
+      });
+      t.addEventListener('dragover', (e) => {
+        const source = e.dataTransfer.getData('text/plain');
+        if (!source || source === cwd) return;
+        e.preventDefault();
+        const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
+        t.classList.toggle('drop-before', !after);
+        t.classList.toggle('drop-after', after);
+      });
+      t.addEventListener('dragleave', () => t.classList.remove('drop-before', 'drop-after'));
+      t.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const source = e.dataTransfer.getData('text/plain');
+        const from = projState.tabs.indexOf(source);
+        const target = projState.tabs.indexOf(cwd);
+        if (from < 0 || target < 0 || from === target) return;
+        const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
+        projState.tabs.splice(from, 1);
+        const insertAt = projState.tabs.indexOf(cwd) + (after ? 1 : 0);
+        projState.tabs.splice(insertAt, 0, source);
+        saveProjTabs();
+        renderProjTabs();
+      });
     }
     t.addEventListener('click', () => activateProjTab(cwd ?? null));
     list.appendChild(t);
@@ -4402,9 +4434,10 @@ async function refreshGit({ key = activeChatKey() ?? renderedChatKey, projectCwd
 function renderGit(scope = activeProjectScope()) {
   const git = scope?.git;
   const chip = $('gitChip');
+  const dd = $('gitDd');
   renderTray(); // the tray shows the same branch, also when there is no repo
-  if (!git?.repo) { chip.classList.add('hide'); return; }
-  chip.classList.remove('hide');
+  if (!git?.repo) { dd.classList.add('hide'); return; }
+  dd.classList.remove('hide');
   $('gitBranch').textContent = git.branch;
   const n = git.changed ?? 0;
   const count = $('gitCount');
@@ -4418,6 +4451,34 @@ function renderGit(scope = activeProjectScope()) {
     `pending changes: ${n} (staged ${git.staged} · unstaged ${git.unstaged} · new ${git.untracked})\n` +
     (sync.length ? sync.join(' · ') : 'in sync with the remote');
 }
+
+const gitDd = setupDd('gitDd', 'gitChip');
+function renderGitMenu() {
+  const git = activeProjectScope()?.git;
+  const menu = $('gitMenu');
+  menu.innerHTML = '<div class="dd-group">Switch branch</div>';
+  for (const branch of git?.branches ?? []) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'dd-item' + (branch === git.branch ? ' on' : '');
+    const name = document.createElement('span');
+    name.className = 'nm';
+    name.textContent = branch;
+    button.appendChild(name);
+    button.disabled = branch === git.branch;
+    button.addEventListener('click', async () => {
+      gitDd.classList.remove('open');
+      const result = await post('/api/git/branch', { branch }, { guardChat: true });
+      if (result.error) return;
+      await Promise.all([refreshGit(), loadFiles()]);
+      toast(`Switched to ${branch}`, true);
+    });
+    menu.appendChild(button);
+  }
+}
+$('gitChip').addEventListener('click', () => {
+  if (gitDd.classList.contains('open')) renderGitMenu();
+});
 
 /* ---------------- boot ---------------- */
 async function loadState({ key = activeChatKey() ?? renderedChatKey, ticket = null } = {}) {

@@ -236,6 +236,10 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .projTab .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .projTab:hover { background: var(--sunken); color: var(--txt); }
+.projTab[draggable="true"] { cursor: grab; }
+.projTab.dragging { opacity: .45; cursor: grabbing; }
+.projTab.drop-before { box-shadow: -2px 0 0 var(--teal); }
+.projTab.drop-after { box-shadow: 2px 0 0 var(--teal); }
 .projTab.on { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--txt); font-weight: var(--w-semi); }
 /* the dot is the only accent in the strip: it says which project is live */
 .projTab.on::before {
@@ -431,7 +435,7 @@ header .spacer { flex: 1 1 auto; min-width: 0; }
   color: var(--txt); font-weight: var(--w-semi);
 }
 #mainHeader:not([data-view="chat"]) > .crumb,
-#mainHeader:not([data-view="chat"]) > #gitChip,
+#mainHeader:not([data-view="chat"]) > #gitDd,
 #mainHeader:not([data-view="chat"]) > .spacer,
 #mainHeader:not([data-view="chat"]) > #runState,
 #mainHeader:not([data-view="chat"]) > #ctxBar,
@@ -471,6 +475,9 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
   background: var(--teal-dim); color: var(--teal); font: var(--w-semi) 10.5px/1 var(--font-ui); padding: 0 .3rem;
 }
 #gitChip .count.warn { background: var(--warn-dim); color: var(--warn); }
+#gitDd .dd-menu { min-width: 220px; max-width: min(360px, 80vw); }
+#gitDd .dd-item.on { background: var(--teal-dim); color: var(--teal); }
+#gitDd .dd-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* live terminals chip: same count badge as the git one, plus the popover rows
    (a row = go to that terminal, × = close it, exactly like the sidebar) */
 #termsChip .count {
