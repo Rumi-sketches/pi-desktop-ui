@@ -42,6 +42,7 @@ function statePayload(overrides = {}) {
       context: { tokens: 15, contextWindow: 1000, percent: 1.5 },
     },
     streaming: false,
+    awaitingInput: false,
     queuedPrompts: [],
     platform: {
       os: "win32",
@@ -253,6 +254,22 @@ test("state refresh preserves a known first-text phase but starts unknown active
   ui.finishResponse(CHAT_A);
   ui.applyStatePayload(statePayload({ streaming: true }));
   assert.equal(ui.chatState(CHAT_A).responsePhase, RESPONSE_WAITING);
+});
+
+test("state keeps an open turn distinct from a model waiting on a form", () => {
+  const ui = createUiState();
+  const payload = ui.applyStatePayload(statePayload({ streaming: true, awaitingInput: true }));
+
+  assert.equal(payload.streaming, true);
+  assert.equal(payload.awaitingInput, true);
+  assert.equal(ui.chatState(CHAT_A).streaming, true);
+  assert.equal(ui.chatState(CHAT_A).awaitingInput, true);
+
+  ui.startResponse(CHAT_A);
+  assert.equal(ui.chatState(CHAT_A).awaitingInput, false);
+  ui.chatState(CHAT_A).awaitingInput = true;
+  ui.finishResponse(CHAT_A);
+  assert.equal(ui.chatState(CHAT_A).awaitingInput, false);
 });
 
 test("queued prompt normalizer rejects invalid identity fields and strips attachment data", () => {

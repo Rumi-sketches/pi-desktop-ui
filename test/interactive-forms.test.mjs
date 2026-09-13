@@ -97,6 +97,18 @@ test("aborting a turn removes its pending form", async () => {
   assert.equal(broker.submit("call-2", {}), null);
 });
 
+test("broker exposes only the interval spent waiting for user input", async () => {
+  const broker = new InteractiveFormBroker();
+  assert.equal(broker.waiting, false);
+
+  const waiting = broker.wait("call-waiting", form());
+  assert.equal(broker.waiting, true);
+  broker.submit("call-waiting", { name: "Studio", platform: "web", features: [], approved: true });
+  await waiting;
+
+  assert.equal(broker.waiting, false);
+});
+
 test("the tool advertises the native form capability to the model", () => {
   const tool = createInteractiveFormTool(new InteractiveFormBroker());
   assert.equal(tool.name, "request_form");

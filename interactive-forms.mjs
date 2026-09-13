@@ -186,6 +186,10 @@ export class InteractiveFormBroker {
     request.settle(values);
     return values;
   }
+
+  get waiting() {
+    return this.pending.size > 0;
+  }
 }
 
 export function createInteractiveFormTool(broker) {
