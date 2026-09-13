@@ -20,6 +20,17 @@ import {
 import { createTransport, withSessionKey } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 
+// During a development hot reload the page can briefly outlive the server that
+// learned the new icon route. Never expose the browser's broken-image glyph:
+// the next full app restart loads the PNG, while this run degrades cleanly.
+document.addEventListener('error', (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.classList.contains('logo-img')) return;
+  const logo = image.closest('.logo');
+  if (!logo) return;
+  logo.classList.add('icon-failed');
+}, true);
+
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
 // scripts and land on `window` with no declarations of their own. One untyped
 // view of the global object, instead of a cast per call site.
@@ -4434,8 +4445,8 @@ async function renderSettings() {
   const authedProviders = [...new Set(authedModels.map((m) => m.provider))].sort();
   let enabledPatterns = c.options?.enabledModels ?? [];
 
-  const checkbox = (pattern, label, on) =>
-    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}> ${esc(label)}</label>`;
+  const checkbox = (pattern, label, on, provider, modelId = '') =>
+    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}>${providerIconHtml(provider, modelId)} ${esc(label)}</label>`;
 
   function drawEnabled() {
     const on = new Set(enabledPatterns);
@@ -4443,13 +4454,13 @@ async function renderSettings() {
       ? `${enabledPatterns.length} active patterns: ${enabledPatterns.join(', ')}`
       : 'Empty list: every model of the authenticated providers is enabled.';
     $('enabledProviders').innerHTML = authedProviders
-      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)))).join('')
+      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)), p)).join('')
       || '<div class="sys">No authenticated provider</div>';
     const q = $('enabledSearch').value.trim().toLowerCase();
     const list = authedModels.filter((m) => !q
       || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q));
     $('enabledModelList').innerHTML = list
-      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)))).join('')
+      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)), m.provider, m.id)).join('')
       || '<div class="sys">No model matches the search</div>';
   }
 

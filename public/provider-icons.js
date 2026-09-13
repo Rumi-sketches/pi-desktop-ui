@@ -12,8 +12,6 @@ const NEUTRAL_ICON = Object.freeze({
   mono: 'neutral',
 });
 
-const OPENROUTER_SVG = '<svg width="1024" height="730" viewBox="0 0 1024 730" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M795.893 0C915.776 0 1012.95 97.9963 1012.95 218.88C1012.95 339.764 915.776 437.76 795.893 437.76L1011.2 654.869C1038.55 682.447 1019.18 729.6 980.504 729.6H361.77C161.97 729.6 0 566.273 0 364.8C0 163.327 161.97 0 361.77 0L795.893 0ZM361.77 145.92C241.89 145.92 144.708 243.916 144.708 364.8C144.708 485.684 241.89 583.68 361.77 583.68C481.649 583.68 578.831 485.684 578.831 364.8C578.831 243.916 481.649 145.92 361.77 145.92Z" fill="#7624F4"/></svg>';
-
 const LOBE_ICON_ROOT = '/vendor/@lobehub/icons-static-png';
 const themedPng = (slug, suffix = '') =>
   `<img class="logo-img logo-img-light" src="${LOBE_ICON_ROOT}/light/${slug}${suffix}.png" alt="" aria-hidden="true">` +
@@ -80,10 +78,10 @@ export const PROVIDER_ICONS = Object.freeze({
   }),
   xai: Object.freeze({
     aliases: ['xai', 'x-ai', 'spacexai', 'grok'],
-    source: 'https://x.ai/legal/brand-guidelines',
-    terms: 'https://x.ai/legal/brand-guidelines',
-    constraint: 'Only the exact downloadable logo may be used without alteration; use the neutral symbol unless that asset is embedded unchanged.',
-    icon: NEUTRAL_ICON,
+    source: 'https://github.com/lobehub/lobe-icons/tree/master/packages/static-png',
+    terms: 'https://github.com/lobehub/lobe-icons/blob/master/LICENSE',
+    constraint: 'Transparent Grok PNG supplied by the MIT-licensed Lobe Icons package.',
+    icon: lobeIcon('grok', 'Grok'),
   }),
   mistral: Object.freeze({
     aliases: ['mistral', 'codestral'],
@@ -115,17 +113,10 @@ export const PROVIDER_ICONS = Object.freeze({
   }),
   openrouter: Object.freeze({
     aliases: ['openrouter'],
-    source: 'https://openrouter.ai/brand/logos/transparent/glyph/svg/glyph-grape.svg',
-    terms: 'https://openrouter.ai/brand',
-    constraint: 'Official glyph used unchanged; do not stretch, recolor, or remix. Mono uses the neutral symbol.',
-    icon: Object.freeze({
-      kind: 'brand',
-      bg: 'transparent',
-      fg: '#7624F4',
-      svg: OPENROUTER_SVG,
-      monoSvg: NEUTRAL_SVG,
-      mono: 'neutral',
-    }),
+    source: 'https://github.com/lobehub/lobe-icons/tree/master/packages/static-png',
+    terms: 'https://github.com/lobehub/lobe-icons/blob/master/LICENSE',
+    constraint: 'Transparent OpenRouter PNG supplied by the MIT-licensed Lobe Icons package.',
+    icon: lobeIcon('openrouter', 'OpenRouter', true),
   }),
   github: Object.freeze({
     aliases: ['github', 'github-copilot'],
