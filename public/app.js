@@ -151,14 +151,29 @@ function addChatTimer(callback, delay) {
 // browser tab Ctrl+T/N/W/P belong to the browser and never reach the page, so
 // there Shift stays.
 const IS_ELECTRON = /electron\//i.test(navigator.userAgent);
+document.documentElement.classList.toggle('electron', IS_ELECTRON);
 const MOD = IS_ELECTRON ? 'Ctrl' : 'Shift';
 const hasMod = (e) => (IS_ELECTRON ? e.ctrlKey && !e.shiftKey && !e.metaKey : e.shiftKey && !e.ctrlKey && !e.metaKey) && !e.altKey;
 
 const TOAST_LIFETIME_MS = 6000;
-function toast(msg, ok = false) {
-  const t = document.createElement('div');
+function toast(msg, ok = false, { actionLabel = '', onAction = null } = {}) {
+  const actionable = typeof onAction === 'function';
+  const t = document.createElement(actionable ? 'button' : 'div');
+  if (actionable) t.setAttribute('type', 'button');
   t.className = 'toast' + (ok ? ' ok' : '');
-  t.textContent = msg;
+  const text = document.createElement('span');
+  text.textContent = msg;
+  t.appendChild(text);
+  if (actionLabel) {
+    const action = document.createElement('span');
+    action.className = 'toastAction';
+    action.textContent = actionLabel;
+    t.appendChild(action);
+  }
+  if (actionable) t.addEventListener('click', () => {
+    t.remove();
+    onAction();
+  }, { once: true });
   $('toasts').appendChild(t);
   setTimeout(() => t.remove(), TOAST_LIFETIME_MS);
 }
@@ -1024,7 +1039,10 @@ function handleEvent(ev, ownerKey) {
       if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
       if (ev.key !== activeChatKey()) {
         renderSessions();
-        if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true);
+        if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true, {
+          actionLabel: 'Open chat',
+          onAction: () => openChatNotification(ev.key),
+        });
       }
     } else if (ev.kind === 'sessions') {
       loadSessions();
@@ -1699,6 +1717,21 @@ async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   }
   showChatResource(key);            // the cached view was already shown by the transition
   await loadOpenChat(activeTicket); // synchronize independently; never rely on SSE alone
+}
+
+async function openChatNotification(key) {
+  let session = allSessions.find((item) => item.path === key);
+  if (!session) {
+    await loadSessions();
+    session = allSessions.find((item) => item.path === key);
+  }
+  if (!session) {
+    toast('That chat is no longer available');
+    return;
+  }
+  const projectId = session.cwd ? projectTabId(session.cwd) : null;
+  const tabId = projectId && uiState.projects.has(projectId) ? projectId : projectTabId(null);
+  await openSession(session, { tabId });
 }
 // The transition has already restored the cached DOM synchronously. Network
 // synchronization starts afterwards and is split by owner: session listing is
@@ -2975,6 +3008,11 @@ function applyTheme(id) {
   localStorage.setItem('piTheme', document.documentElement.dataset.theme);
   $$('.themeCard[data-t]').forEach((c) => c.classList.toggle('sel', c.dataset.t === document.documentElement.dataset.theme));
   refreshTerminalThemes();   // the open terminals follow the page
+  const style = getComputedStyle(document.documentElement);
+  win.desktopWindow?.setTitleBarTheme({
+    background: style.getPropertyValue('--panel').trim(),
+    foreground: style.getPropertyValue('--txt').trim(),
+  });
 }
 applyTheme(localStorage.getItem('piTheme') || DEFAULT_THEME);
 
@@ -2995,6 +3033,15 @@ const SETTINGS_SECTIONS = [
   ['sec-paths', 'Paths'],
   ['sec-raw', 'Raw config'],
 ];
+function scrollSettingsSection(id) {
+  const section = $(id);
+  if (!section) return false;
+  const view = $('settingsView');
+  const top = view.scrollTop + section.getBoundingClientRect().top
+    - view.getBoundingClientRect().top - 16;
+  view.scrollTo({ top, behavior: 'smooth' });
+  return true;
+}
 function buildSettingsNav() {
   const nav = $('settingsNav');
   nav.innerHTML = '<div class="snav-label">Settings</div>';
@@ -3004,7 +3051,7 @@ function buildSettingsNav() {
     b.dataset.target = id;
     b.textContent = label;
     b.addEventListener('click', () => {
-      $(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!scrollSettingsSection(id)) return;
       nav.querySelectorAll('.snavItem').forEach((x) => x.classList.toggle('on', x === b));
       if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
     });
@@ -3095,8 +3142,10 @@ function renderSettingsView() {
   $('navDiff').classList.add('hide');
   $('navTasks').classList.add('hide');
   $('sidebar').classList.add('mode-settings');      // the sidebar shows the sections
-  buildSettingsNav();
-  renderSettings();
+  $('settingsNav').innerHTML = '<div class="snav-label">Settings</div><div class="sys">Loadingâ€¦</div>';
+  renderSettings().then(() => {
+    if (uiState.selection?.view === VIEW_SETTINGS) buildSettingsNav();
+  });
   loadAnalytics();
 }
 
