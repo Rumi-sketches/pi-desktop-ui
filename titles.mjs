@@ -152,6 +152,11 @@ export async function requestTitle(
   const model = subscriptionModel(runtime, modelRef);
   if (!model) return { status: "unavailable", attempted: false, title: null };
 
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(
+    () => timeoutController.abort(new DOMException("The operation timed out", "TimeoutError")),
+    timeoutMs,
+  );
   try {
     const answer = await runtime.completeSimple(
       model,
@@ -162,7 +167,7 @@ export async function requestTitle(
       {
         maxTokens: MAX_OUTPUT_TOKENS,
         cacheRetention: "none",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: timeoutController.signal,
       },
     );
     if (answer.stopReason === "error" || answer.stopReason === "aborted") {
@@ -175,6 +180,8 @@ export async function requestTitle(
     return { status: "answered", attempted: true, title: cleanTitle(raw) };
   } catch {
     return { status: "unavailable", attempted: true, title: null };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
