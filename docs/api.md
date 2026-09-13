@@ -14,8 +14,9 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
   capped at 32 MB. `GET /api/events` is the exception: it answers
   `text/event-stream`.
 - **Chat metrics.** The canonical `metrics` object contains `total`, `byModel`, optional
-  `sessionWork`, and `context`. Token totals include input, output, cache reads and cache writes.
-  `context.tokens` and `context.percent` remain `null` when pi cannot calculate current usage.
+  `sessionWork`, and `context`. `total` is cumulative processed usage and includes input, output,
+  cache reads and cache writes; it is not the current size of the conversation. `context.tokens`
+  is the current context size. It and `context.percent` remain `null` when pi cannot calculate them.
 - **Errors.** A failure never travels with a 200. Most routes answer the flat
   `{ error: "message" }`; routes with an error the client handles separately
   answer `{ error: { code, message } }`, where `code` is machine-readable
@@ -41,11 +42,14 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `POST /api/model` *[s]* | `{ provider, id }` | `{ ok, current, thinkingLevel, thinkingLevels, metrics }` | `400` provider/id not non-empty strings · `404` model unknown or not authenticated |
 | `POST /api/thinking` *[s]* | `{ level }` | `{ ok, thinkingLevel, thinkingLevels }` | `400` level outside what the model supports |
 | `GET /api/history` *[s]* | – | `{ key, messages[], turnModel, live[], streaming }`; every message carries an `entryId` for forking. Persisted skill calls expose only name and arguments, and reasoning uses the same provider-neutral block shape as live SSE. | – |
+| `GET /api/attachment` *[s]* | `?entry=<message-id>&block=<content-index>` | Raw persisted image bytes. History exposes the reference and MIME type without copying base64 into its JSON payload. | `400` invalid reference · `404` missing/non-image block |
 | `POST /api/prompt` *[s]* | `{ text, images?, type?: "steer" \| "followUp" }` (`type` defaults to `steer`) | Idle: `202` `{ ok, key }` and the turn streams on `/api/events`. Running: `202` `{ ok, key, queued }`; the context-owned queue delivers steering at the next public turn boundary and follow-up after the final turn. Limits are 20 pending items and 32 MiB total decoded content. | `400` `empty_prompt`, `invalid_attachment`, `invalid_attachments`, `invalid_queue_type` · `409` `extension_command_not_queueable`, `queue_item_limit` · `413` `queue_byte_limit` |
 | `DELETE /api/queued-prompts/:id` *[s]* | `:id` = opaque queue id | `{ ok, key, removed }`; only a still-pending item can be cancelled | `404` `queued_prompt_not_found` in this chat · `409` `queued_prompt_delivered` or `queued_prompt_removed` |
+| `POST /api/forms/:id/respond` *[s]* | `:id` = pending `request_form` tool-call id; `{ values }` keyed by field id | `{ ok, key, values }`; resolves the waiting tool call so the same model turn can continue | `400` `invalid_form_response` · `409` `form_not_pending` |
 | `POST /api/abort` *[s]* | – | `{ ok }`; pending app-owned prompts are discarded before aborting the run | – |
 | `GET /api/commands` *[s]* | – | `{ commands[] }` (extensions, prompt templates, skills) | – |
-| `GET /api/git` *[s]* | – | git status of the chat's folder | – |
+| `GET /api/git` *[s]* | – | git status of the chat's folder, including local branches | – |
+| `POST /api/git/branch` *[s]* | `{ branch }` naming an existing local branch | updated git status | `400` missing branch · `409` branch missing or checkout blocked by working-tree changes |
 | `GET /api/files` *[s]* | – | `{ files: [{ path, changes }] }` touched by this chat | – |
 | `GET /api/files/diff` *[s]* | `?path=…` | `{ path, write, hunks[] }`, secrets redacted | `404` file not tracked by this chat |
 
@@ -64,6 +68,7 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `GET /api/recent-cwds` | – | `{ recent[] }` | – |
 | `DELETE /api/recent-cwds` | `?path=…` | `{ recent[] }` without that entry | – |
 | `POST /api/open-explorer` *[s]* | – | `{ ok, cwd }`, folder revealed in the system file manager | `501` not available on this system |
+| `POST /api/open-local-path` *[s]* | `{ href }` — absolute, `file:` or chat-folder-relative link, optionally ending in `:line[:column]` or `#Lline` | `{ ok, path }`, opened with the OS default application | `400` invalid path · `404` missing path · `501` not available on this system |
 | `POST /api/open-terminal` *[s]* | – | `{ ok, cwd }`, terminal opened in the folder running `pi` | `501` not available on this system |
 | `POST /api/type-command` *[s]* | `{ command }` — single line, ≤ 2000 chars | `{ ok, cwd }`, terminal opened with the command typed at the prompt, **not** executed | `400` missing/multi-line/too long command · `501` not available on this system (Windows only) |
 | `POST /api/favorites` | `{ path, favorite }` | `{ ok, favorites[] }` | `400` missing path |
@@ -84,6 +89,12 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `GET /api/settings` | – | `{ path, agentDir, sections[], raw, extras[], thinkingLevels[] }` — documented schema plus current values | – |
 | `POST /api/settings` | `{ key, value }` | `{ ok, key, value, restart }`; `restart` is false when the change was applied to the live sessions | `400` missing key, unknown setting, non-numeric number, non-array list |
 | `GET /api/config` *[s]* | – | `{ platform, cwd, sessionFile, sessionId, current, providers[], models[], tools[], options, paths, rawSettings, rawModels, node }`, secrets redacted | – |
+| `GET /api/agent-bootstrap` *[s]* | – | `{ cwd, files[], toolsMode, tools[], commands[] }`; file contents are returned only for editable prompt resources up to 512 KiB | – |
+| `PUT /api/agent-bootstrap/file` *[s]* | `{ id, content }`, where `id` came from the bootstrap catalog | `{ ok, bootstrap }` after an atomic write and empty-draft reload | `400` invalid/read-only/symlink resource · `404` id absent from the current catalog · `413` content over 512 KiB |
+| `DELETE /api/agent-bootstrap/file` *[s]* | `{ id }` | `{ ok, bootstrap }` after removing the prompt override and reloading empty drafts | `400` read-only/symlink resource · `404` id absent from the current catalog |
+| `POST /api/agent-bootstrap/file/open` *[s]* | `{ id }` | `{ ok }` after opening the catalogued file in Notepad/TextEdit/the platform editor | `404` missing or stale resource · `501` native editor unavailable |
+| `PUT /api/agent-bootstrap/tools` *[s]* | `{ tools: string[] \| null }`; `null` restores pi defaults | `{ ok, bootstrap }`; the selection is persisted for desktop sessions and applied to empty drafts | `400` invalid list or unknown tool |
+| `POST /api/agent-bootstrap/reload` *[s]* | – | `{ ok, bootstrap }` after reloading resources and configured tools for the current chat's next turn | `409` `agent_busy` |
 | `GET /api/network` | – | LAN access state, detected LAN ip | – |
 | `POST /api/network` | `{ lanAccess }` or `{ regenerate: true }` or `{ reveal: true }` | network state, or `{ url }` for `reveal` (one-shot access URL) | `400` nothing to change, or LAN access is off |
 | `GET /api/usage` | `?force=1` refetches instead of serving the 45-second cache. A forced refresh needs same-origin proof; without it the route returns cached data | Account limits for Claude, Kimi, and OpenAI Codex. OpenAI stays disabled until its separate opt-in is on | – |

@@ -17,7 +17,7 @@ import {
   createNavigationSynchronizer,
   terminalHeaderState,
 } from './navigation.js';
-import { createTransport } from './transport.js';
+import { createTransport, withSessionKey } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
@@ -57,6 +57,11 @@ const chatCache = createChatCache({
     savePersistedComposerDrafts();
   },
 });
+let persistedFormDrafts = {};
+try { persistedFormDrafts = JSON.parse(sessionStorage.getItem('piFormDrafts') || '{}'); } catch {}
+function savePersistedFormDrafts() {
+  try { sessionStorage.setItem('piFormDrafts', JSON.stringify(persistedFormDrafts)); } catch {}
+}
 const uiState = createUiState({ chatCache });
 const navigation = createNavigationController({
   state: uiState,
@@ -127,6 +132,10 @@ function stashComposerDraft(key) {
 }
 
 if (win.marked) win.marked.setOptions({ breaks: true, gfm: true });
+// DOMPurify's default URL policy deliberately drops file: and Windows-drive
+// links. They are safe here because clicks never navigate this renderer: the
+// delegated handler below sends them to the local-path endpoint instead.
+const CHAT_URI_PATTERN = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[a-z]:%5c|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const fmt = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(Math.round(n ?? 0));
 // amounts below $1 need 4 decimals to stay readable, above it 2 are enough
@@ -151,14 +160,29 @@ function addChatTimer(callback, delay) {
 // browser tab Ctrl+T/N/W/P belong to the browser and never reach the page, so
 // there Shift stays.
 const IS_ELECTRON = /electron\//i.test(navigator.userAgent);
+document.documentElement.classList.toggle('electron', IS_ELECTRON);
 const MOD = IS_ELECTRON ? 'Ctrl' : 'Shift';
 const hasMod = (e) => (IS_ELECTRON ? e.ctrlKey && !e.shiftKey && !e.metaKey : e.shiftKey && !e.ctrlKey && !e.metaKey) && !e.altKey;
 
 const TOAST_LIFETIME_MS = 6000;
-function toast(msg, ok = false) {
-  const t = document.createElement('div');
+function toast(msg, ok = false, { actionLabel = '', onAction = null } = {}) {
+  const actionable = typeof onAction === 'function';
+  const t = document.createElement(actionable ? 'button' : 'div');
+  if (actionable) t.setAttribute('type', 'button');
   t.className = 'toast' + (ok ? ' ok' : '');
-  t.textContent = msg;
+  const text = document.createElement('span');
+  text.textContent = msg;
+  t.appendChild(text);
+  if (actionLabel) {
+    const action = document.createElement('span');
+    action.className = 'toastAction';
+    action.textContent = actionLabel;
+    t.appendChild(action);
+  }
+  if (actionable) t.addEventListener('click', () => {
+    t.remove();
+    onAction();
+  }, { once: true });
   $('toasts').appendChild(t);
   setTimeout(() => t.remove(), TOAST_LIFETIME_MS);
 }
@@ -351,10 +375,18 @@ function renderMarkdown(div) {
   // The model's markdown can carry attacker-influenced content (files, tool
   // output, fetched pages): sanitize before it ever touches innerHTML.
   div.innerHTML = win.marked && win.DOMPurify
-    ? win.DOMPurify.sanitize(win.marked.parse(div.dataset.raw ?? ''))
+    ? win.DOMPurify.sanitize(win.marked.parse(div.dataset.raw ?? ''), { ALLOWED_URI_REGEXP: CHAT_URI_PATTERN })
     : esc(div.dataset.raw ?? '');
   if (win.hljs) $$('pre code', div).forEach((el) => win.hljs.highlightElement(el));
   addCopyButtons(div);
+}
+
+function isLocalLink(href) {
+  if (!href || href.startsWith('#')) return false;
+  let decoded = href;
+  try { decoded = decodeURIComponent(href); } catch {}
+  if (/^(https?|mailto):/i.test(decoded)) return false;
+  return !/^[a-z][a-z\d+.-]*:/i.test(decoded) || /^file:/i.test(decoded) || /^[a-z]:[\\/]/i.test(decoded);
 }
 
 /* ---- copy-to-clipboard: whole messages and single code/context blocks ---- */
@@ -557,9 +589,254 @@ function appendText(div, delta) {
 }
 /* ---- tool calls: expandable card showing exactly what the model is doing ---- */
 const toolCards = new Map(); // toolCallId -> element
+
+function formResult(output) {
+  try {
+    const parsed = JSON.parse(output ?? '');
+    return parsed?.status === 'submitted' && parsed.values && typeof parsed.values === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function formControls(card, fieldId) {
+  return $$('[data-form-field]', card).filter((control) => control.dataset.formField === fieldId);
+}
+
+function setInteractiveFormValues(card, definition, values) {
+  for (const field of definition.fields ?? []) {
+    const controls = formControls(card, field.id);
+    const value = values?.[field.id];
+    if (field.type === 'checkbox') {
+      if (controls[0]) controls[0].checked = value === true;
+    } else if (field.type === 'multiselect') {
+      const selected = new Set(Array.isArray(value) ? value : []);
+      controls.forEach((control) => { control.checked = selected.has(control.value); });
+    } else if (field.type === 'radio') {
+      controls.forEach((control) => { control.checked = control.value === value; });
+    } else if (controls[0]) {
+      controls[0].value = value ?? '';
+    }
+  }
+}
+
+function finishInteractiveForm(card, definition, { values = null, error = false } = {}) {
+  if (values) setInteractiveFormValues(card, definition, values);
+  card.classList.toggle('submitted', !!values && !error);
+  card.classList.toggle('formError', error);
+  const fieldset = card.querySelector('.formFields');
+  if (fieldset) fieldset.disabled = true;
+  const button = card.querySelector('.formSubmit');
+  if (button) button.disabled = true;
+  const status = card.querySelector('.formStatus');
+  if (status) status.textContent = error ? 'Unavailable' : 'Submitted';
+  if (card.dataset.draftKey) {
+    delete persistedFormDrafts[card.dataset.draftKey];
+    savePersistedFormDrafts();
+  }
+}
+
+function optionControl(field, option, inputType) {
+  const label = document.createElement('label');
+  label.className = 'formOption';
+  const input = document.createElement('input');
+  input.type = inputType;
+  input.name = field.id;
+  input.value = option.value;
+  input.dataset.formField = field.id;
+  input.required = inputType === 'radio' && !!field.required;
+  const copy = document.createElement('span');
+  copy.className = 'formOptionCopy';
+  const name = document.createElement('span');
+  name.className = 'formOptionLabel';
+  name.textContent = option.label;
+  copy.appendChild(name);
+  if (option.description) {
+    const description = document.createElement('span');
+    description.className = 'formOptionDescription';
+    description.textContent = option.description;
+    copy.appendChild(description);
+  }
+  label.append(input, copy);
+  return label;
+}
+
+let formControlSequence = 0;
+function interactiveFormField(field) {
+  const row = document.createElement(field.type === 'radio' || field.type === 'multiselect' ? 'fieldset' : 'div');
+  row.className = 'formField';
+  const label = document.createElement(field.type === 'radio' || field.type === 'multiselect' ? 'legend' : 'label');
+  label.className = 'formLabel';
+  label.textContent = field.label;
+  if (field.required) {
+    const required = document.createElement('span');
+    required.className = 'formRequired';
+    required.textContent = 'Required';
+    label.appendChild(required);
+  }
+  row.appendChild(label);
+  if (field.description) {
+    const description = document.createElement('div');
+    description.className = 'formHint';
+    description.textContent = field.description;
+    row.appendChild(description);
+  }
+  if (field.type === 'radio' || field.type === 'multiselect') {
+    const options = document.createElement('div');
+    options.className = 'formOptions';
+    for (const option of field.options ?? []) {
+      options.appendChild(optionControl(field, option, field.type === 'radio' ? 'radio' : 'checkbox'));
+    }
+    row.appendChild(options);
+    return row;
+  }
+  if (field.type === 'checkbox') {
+    const choice = document.createElement('label');
+    choice.className = 'formBoolean';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = field.id;
+    input.dataset.formField = field.id;
+    input.required = !!field.required;
+    const text = document.createElement('span');
+    text.textContent = field.placeholder || 'Yes';
+    choice.append(input, text);
+    row.appendChild(choice);
+    return row;
+  }
+  let control;
+  if (field.type === 'textarea') {
+    control = document.createElement('textarea');
+    control.rows = 3;
+  } else if (field.type === 'select') {
+    control = document.createElement('select');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = field.placeholder || 'Select an option…';
+    placeholder.disabled = !!field.required;
+    placeholder.selected = true;
+    control.appendChild(placeholder);
+    for (const option of field.options ?? []) {
+      const element = document.createElement('option');
+      element.value = option.value;
+      element.textContent = option.label;
+      control.appendChild(element);
+    }
+  } else {
+    control = document.createElement('input');
+    control.type = field.type;
+  }
+  control.name = field.id;
+  control.dataset.formField = field.id;
+  control.required = !!field.required;
+  control.id = `model-form-field-${++formControlSequence}`;
+  label.setAttribute('for', control.id);
+  if (field.placeholder && field.type !== 'select') control.placeholder = field.placeholder;
+  row.appendChild(control);
+  return row;
+}
+
+function interactiveFormValues(card, definition) {
+  const values = {};
+  for (const field of definition.fields ?? []) {
+    const controls = formControls(card, field.id);
+    if (field.type === 'checkbox') values[field.id] = !!controls[0]?.checked;
+    else if (field.type === 'multiselect') values[field.id] = controls.filter((control) => control.checked).map((control) => control.value);
+    else if (field.type === 'radio') values[field.id] = controls.find((control) => control.checked)?.value ?? '';
+    else values[field.id] = controls[0]?.value ?? '';
+  }
+  return values;
+}
+
+function renderInteractiveForm(ev) {
+  let card = ev.id ? toolCards.get(ev.id) : null;
+  if (!card && ev.status === 'start') {
+    const definition = ev.args ?? {};
+    card = document.createElement('section');
+    card.className = 'interactiveForm';
+    card.dataset.definition = JSON.stringify(definition);
+    const head = document.createElement('div');
+    head.className = 'formHead';
+    const heading = document.createElement('div');
+    const title = document.createElement('h3');
+    title.textContent = definition.title || 'A few details';
+    heading.appendChild(title);
+    if (definition.description) {
+      const description = document.createElement('p');
+      description.textContent = definition.description;
+      heading.appendChild(description);
+    }
+    const status = document.createElement('span');
+    status.className = 'formStatus';
+    status.textContent = 'Needs your input';
+    status.setAttribute('aria-live', 'polite');
+    head.append(heading, status);
+    const form = document.createElement('form');
+    form.className = 'modelForm';
+    const fields = document.createElement('fieldset');
+    fields.className = 'formFields';
+    for (const field of definition.fields ?? []) fields.appendChild(interactiveFormField(field));
+    const actions = document.createElement('div');
+    actions.className = 'formActions';
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn teal formSubmit';
+    submit.textContent = definition.submitLabel || 'Submit';
+    actions.appendChild(submit);
+    form.append(fields, actions);
+    card.append(head, form);
+    currentTurn.appendChild(card);
+    if (ev.id) toolCards.set(ev.id, card);
+    const ownerKey = renderedChatKey;
+    const draftKey = `${ownerKey ?? ''}\n${ev.id ?? ''}`;
+    card.dataset.draftKey = draftKey;
+    if (persistedFormDrafts[draftKey]) setInteractiveFormValues(card, definition, persistedFormDrafts[draftKey]);
+    const rememberDraft = () => {
+      persistedFormDrafts[draftKey] = interactiveFormValues(card, definition);
+      savePersistedFormDrafts();
+    };
+    addChatListener(form, 'input', rememberDraft);
+    addChatListener(form, 'change', rememberDraft);
+    addChatListener(form, 'submit', async (event) => {
+      event.preventDefault();
+      const missingMulti = (definition.fields ?? []).find((field) => field.type === 'multiselect'
+        && field.required && !formControls(card, field.id).some((control) => control.checked));
+      if (missingMulti) {
+        const first = formControls(card, missingMulti.id)[0];
+        first?.setCustomValidity('Select at least one option');
+        first?.reportValidity();
+        first?.setCustomValidity('');
+        return;
+      }
+      if (!form.reportValidity()) return;
+      submit.disabled = true;
+      status.textContent = 'Submitting…';
+      const result = await post(`/api/forms/${encodeURIComponent(ev.id)}/respond`, {
+        values: interactiveFormValues(card, definition),
+      }, { key: ownerKey, guardChat: true, followKey: false, quiet: ['form_not_pending'] });
+      if (result.error) {
+        submit.disabled = false;
+        status.textContent = result.code === 'form_not_pending' ? 'No longer active' : 'Needs your input';
+        if (result.code === 'form_not_pending') finishInteractiveForm(card, definition, { error: true });
+        return;
+      }
+      finishInteractiveForm(card, definition, { values: result.values });
+    });
+  }
+  if (!card) return null;
+  let definition = {};
+  try { definition = JSON.parse(card.dataset.definition || '{}'); } catch {}
+  if (ev.status === 'end') {
+    const result = formResult(ev.output);
+    finishInteractiveForm(card, definition, { values: result?.values ?? null, error: !!ev.isError || !result });
+  }
+  return card;
+}
+
 function renderTool(ev) {
   return mutateTranscript(() => {
     if (!currentTurn) currentTurn = newTurn('pi');
+    if (ev.name === 'request_form') return renderInteractiveForm(ev);
     let card = ev.id ? toolCards.get(ev.id) : null;
     if (!card) {
       card = document.createElement('div');
@@ -651,17 +928,18 @@ function contextPercent(context) {
 function renderStats(chatState = activeChatState()) {
   const metrics = chatState.metrics;
   const c = metrics?.total ?? EMPTY_CHAT_USAGE;
-  const pct = contextPercent(metrics?.context);
+  const context = metrics?.context;
+  const pct = contextPercent(context);
   const pctLabel = pct === null ? '?' : `${pct.toFixed(0)}%`;
-  $('stats').textContent = `${fmt(c.tokens)} token · ${pctLabel} · ${money(c.cost)}`;
+  const contextTokens = context?.tokens === null || context?.tokens === undefined ? '?' : fmt(context.tokens);
+  $('stats').textContent = `${contextTokens} context · ${pctLabel} · ${money(c.cost)}`;
   $('stats').title =
-    `tokens in this chat: ${fmt(c.tokens)}\n` +
+    `current context: ${contextTokens}${context?.contextWindow > 0 ? ` / ${fmt(context.contextWindow)}` : ''} tokens (${pctLabel})\n` +
+    `cumulative tokens processed: ${fmt(c.tokens)}\n` +
     `${usageDetail(c)}\n` +
-    `context: ${pctLabel}\n` +
     `requests: ${c.requests} · estimated cost: ${money(c.cost)}\n` +
     `click for the per-model breakdown`;
   renderStatsMenu(c, metrics?.byModel, metrics?.sessionWork);
-  const context = metrics?.context;
   if (context?.contextWindow > 0 && pct !== null) {
     $('ctxFill').style.width = pct + '%';
     $('ctxFill').className = pct > 85 ? 'crit' : pct > 60 ? 'warn' : '';
@@ -677,7 +955,7 @@ function renderStats(chatState = activeChatState()) {
 // Counter popover: one row per model plus SDK work that has no model identity.
 function renderStatsMenu(c, byModel, sessionWork) {
   const rows = Object.entries(byModel ?? {}).sort((a, b) => b[1].cost - a[1].cost);
-  let html = '<div class="dd-group">All token buckets and cost, per model</div>';
+  let html = '<div class="dd-group">Cumulative processed tokens and cost, per model</div>';
   if (!rows.length && !sessionWork) html += '<div class="sys" style="padding:.4rem .55rem">no answer yet</div>';
   for (const [key, m] of rows) {
     const slash = key.indexOf('/');
@@ -691,7 +969,7 @@ function renderStatsMenu(c, byModel, sessionWork) {
       <span class="vals">${fmt(sessionWork.tokens)} tok · <b>${money(sessionWork.cost)}</b> · ${sessionWork.requests} req</span></div>`;
   }
   if (rows.length || sessionWork) {
-    html += `<div class="statsRow total" title="${esc(usageDetail(c))}"><span class="nm">Chat total</span>
+    html += `<div class="statsRow total" title="${esc(usageDetail(c))}"><span class="nm">Cumulative usage</span>
       <span class="vals">${fmt(c.tokens)} tok · <b>${money(c.cost)}</b> · ${c.requests} req</span></div>`;
   }
   $('statsMenu').innerHTML = html;
@@ -1024,7 +1302,10 @@ function handleEvent(ev, ownerKey) {
       if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
       if (ev.key !== activeChatKey()) {
         renderSessions();
-        if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true);
+        if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true, {
+          actionLabel: 'Open chat',
+          onAction: () => openChatNotification(ev.key),
+        });
       }
     } else if (ev.kind === 'sessions') {
       loadSessions();
@@ -1700,6 +1981,21 @@ async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   showChatResource(key);            // the cached view was already shown by the transition
   await loadOpenChat(activeTicket); // synchronize independently; never rely on SSE alone
 }
+
+async function openChatNotification(key) {
+  let session = allSessions.find((item) => item.path === key);
+  if (!session) {
+    await loadSessions();
+    session = allSessions.find((item) => item.path === key);
+  }
+  if (!session) {
+    toast('That chat is no longer available');
+    return;
+  }
+  const projectId = session.cwd ? projectTabId(session.cwd) : null;
+  const tabId = projectId && uiState.projects.has(projectId) ? projectId : projectTabId(null);
+  await openSession(session, { tabId });
+}
 // The transition has already restored the cached DOM synchronously. Network
 // synchronization starts afterwards and is split by owner: session listing is
 // global, history/state belong to the chat, files/Git to its project. Global
@@ -1932,12 +2228,44 @@ function renderProjTabs() {
     nm.textContent = label;
     t.appendChild(nm);
     if (cwd) {
+      t.draggable = true;
+      t.dataset.cwd = cwd;
       const x = document.createElement('span');
       x.className = 'x';
       x.textContent = '×';
       x.title = 'Close this project tab (chats are kept)';
       x.addEventListener('click', (e) => { e.stopPropagation(); closeProjTab(cwd); });
       t.appendChild(x);
+      t.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', cwd);
+        requestAnimationFrame(() => t.classList.add('dragging'));
+      });
+      t.addEventListener('dragend', () => {
+        $$('.projTab').forEach((tab) => tab.classList.remove('dragging', 'drop-before', 'drop-after'));
+      });
+      t.addEventListener('dragover', (e) => {
+        const source = e.dataTransfer.getData('text/plain');
+        if (!source || source === cwd) return;
+        e.preventDefault();
+        const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
+        t.classList.toggle('drop-before', !after);
+        t.classList.toggle('drop-after', after);
+      });
+      t.addEventListener('dragleave', () => t.classList.remove('drop-before', 'drop-after'));
+      t.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const source = e.dataTransfer.getData('text/plain');
+        const from = projState.tabs.indexOf(source);
+        const target = projState.tabs.indexOf(cwd);
+        if (from < 0 || target < 0 || from === target) return;
+        const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
+        projState.tabs.splice(from, 1);
+        const insertAt = projState.tabs.indexOf(cwd) + (after ? 1 : 0);
+        projState.tabs.splice(insertAt, 0, source);
+        saveProjTabs();
+        renderProjTabs();
+      });
     }
     t.addEventListener('click', () => activateProjTab(cwd ?? null));
     list.appendChild(t);
@@ -2161,6 +2489,13 @@ async function loadHistory({
     for (const b of blocks) {
       if (b.type === 'text') {
         lastText = bubble(m.role === 'user' ? 'user' : 'assistant', b.text ?? '', body);
+      } else if (b.type === 'image' && m.entryId && Number.isInteger(b.contentIndex)) {
+        appendMessageImage(body, {
+          src: withSessionKey(
+            `/api/attachment?entry=${encodeURIComponent(m.entryId)}&block=${b.contentIndex}`,
+            key,
+          ),
+        });
       } else if (b.type === 'skill' && m.role === 'user') {
         lastText = skillInvocationElement(b);
         body.appendChild(lastText);
@@ -2975,6 +3310,11 @@ function applyTheme(id) {
   localStorage.setItem('piTheme', document.documentElement.dataset.theme);
   $$('.themeCard[data-t]').forEach((c) => c.classList.toggle('sel', c.dataset.t === document.documentElement.dataset.theme));
   refreshTerminalThemes();   // the open terminals follow the page
+  const style = getComputedStyle(document.documentElement);
+  win.desktopWindow?.setTitleBarTheme({
+    background: style.getPropertyValue('--panel').trim(),
+    foreground: style.getPropertyValue('--txt').trim(),
+  });
 }
 applyTheme(localStorage.getItem('piTheme') || DEFAULT_THEME);
 
@@ -2982,6 +3322,7 @@ applyTheme(localStorage.getItem('piTheme') || DEFAULT_THEME);
 // settings page sections listed in the sidebar (in place of the chats)
 const SETTINGS_SECTIONS = [
   ['analytics', 'Cost analytics'],
+  ['sec-agent', 'Agent bootstrap'],
   ['sec-pi', 'pi settings'],
   ['sec-theme', 'Theme'],
   ['sec-usage', 'Account limits'],
@@ -2995,6 +3336,15 @@ const SETTINGS_SECTIONS = [
   ['sec-paths', 'Paths'],
   ['sec-raw', 'Raw config'],
 ];
+function scrollSettingsSection(id) {
+  const section = $(id);
+  if (!section) return false;
+  const view = $('settingsView');
+  const top = view.scrollTop + section.getBoundingClientRect().top
+    - view.getBoundingClientRect().top - 16;
+  view.scrollTo({ top, behavior: 'smooth' });
+  return true;
+}
 function buildSettingsNav() {
   const nav = $('settingsNav');
   nav.innerHTML = '<div class="snav-label">Settings</div>';
@@ -3004,7 +3354,7 @@ function buildSettingsNav() {
     b.dataset.target = id;
     b.textContent = label;
     b.addEventListener('click', () => {
-      $(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!scrollSettingsSection(id)) return;
       nav.querySelectorAll('.snavItem').forEach((x) => x.classList.toggle('on', x === b));
       if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
     });
@@ -3095,8 +3445,10 @@ function renderSettingsView() {
   $('navDiff').classList.add('hide');
   $('navTasks').classList.add('hide');
   $('sidebar').classList.add('mode-settings');      // the sidebar shows the sections
-  buildSettingsNav();
-  renderSettings();
+  $('settingsNav').innerHTML = '<div class="snav-label">Settings</div><div class="sys">Loadingâ€¦</div>';
+  renderSettings().then(() => {
+    if (uiState.selection?.view === VIEW_SETTINGS) buildSettingsNav();
+  });
   loadAnalytics();
 }
 
@@ -3272,8 +3624,13 @@ $('navSettings').addEventListener('click', showSettings);
 async function renderSettings() {
   const body = $('settingsBody');
   body.innerHTML = '<div class="sys">Loading…</div>';
-  const [st, c, usageCfg] = await Promise.all([api('/api/settings'), api('/api/config'), api('/api/usage/config')]);
-  if (st.error || c.error) { body.innerHTML = '<div class="sys">Could not load the configuration</div>'; return; }
+  const [st, c, usageCfg, bootstrap] = await Promise.all([
+    api('/api/settings'),
+    api('/api/config'),
+    api('/api/usage/config'),
+    api('/api/agent-bootstrap'),
+  ]);
+  if (st.error || c.error || bootstrap.error) { body.innerHTML = '<div class="sys">Could not load the configuration</div>'; return; }
   $('agentDir').textContent = st.agentDir ?? c.paths.agentDir;
 
   /* ---- 1. pi settings, editable where possible ---- */
@@ -3309,7 +3666,77 @@ async function renderSettings() {
       }).join('')}
     </div>`).join('');
 
+  const editorLabel = c.platform?.os === 'win32' ? 'Open in Notepad' : 'Open in text editor';
+  const bootstrapTargets = bootstrap.files.filter((file) => file.target);
+  const loadedResources = bootstrap.files.filter((file) => file.active && file.exists);
+  const bootstrapEditors = bootstrapTargets.map((file) => `
+    <details class="bootstrapFile" ${file.exists ? '' : 'open'}>
+      <summary>
+        <span><b>${esc(file.label)}</b><code>${esc(file.path)}</code></span>
+        <span class="bootstrapBadges"><span class="badge">${esc(file.scope)}</span>
+          <span class="badge ${file.active ? 'ok' : ''}">${file.symlink ? 'symlink blocked' : (file.active ? 'active' : (file.exists ? 'shadowed' : 'missing'))}</span></span>
+      </summary>
+      ${file.tooLarge
+        ? '<div class="sys bootstrapNotice">This file is larger than 512 KiB. Open it in the native editor.</div>'
+        : `<textarea class="bootstrapEditor" data-bootstrap-editor="${file.id}" rows="8"
+             placeholder="Write the instructions pi should load…">${esc(file.content ?? '')}</textarea>`}
+      <div class="bootstrapActions">
+        ${file.tooLarge || file.symlink ? '' : `<button class="btn teal" data-bootstrap-save="${file.id}">${file.exists ? 'Save' : 'Create file'}</button>`}
+        ${file.exists && c.platform?.openTextFile ? `<button class="btn outline" data-bootstrap-open="${file.id}">${editorLabel}</button>` : ''}
+        ${file.exists ? `<button class="btn outline danger" data-bootstrap-delete="${file.id}">Remove override</button>` : ''}
+        <span class="sys" data-bootstrap-message="${file.id}"></span>
+      </div>
+    </details>`).join('');
+  const resourceRows = loadedResources.map((file) => `
+    <div class="bootstrapResource">
+      <span><b>${esc(file.path.split(/[\\/]/).pop())}</b><code>${esc(file.path)}</code></span>
+      <span class="bootstrapBadges">${file.kinds.map((kind) => `<span class="badge">${esc(kind)}</span>`).join('')}
+        ${c.platform?.openTextFile ? `<button class="btn outline mini" data-bootstrap-open="${file.id}">${editorLabel}</button>` : ''}</span>
+    </div>`).join('');
+  const bootstrapTools = bootstrap.tools.map((tool) => `
+    <label class="bootstrapTool" title="${esc(tool.description)}">
+      <input type="checkbox" data-bootstrap-tool="${esc(tool.name)}" ${tool.selected ? 'checked' : ''}>
+      <span><b>${esc(tool.name)}</b><small>${esc(tool.source)}</small></span>
+    </label>`).join('');
+  const bootstrapCommands = bootstrap.commands.map((command) => `
+    <div class="toolItem"><span class="n">/${esc(command.name)}</span>
+      <span class="d">${esc(command.description || command.path || '')}</span><span style="flex:1"></span>
+      <span class="badge">${esc(command.source)}</span></div>`).join('');
+
   body.innerHTML = `
+    <div class="sec" id="sec-agent">
+      <h3>Agent bootstrap</h3>
+      <p class="lead">Control the files and tools pi loads before the first prompt in <code>${esc(bootstrap.cwd)}</code>. Empty drafts reload automatically; an existing chat changes only when you explicitly reload it.</p>
+
+      <h4 class="bootstrapHeading">Initial prompt files</h4>
+      <div class="card bootstrapEditors">${bootstrapEditors}</div>
+
+      <details class="card bootstrapCatalog">
+        <summary><b>Loaded resources (${loadedResources.length})</b><span class="sys">context, prompts, skills and extensions</span></summary>
+        <div class="bootstrapResourceList">${resourceRows || '<div class="sys">No file-based resources loaded</div>'}</div>
+      </details>
+
+      <h4 class="bootstrapHeading">Tools for agent sessions</h4>
+      <div class="card bootstrapTools">
+        <div class="bootstrapToolGrid">${bootstrapTools || '<div class="sys">No tools registered</div>'}</div>
+        <div class="bootstrapActions">
+          <button class="btn teal" id="bootstrapToolsSave">Save selected tools</button>
+          <button class="btn outline" id="bootstrapToolsReset">Use pi defaults</button>
+          <span class="sys" id="bootstrapToolsMsg">${bootstrap.toolsMode === 'pi-default' ? 'Using pi defaults' : 'Custom selection'}</span>
+        </div>
+      </div>
+
+      <details class="card bootstrapCatalog">
+        <summary><b>Available slash commands (${bootstrap.commands.length})</b><span class="sys">extensions, prompt templates and skills</span></summary>
+        <div class="bootstrapResourceList">${bootstrapCommands || '<div class="sys">No slash commands loaded</div>'}</div>
+      </details>
+
+      <div class="bootstrapActions">
+        <button class="btn outline" id="bootstrapReload">Reload current chat for the next turn</button>
+        <span class="sys" id="bootstrapReloadMsg"></span>
+      </div>
+    </div>
+
     <div class="sec" id="sec-pi">
       <h3>pi settings — <span style="color:var(--txt-dim);text-transform:none;letter-spacing:0">${esc(st.path)}</span></h3>
       <p class="lead" style="margin:-.3rem 0 .8rem">Changes are saved to the file right away. Most of them are read by pi at startup: restart the server (⏻) or the CLI to apply them.</p>
@@ -3756,6 +4183,58 @@ async function renderSettings() {
     refreshUsage();
   });
 
+  /* ---- agent bootstrap ---- */
+  body.querySelectorAll('[data-bootstrap-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      await post('/api/agent-bootstrap/file/open', { id: button.dataset.bootstrapOpen });
+      button.disabled = false;
+    });
+  });
+  body.querySelectorAll('[data-bootstrap-save]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.bootstrapSave;
+      const editor = body.querySelector(`[data-bootstrap-editor="${id}"]`);
+      const message = body.querySelector(`[data-bootstrap-message="${id}"]`);
+      button.disabled = true;
+      const result = await sendJson('PUT', '/api/agent-bootstrap/file', { id, content: editor?.value ?? '' });
+      button.disabled = false;
+      if (result.error) { if (message) message.textContent = result.error; return; }
+      toast('Agent input saved');
+      await renderSettings();
+      $('sec-agent')?.scrollIntoView({ block: 'start' });
+    });
+  });
+  body.querySelectorAll('[data-bootstrap-delete]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Remove this prompt override file? This cannot be undone.')) return;
+      const result = await sendJson('DELETE', '/api/agent-bootstrap/file', { id: button.dataset.bootstrapDelete });
+      if (result.error) return;
+      toast('Agent input removed');
+      await renderSettings();
+      $('sec-agent')?.scrollIntoView({ block: 'start' });
+    });
+  });
+  $('bootstrapToolsSave').addEventListener('click', async () => {
+    const tools = $$('[data-bootstrap-tool]:checked', body).map((input) => input.dataset.bootstrapTool);
+    const result = await sendJson('PUT', '/api/agent-bootstrap/tools', { tools });
+    if (result.error) return;
+    $('bootstrapToolsMsg').textContent = 'Saved · empty drafts reloaded';
+  });
+  $('bootstrapToolsReset').addEventListener('click', async () => {
+    const result = await sendJson('PUT', '/api/agent-bootstrap/tools', { tools: null });
+    if (result.error) return;
+    await renderSettings();
+    $('sec-agent')?.scrollIntoView({ block: 'start' });
+  });
+  $('bootstrapReload').addEventListener('click', async () => {
+    const button = $('bootstrapReload');
+    button.disabled = true;
+    const result = await post('/api/agent-bootstrap/reload', {});
+    button.disabled = false;
+    $('bootstrapReloadMsg').textContent = result.error ? result.error : 'Reloaded for the next turn';
+  });
+
   /* ---- save handlers ---- */
   async function saveSetting(key, value, okEl) {
     const r = await post('/api/settings', { key, value });
@@ -4062,6 +4541,20 @@ function setComposerSubmitting(value) {
   $('sendBtn').disabled = value;
   $('queueActions').querySelectorAll('button').forEach((button) => { button.disabled = value; });
 }
+function appendMessageImage(body, { src, alt = 'Attached image', title = alt }) {
+  let media = body.querySelector(':scope > .media');
+  if (!media) {
+    media = document.createElement('div');
+    media.className = 'media';
+    body.appendChild(media);
+  }
+  const image = document.createElement('img');
+  image.src = src;
+  image.alt = alt;
+  image.title = `${title} — click to enlarge`;
+  media.appendChild(image);
+  return image;
+}
 function acceptedUserTurn(text, attachments) {
   const turn = document.createElement('div');
   turn.className = 'turn user';
@@ -4253,6 +4746,15 @@ chat.addEventListener('click', async (e) => {
     if (!r.error) toast('Command typed in a new terminal — press Enter there to run it', true);
     return;
   }
+  const link = e.target.closest('.md a');
+  if (link && isLocalLink(link.getAttribute('href'))) {
+    e.preventDefault();
+    const r = await post('/api/open-local-path', { href: link.getAttribute('href') }, {
+      key: activeChatKey(), guardChat: true,
+    });
+    if (!r.error) toast('Opened ' + r.path, true);
+    return;
+  }
   const img = e.target.closest('.media img, .msg img');
   if (img) openLightbox(img.src, img.alt);
 });
@@ -4402,9 +4904,10 @@ async function refreshGit({ key = activeChatKey() ?? renderedChatKey, projectCwd
 function renderGit(scope = activeProjectScope()) {
   const git = scope?.git;
   const chip = $('gitChip');
+  const dd = $('gitDd');
   renderTray(); // the tray shows the same branch, also when there is no repo
-  if (!git?.repo) { chip.classList.add('hide'); return; }
-  chip.classList.remove('hide');
+  if (!git?.repo) { dd.classList.add('hide'); return; }
+  dd.classList.remove('hide');
   $('gitBranch').textContent = git.branch;
   const n = git.changed ?? 0;
   const count = $('gitCount');
@@ -4418,6 +4921,34 @@ function renderGit(scope = activeProjectScope()) {
     `pending changes: ${n} (staged ${git.staged} · unstaged ${git.unstaged} · new ${git.untracked})\n` +
     (sync.length ? sync.join(' · ') : 'in sync with the remote');
 }
+
+const gitDd = setupDd('gitDd', 'gitChip');
+function renderGitMenu() {
+  const git = activeProjectScope()?.git;
+  const menu = $('gitMenu');
+  menu.innerHTML = '<div class="dd-group">Switch branch</div>';
+  for (const branch of git?.branches ?? []) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'dd-item' + (branch === git.branch ? ' on' : '');
+    const name = document.createElement('span');
+    name.className = 'nm';
+    name.textContent = branch;
+    button.appendChild(name);
+    button.disabled = branch === git.branch;
+    button.addEventListener('click', async () => {
+      gitDd.classList.remove('open');
+      const result = await post('/api/git/branch', { branch }, { guardChat: true });
+      if (result.error) return;
+      await Promise.all([refreshGit(), loadFiles()]);
+      toast(`Switched to ${branch}`, true);
+    });
+    menu.appendChild(button);
+  }
+}
+$('gitChip').addEventListener('click', () => {
+  if (gitDd.classList.contains('open')) renderGitMenu();
+});
 
 /* ---------------- boot ---------------- */
 async function loadState({ key = activeChatKey() ?? renderedChatKey, ticket = null } = {}) {

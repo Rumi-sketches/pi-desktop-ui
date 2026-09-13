@@ -122,6 +122,10 @@ PORT=3778 npm start
 - **Streaming answers** with markdown, syntax highlighting, thinking blocks and tool calls rendered
   as they arrive. A text-free spinner waits for the first model text; thinking and tool activity do
   not dismiss it.
+- **Native interactive forms.** The built-in `request_form` tool lets the model collect related text,
+  numeric, date, single-choice, multi-choice and confirmation fields in one accessible form. The tool
+  waits for a validated submission and then continues the same turn; completed forms remain readable
+  in chat history.
 - **Steering and follow-up during a run.** The composer stays active and replaces the send arrow with
   `Reindirizza` and `Dopo`. The first delivers at the next model turn, the second after the current
   response. Pending messages appear as cancellable ghosts in their eventual transcript position.
@@ -135,11 +139,14 @@ PORT=3778 npm start
   thinking-level selector.
 - **Enabled providers and models**: pick which providers/models show up in the picker; the choice is
   written to `enabledModels` in `~/.pi/agent/settings.json`.
-- **Settings panel** over your real pi configuration: documented settings, providers and
-  authentication, active tools, paths, and the raw `settings.json` / `models.json`.
-- **Chat metrics from pi's session APIs.** The header shows total tokens, context percentage (or `?`
-  when pi cannot calculate it) and cost. Totals include input, output, cache reads and cache writes;
-  the detail keeps per-model rows and labels unattributed work as `Session work`.
+- **Settings panel** over your real pi configuration: edit the global/project `AGENTS.md`,
+  `SYSTEM.md` and `APPEND_SYSTEM.md` inputs, open every loaded resource in the native text editor,
+  choose the tools used by desktop sessions, and inspect slash commands, providers, paths and raw
+  `settings.json` / `models.json`.
+- **Chat metrics from pi's session APIs.** The header shows the current context size, context percentage
+  (or `?` when pi cannot calculate either value) and cumulative cost. The detail shows cumulative
+  processed tokens—including input, output, cache reads and cache writes—per model, and labels
+  unattributed work as `Session work`.
 - **Cost analytics** aggregated from `~/.pi/agent/sessions/**.jsonl`: tokens, requests and cost by
   day, model and project.
 - **Real account limits** for claude.ai and kimi.com when you store those credentials. OpenAI Codex

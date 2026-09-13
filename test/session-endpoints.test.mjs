@@ -33,6 +33,7 @@ let transcriptFile;
 
 const SKILL_BODY_SENTINEL = "SECRET_SKILL_INSTRUCTION_BODY";
 const SKILL_EXPANDED_TEXT = `<skill name="release-check" location="C:/skills/release-check/SKILL.md">\n${SKILL_BODY_SENTINEL}\n</skill>\n\n--strict package-a`;
+const IMAGE_BYTES = Buffer.from("persisted-image-fixture");
 
 const SESSION_HEADER = {
   type: "session",
@@ -84,6 +85,14 @@ before(async () => {
         content: [{ type: "text", text: "fixture output" }], timestamp,
       },
     },
+    {
+      type: "message", id: "image-user", parentId: "tool-result", timestamp,
+      message: {
+        role: "user",
+        content: [{ type: "image", data: IMAGE_BYTES.toString("base64"), mimeType: "image/png" }],
+        timestamp,
+      },
+    },
   ];
   await writeFile(transcriptFile, `${transcript.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 
@@ -110,6 +119,85 @@ async function sendJson(method, pathname, body) {
 }
 
 const postJson = (pathname, body) => sendJson("POST", pathname, body);
+
+describe("the agent bootstrap routes", () => {
+  test("catalogued prompt files can be created and removed, arbitrary ids cannot", async () => {
+    const initial = await getJson("/api/agent-bootstrap");
+    assert.equal(initial.status, 200);
+    assert.equal(initial.body.tools.find((tool) => tool.name === "request_form")?.active, true);
+    const globalAgents = initial.body.files.find((file) => file.key === "global-agents");
+    assert.ok(globalAgents);
+    assert.equal(globalAgents.exists, false);
+
+    const saved = await sendJson("PUT", "/api/agent-bootstrap/file", {
+      id: globalAgents.id,
+      content: "# Global instructions\n\nUse the bootstrap fixture.\n",
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.bootstrap.files.find((file) => file.key === "global-agents").active, true);
+    assert.match(await readFile(path.join(agentDir, "AGENTS.md"), "utf8"), /bootstrap fixture/);
+
+    const arbitrary = await sendJson("PUT", "/api/agent-bootstrap/file", { id: "not-catalogued", content: "x" });
+    assert.equal(arbitrary.status, 404);
+    assert.equal(arbitrary.body.error.code, "resource_not_found");
+    const arbitraryOpen = await postJson("/api/agent-bootstrap/file/open", { id: "not-catalogued" });
+    assert.equal(arbitraryOpen.status, 404);
+
+    const removed = await sendJson("DELETE", "/api/agent-bootstrap/file", { id: globalAgents.id });
+    assert.equal(removed.status, 200);
+    assert.equal(existsSync(path.join(agentDir, "AGENTS.md")), false);
+  });
+
+  test("the desktop tool selection persists and null restores pi defaults", async () => {
+    const custom = await sendJson("PUT", "/api/agent-bootstrap/tools", { tools: ["read"] });
+    assert.equal(custom.status, 200);
+    assert.equal(custom.body.bootstrap.toolsMode, "custom");
+    assert.deepEqual(JSON.parse(await readFile(path.join(agentDir, "web-ui-agent-bootstrap.json"), "utf8")), { tools: ["read"] });
+
+    const reset = await sendJson("PUT", "/api/agent-bootstrap/tools", { tools: null });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.body.bootstrap.toolsMode, "pi-default");
+    assert.equal(reset.body.bootstrap.tools.find((tool) => tool.name === "request_form")?.active, true);
+  });
+
+  test("a file saved outside the UI after draft creation reaches its first prompt", async () => {
+    const { createContext, getModelRuntime } = await import("../contexts.mjs");
+    const projectDir = path.join(agentDir, "bootstrap-project");
+    await mkdir(projectDir, { recursive: true });
+    const runtime = getModelRuntime();
+    let observedSystemPrompt = "";
+    const answer = {
+      role: "assistant", provider: "bootstrap-fixture", model: "prompt", api: "bootstrap-fixture",
+      content: [{ type: "text", text: "Ready." }], stopReason: "stop", timestamp: Date.now(),
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    };
+    runtime.registerProvider("bootstrap-fixture", {
+      baseUrl: "http://127.0.0.1:1", apiKey: "fixture", api: "bootstrap-fixture",
+      models: [{ id: "prompt", name: "Prompt fixture", reasoning: false, input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 100 }],
+      streamSimple: (_model, context) => {
+        observedSystemPrompt = context.systemPrompt;
+        return {
+          result: async () => answer,
+          async *[Symbol.asyncIterator]() { yield { type: "done", reason: "stop", message: answer }; },
+        };
+      },
+    });
+    const ctx = await createContext({ cwd: projectDir, mode: "new" });
+    await ctx.session.setModel(runtime.getModel("bootstrap-fixture", "prompt"));
+
+    const sentinel = "NOTEPAD_SAVE_REACHED_FIRST_PROMPT";
+    await writeFile(path.join(agentDir, "AGENTS.md"), sentinel, "utf8");
+    const accepted = await postJson(`/api/prompt?s=${encodeURIComponent(ctx.key)}`, { text: "fixture request" });
+    assert.equal(accepted.status, 202);
+    for (let attempt = 0; attempt < 100 && !observedSystemPrompt; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.match(observedSystemPrompt, new RegExp(sentinel));
+    await rm(path.join(agentDir, "AGENTS.md"), { force: true });
+  });
+});
 
 test("live usage includes the just-persisted SDK response without a state refresh", async () => {
   const { createContext, getModelRuntime } = await import("../contexts.mjs");
@@ -305,6 +393,20 @@ describe("the transcript route", () => {
     assert.deepEqual(answer.blocks.map((block) => block.type), ["thinking", "text", "tool"]);
     assert.equal(answer.blocks[0].text, "Inspecting the release.");
     assert.equal(answer.blocks[2].output, "fixture output");
+  });
+
+  test("image-only messages survive history reload without embedding base64", async () => {
+    const session = encodeURIComponent(transcriptFile);
+    const history = await getJson(`/api/history?s=${session}`);
+    assert.equal(history.status, 200);
+    const message = history.body.messages.find((item) => item.entryId === "image-user");
+    assert.deepEqual(message.blocks, [{ type: "image", mimeType: "image/png", contentIndex: 0 }]);
+    assert.equal(JSON.stringify(history.body).includes(IMAGE_BYTES.toString("base64")), false);
+
+    const response = await fetch(`${origin}/api/attachment?s=${session}&entry=image-user&block=0`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), IMAGE_BYTES);
   });
 
   test("OpenAI streaming reasoning uses the provider-agnostic SSE shape", async () => {

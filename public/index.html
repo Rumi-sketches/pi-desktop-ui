@@ -221,11 +221,15 @@
       <div class="dd-menu" id="termsMenu"></div>
     </div>
 
-    <span class="chip hide" id="gitChip" title="">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-4 4.5-8.5 4.7"/></svg>
-      <span class="gb" id="gitBranch">—</span>
-      <span class="count hide" id="gitCount">0</span>
-    </span>
+    <div class="dd hide" id="gitDd">
+      <button class="chip" id="gitChip" title="">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-4 4.5-8.5 4.7"/></svg>
+        <span class="gb" id="gitBranch">—</span>
+        <span class="count hide" id="gitCount">0</span>
+        <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="dd-menu" id="gitMenu"></div>
+    </div>
 
     <span class="spacer"></span>
     <div id="runState">

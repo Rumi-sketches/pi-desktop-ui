@@ -9,9 +9,11 @@
  * the answer — so the rules live in one place and the HTTP layer in another.
  */
 import path from "node:path";
-import { pickFolder, openFolder, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
+import { stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
 import { terminateTerminalsForChat } from "./terminals.mjs";
-import { isNonEmptyString, jsonBody, openSseStream, send, sendError } from "./http.mjs";
+import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "./http.mjs";
 import { titleFor } from "./titles.mjs";
 import {
   SESSIONS_DIR,
@@ -43,7 +45,10 @@ import {
   filesForProject,
   diffForProjectFile,
   gitStatus,
+  gitBranches,
+  switchGitBranch,
   pickerModels,
+  prepareFirstPrompt,
   refreshSessionMetrics,
   sanitizeArgs,
   sessionCommands,
@@ -302,7 +307,51 @@ export async function handlePickFolder({ res, sessionKey }) {
 
 export async function handleGetGitStatus({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
-  return send(res, 200, await gitStatus(ctx.cwd));
+  const status = await gitStatus(ctx.cwd);
+  if (!status.repo) return send(res, 200, status);
+  return send(res, 200, { ...status, branches: await gitBranches(ctx.cwd).catch(() => []) });
+}
+
+export function resolveLocalLink(href, cwd) {
+  if (!isNonEmptyString(href) || href.includes("\0")) return null;
+  let value = href.trim();
+  try {
+    if (/^file:/i.test(value)) value = fileURLToPath(value);
+    else value = decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  value = value.replace(/#L\d+(?:C\d+)?$/i, "");
+  value = value.replace(/:(\d+)(?::\d+)?$/, "");
+  // Markdown file links commonly encode a Windows absolute path as /C:/… .
+  if (process.platform === "win32" && /^\/[a-z]:[\\/]/i.test(value)) value = value.slice(1);
+  return path.resolve(cwd, value);
+}
+
+export async function handleOpenLocalPath({ req, res, sessionKey, openPathImpl = openPath }) {
+  const ctx = await useContext(sessionKey);
+  const { href } = await jsonBody(req);
+  const target = resolveLocalLink(href, ctx.cwd);
+  if (!target) return sendError(res, 400, "invalid_path", "the link is not a valid local path");
+  try {
+    await stat(target);
+  } catch {
+    return sendError(res, 404, "path_not_found", "the linked file or folder does not exist");
+  }
+  const opened = await openPathImpl(target);
+  if (!opened.ok) return sendError(res, 501, "path_unavailable", "opening local paths is not available on this system");
+  return send(res, 200, { ok: true, path: target });
+}
+
+export async function handleSwitchGitBranch({ req, res, sessionKey }) {
+  const { branch } = await jsonBody(req);
+  if (!isNonEmptyString(branch)) return sendError(res, 400, "invalid_branch", "missing branch");
+  const ctx = await useContext(sessionKey);
+  try {
+    return send(res, 200, await switchGitBranch(ctx.cwd, branch));
+  } catch (error) {
+    return sendError(res, 409, "branch_switch_failed", String(error.message ?? error));
+  }
 }
 
 function skillPresentationText(text) {
@@ -588,8 +637,11 @@ export async function handleGetHistory({ res, sessionKey }) {
     const blocks = skill
       ? [skill]
       : (typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content ?? []))
-        .map((c) => {
+        .map((c, contentIndex) => {
           if (c.type === "text") return c.text ? { type: "text", text: c.text } : null;
+          if (c.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string") {
+            return { type: "image", mimeType: c.mimeType, contentIndex };
+          }
           if (c.type === "thinking") return c.thinking ? { type: "thinking", text: c.thinking } : null;
           if (c.type === "toolCall") {
             const r = toolResults.get(c.id);
@@ -641,6 +693,33 @@ export async function handleGetHistory({ res, sessionKey }) {
   });
 }
 
+const SAFE_IMAGE_MIME = /^image\/[a-z0-9][a-z0-9.+-]*$/i;
+
+// Keep large base64 payloads out of /api/history. A thumbnail fetch resolves a
+// stable message/block reference against the active branch of this chat.
+export async function handleGetAttachment({ res, url, sessionKey }) {
+  const entryId = url.searchParams.get("entry") ?? "";
+  const contentIndex = Number(url.searchParams.get("block"));
+  if (!entryId || !Number.isInteger(contentIndex) || contentIndex < 0) {
+    return send(res, 400, { error: "invalid attachment reference" });
+  }
+  const ctx = await useContext(sessionKey);
+  let entry;
+  try {
+    entry = (ctx.session.sessionManager?.getBranch?.() ?? []).find((item) => item.id === entryId);
+  } catch {
+    return send(res, 404, { error: "attachment not found" });
+  }
+  const block = Array.isArray(entry?.message?.content) ? entry.message.content[contentIndex] : null;
+  if (entry?.type !== "message" || block?.type !== "image"
+      || typeof block.data !== "string" || !SAFE_IMAGE_MIME.test(block.mimeType ?? "")) {
+    return send(res, 404, { error: "attachment not found" });
+  }
+  const bytes = Buffer.from(block.data, "base64");
+  if (!bytes.length) return send(res, 404, { error: "attachment not found" });
+  return sendBytes(res, 200, bytes, block.mimeType);
+}
+
 function sendPromptQueueError(res, error) {
   if (!(error instanceof PromptQueueError)) throw error;
   return sendError(res, error.status, error.code, error.message);
@@ -682,6 +761,16 @@ export async function handlePrompt({ req, res, sessionKey }) {
     }
   }
 
+  // Claim the run before refreshing bootstrap resources: a concurrent send is
+  // queued instead of racing a second reload/first prompt into this context.
+  ctx.promptStarting = true;
+  try {
+    await prepareFirstPrompt(ctx);
+  } catch (error) {
+    ctx.promptStarting = false;
+    throw error;
+  }
+
   const images = input.images.map(({ data, mimeType }) => ({ type: "image", data, mimeType }));
   const opts = images.length ? { images } : undefined;
   // writing in a done chat brings it back to life as "reopened"
@@ -690,7 +779,6 @@ export async function handlePrompt({ req, res, sessionKey }) {
   }
   // Cover the pre-agent_start window too: another POST received while model,
   // auth and extension preflight run belongs to this run's cancellable queue.
-  ctx.promptStarting = true;
   session
     .prompt(input.text, opts)
     .catch((err) => {
@@ -708,6 +796,20 @@ export async function handleDeleteQueuedPrompt({ res, sessionKey, params }) {
     return send(res, 200, { ok: true, key: ctx.key, removed });
   } catch (error) {
     return sendPromptQueueError(res, error);
+  }
+}
+
+export async function handleSubmitForm({ req, res, sessionKey, params }) {
+  const ctx = await useContext(sessionKey);
+  const body = await jsonBody(req);
+  try {
+    const submitted = ctx.formBroker.submit(params.id, body?.values);
+    if (!submitted) {
+      return sendError(res, 409, "form_not_pending", "this form is no longer waiting for a response");
+    }
+    return send(res, 200, { ok: true, key: ctx.key, values: submitted });
+  } catch (error) {
+    return sendError(res, 400, "invalid_form_response", String(error.message ?? error));
   }
 }
 

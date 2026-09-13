@@ -29,13 +29,13 @@ import {
   ModelRuntime,
   SessionManager,
   resolveModelScopeWithDiagnostics,
-  DefaultResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import { PRODUCT_ID } from "./product.mjs";
 import { SSE_PING, SSE_PING_MS, sseSend, sseWrite } from "./http.mjs";
-import { AGENT_DIR, isAgentDirPath, readSessionRecords, resolveFile } from "./session-store.mjs";
+import { agentBootstrapState, isAgentDirPath, readSessionRecords, resolveFile } from "./session-store.mjs";
 import { configureTitleModelRuntime } from "./titles.mjs";
 import { createPromptQueueController } from "./prompt-queue.mjs";
+import { InteractiveFormBroker, createInteractiveFormTool } from "./interactive-forms.mjs";
 
 // ---- thinking levels -------------------------------------------------------
 // Mirrors getSupportedThinkingLevels() from @earendil-works/pi-ai (not directly
@@ -362,6 +362,8 @@ export function summarizeTool(name, args) {
     return "";
   };
   switch (name) {
+    case "request_form":
+      return first("title");
     case "bash":
       return clip(first("command", "cmd", "script"), 300);
     case "read":
@@ -516,17 +518,15 @@ function wireSession(ctx) {
   });
 }
 
-// Slash commands available for this chat: extension commands (from the
-// already-loaded extensionsResult), file-based prompt templates (from the
-// session itself), and skills (discovered with a throwaway resource loader
-// scoped to skills only — cheap and cached for a bit since skill files rarely
-// change while a chat is open).
+// Slash commands available for this chat. All sources come from the session's
+// resource loader so an explicit bootstrap reload updates this catalog too.
 const COMMANDS_TTL_MS = 30_000;
 export async function sessionCommands(ctx) {
   const now = Date.now();
   if (ctx.commandsCache && now - ctx.commandsCache.at < COMMANDS_TTL_MS) return ctx.commandsCache.data;
   const out = [];
-  for (const ext of ctx.extensionsResult?.extensions ?? []) {
+  const loader = ctx.session.resourceLoader;
+  for (const ext of loader.getExtensions().extensions ?? []) {
     for (const cmd of ext.commands?.values?.() ?? []) {
       out.push({
         name: cmd.name,
@@ -548,18 +548,7 @@ export async function sessionCommands(ctx) {
     });
   }
   try {
-    if (!ctx.skillLoader) {
-      ctx.skillLoader = new DefaultResourceLoader({
-        cwd: ctx.cwd,
-        agentDir: AGENT_DIR,
-        noExtensions: true,
-        noThemes: true,
-        noPromptTemplates: true,
-        noContextFiles: true,
-      });
-      await ctx.skillLoader.reload();
-    }
-    const { skills } = ctx.skillLoader.getSkills();
+    const { skills } = loader.getSkills();
     for (const s of skills) {
       out.push({
         name: `skill:${s.name}`,
@@ -593,7 +582,14 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
   } else {
     sessionManager = SessionManager.continueRecent(cwd);
   }
-  const { session, extensionsResult } = await createAgentSession({ cwd, sessionManager, modelRuntime });
+  const formBroker = new InteractiveFormBroker();
+  const { session } = await createAgentSession({
+    cwd,
+    sessionManager,
+    modelRuntime,
+    customTools: [createInteractiveFormTool(formBroker)],
+  });
+  applyBootstrapTools(session);
   const file = session.sessionManager?.getSessionFile?.() ?? null;
   // `continueRecent` may land on a chat that is already open elsewhere, and a
   // draft chat (no file at all) belongs to its folder: either way the context is
@@ -612,7 +608,6 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
   const ctx = {
     key,
     session,
-    extensionsResult,
     cwd,
     sessionFile: file,
     metrics: sessionMetrics(session),
@@ -623,9 +618,10 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     running: false,
     lastActive: Date.now(),
     commandsCache: null, // { at, data } — slash commands for /api/commands
-    skillLoader: null, // DefaultResourceLoader used only to discover skills
     promptStarting: false,
+    bootstrapPrepared: false,
     promptQueue: null,
+    formBroker,
   };
   ctx.promptQueue = createPromptQueueController({
     session,
@@ -722,6 +718,44 @@ export function projectFileDiff(sources, sourceKey, filePath) {
 export const filesForProject = (cwd) => projectFileChanges(projectFiles.get(cwd));
 export const diffForProjectFile = (cwd, sourceKey, filePath) =>
   projectFileDiff(projectFiles.get(cwd), sourceKey, filePath);
+const PI_DEFAULT_BUILTINS = new Set(["read", "bash", "edit", "write"]);
+function piDefaultToolNames(session) {
+  return (session.getAllTools?.() ?? [])
+    .filter((tool) => tool.sourceInfo?.source !== "builtin" || PI_DEFAULT_BUILTINS.has(tool.name))
+    .map((tool) => tool.name);
+}
+
+function applyBootstrapTools(session) {
+  const configured = agentBootstrapState().tools;
+  session.setActiveToolsByName(configured ?? piDefaultToolNames(session));
+}
+
+export async function reloadContextBootstrap(ctx, { allowPromptStarting = false } = {}) {
+  if ((!allowPromptStarting && ctx.promptStarting) || ctx.running || ctx.session.isStreaming) {
+    throw Object.assign(new Error("the agent is busy"), { status: 409, code: "agent_busy" });
+  }
+  await ctx.session.reload();
+  ctx.commandsCache = null;
+  applyBootstrapTools(ctx.session);
+}
+
+export async function reloadEmptyBootstrapContexts() {
+  for (const ctx of contexts.values()) {
+    if (ctx.session.messages.length === 0 && !ctx.promptStarting && !ctx.running && !ctx.session.isStreaming) {
+      await reloadContextBootstrap(ctx);
+    }
+  }
+}
+
+// The draft session may have been constructed before the user edited a file in
+// Notepad. Refresh once at its first send boundary so external saves reach the
+// first model request without relying on a filesystem watcher.
+export async function prepareFirstPrompt(ctx) {
+  if (ctx.bootstrapPrepared || ctx.session.messages.length > 0) return;
+  await reloadContextBootstrap(ctx, { allowPromptStarting: true });
+  ctx.bootstrapPrepared = true;
+}
+
 // The live sessions, for the settings that can be applied without a restart.
 export const liveSessions = () => [...contexts.values()].map((c) => c.session);
 
@@ -850,4 +884,17 @@ export async function gitStatus(cwd) {
   }
   gitCache.set(cwd, { at: Date.now(), data });
   return data;
+}
+
+export async function gitBranches(cwd) {
+  const output = await runGit(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+  return output.split("\n").map((branch) => branch.trim()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
+export async function switchGitBranch(cwd, branch) {
+  const branches = await gitBranches(cwd);
+  if (!branches.includes(branch)) throw new Error("branch does not exist in this repository");
+  await runGit(cwd, ["switch", branch]);
+  gitCache.delete(cwd);
+  return gitStatus(cwd);
 }

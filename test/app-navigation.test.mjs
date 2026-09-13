@@ -17,6 +17,18 @@ function appFunction(name) {
   return match[0];
 }
 
+test('chat links distinguish local files from web navigation', () => {
+  const context = vm.createContext({});
+  vm.runInContext(appFunction('isLocalLink'), context);
+  assert.equal(context.isLocalLink('https://example.com/docs'), false);
+  assert.equal(context.isLocalLink('mailto:user@example.com'), false);
+  assert.equal(context.isLocalLink('#section'), false);
+  assert.equal(context.isLocalLink('./public/app.js:42'), true);
+  assert.equal(context.isLocalLink('/C:/work/project/app.js:42'), true);
+  assert.equal(context.isLocalLink('C:%5Cwork%5Cproject%5Capp.js:42'), true);
+  assert.equal(context.isLocalLink('file:///C:/work/project/app.js'), true);
+});
+
 function setup() {
   const uiState = createUiState();
   for (const key of ['a', 'b']) uiState.chatState(key).cwd = key;
@@ -289,6 +301,36 @@ test('returning from settings refreshes messages missed by the closed stream', a
   await context.showChat();
   assert.equal(screen.key, 'a');
   assert.equal(screen.history, 'history:a');
+});
+
+test('a chat notification opens the matching project tab', async () => {
+  const { context, uiState } = setup();
+  let opened = null;
+  Object.assign(context, {
+    allSessions: [{ path: 'notice', cwd: 'b' }],
+    loadSessions: async () => {},
+    toast() {},
+    openSession: async (session, options) => { opened = { session, options }; },
+  });
+  vm.runInContext(appFunction('openChatNotification'), context);
+  await context.openChatNotification('notice');
+  assert.equal(opened.session.path, 'notice');
+  assert.equal(opened.options.tabId, projectTabId('b'));
+  assert.equal(uiState.projects.has(opened.options.tabId), true);
+});
+
+test('settings section navigation scrolls only its content container', () => {
+  let request = null;
+  const view = {
+    scrollTop: 80,
+    getBoundingClientRect: () => ({ top: 100 }),
+    scrollTo: (options) => { request = options; },
+  };
+  const section = { getBoundingClientRect: () => ({ top: 460 }) };
+  const context = vm.createContext({ $: (id) => id === 'settingsView' ? view : section });
+  vm.runInContext(appFunction('scrollSettingsSection'), context);
+  assert.equal(context.scrollSettingsSection('sec-theme'), true);
+  assert.deepEqual({ ...request }, { top: 424, behavior: 'smooth' });
 });
 
 test('slash palette targets a command word after whitespace and replaces only that token', () => {
