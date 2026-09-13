@@ -952,7 +952,9 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .bootstrapCatalog { margin-top: .7rem; }
 .bootstrapResourceList { max-height: 360px; overflow: auto; padding: 0 1rem .65rem; }
 .bootstrapResource { display: flex; justify-content: space-between; align-items: center; gap: .7rem; padding: .45rem 0; border-top: 1px solid var(--line); }
-.bootstrapResourceActions { display: flex; align-items: center; justify-content: flex-end; gap: .35rem; flex: 0 0 auto; }
+.bootstrapResourceActions { display: flex; align-items: center; justify-content: flex-end; gap: .65rem; flex: 0 0 auto; }
+.bootstrapResourceKinds { display: flex; align-items: center; gap: .35rem; }
+.bootstrapOpen { display: inline-flex; align-items: center; gap: .35rem; min-width: 124px; justify-content: center; }
 .bootstrapEmpty { padding: 1rem; }
 .bootstrapAdditions { margin-top: .55rem; }
 .bootstrapAdditions > .sys { display: block; margin-bottom: .35rem; }

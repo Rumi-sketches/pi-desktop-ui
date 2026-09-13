@@ -200,6 +200,14 @@ export async function agentBootstrapFiles(session, cwd) {
   if (globalSystem && !globalSystem.exists) {
     globalSystem.content = defaultSystemPromptSource(session, cwd);
     globalSystem.prefilled = true;
+    globalSystem.prefillSource = "pi-default";
+  }
+  const projectSystem = described.find((file) => file.key === "project-system");
+  if (projectSystem && !projectSystem.exists) {
+    const inheritedSystem = session.resourceLoader.getSystemPrompt();
+    projectSystem.content = inheritedSystem ?? defaultSystemPromptSource(session, cwd);
+    projectSystem.prefilled = true;
+    projectSystem.prefillSource = inheritedSystem == null ? "pi-default" : "inherited";
   }
   return described.sort((a, b) => {
     if (a.target !== b.target) return a.target ? -1 : 1;

@@ -3335,7 +3335,8 @@ function bootstrapFileEditor(file, {
   promoteLabel = 'Save globally',
   removable = true,
 } = {}) {
-  const state = file.symlink ? 'linked · read only' : (file.prefilled ? 'Pi default · not overridden' : (!file.exists ? 'new override' : (file.active ? 'passed to agent' : 'saved override')));
+  const prefilledState = file.prefillSource === 'inherited' ? 'inherited · not overridden' : 'Pi default · not overridden';
+  const state = file.symlink ? 'linked · read only' : (file.prefilled ? prefilledState : (!file.exists ? 'new override' : (file.active ? 'passed to agent' : 'saved override')));
   return `<div class="bootstrapEditorCard">
     <div class="bootstrapFileHead">
       <span><b>${esc(file.label)}</b><code title="${esc(file.path)}">${esc(file.path)}</code></span>
@@ -3363,19 +3364,14 @@ function bootstrapPromptPreview(prompt, { open = false } = {}) {
   </details>`;
 }
 
-function bootstrapAddEditor(file, label) {
-  return `<details class="bootstrapAdd">
-    <summary>${esc(label)}</summary>
-    ${bootstrapFileEditor(file, { saveLabel: 'Save', removable: false })}
-  </details>`;
-}
-
 function bootstrapResourceList(files) {
   if (!files.length) return '<div class="sys bootstrapEmpty">No file-based resources are loaded in this scope.</div>';
   return files.map((file) => `<div class="bootstrapResource">
     <span><b>${esc(file.path.split(/[\\/]/).pop())}</b><code title="${esc(file.path)}">${esc(file.path)}</code></span>
-    <span class="bootstrapResourceActions">${file.kinds.map((kind) => `<span class="badge">${esc(kind)}</span>`).join('')}
-      ${platformCaps?.openTextFile ? `<button class="btn outline mini" title="${nativeEditorLabel()}" data-bootstrap-open="${file.id}">${nativeEditorLabel(true)}</button>` : ''}</span>
+    <span class="bootstrapResourceActions">
+      <span class="bootstrapResourceKinds">${file.kinds.map((kind) => `<span class="badge">${esc(kind)}</span>`).join('')}</span>
+      ${platformCaps?.openTextFile ? `<button class="btn outline bootstrapOpen" title="${nativeEditorLabel()}" data-bootstrap-open="${file.id}"><span aria-hidden="true">↗</span>${nativeEditorLabel()}</button>` : ''}
+    </span>
   </div>`).join('');
 }
 
@@ -3383,8 +3379,9 @@ function bindBootstrapFileActions(root, { key, refresh }) {
   root.querySelectorAll('[data-bootstrap-open]').forEach((button) => {
     button.addEventListener('click', async () => {
       button.disabled = true;
-      await post('/api/agent-bootstrap/file/open', { id: button.dataset.bootstrapOpen }, { key, followKey: false });
+      const result = await post('/api/agent-bootstrap/file/open', { id: button.dataset.bootstrapOpen }, { key, followKey: false });
       button.disabled = false;
+      if (!result.error) toast(`Opened in ${platformCaps?.os === 'win32' ? 'Notepad' : 'the text editor'}`, true);
     });
   });
   root.querySelectorAll('[data-bootstrap-save]').forEach((button) => {
@@ -3452,11 +3449,10 @@ async function renderProjectBootstrapMenu() {
   const bootstrap = await api('/api/agent-bootstrap', undefined, { key, guardChat: true, followKey: false });
   if (bootstrap.error || key !== activeChatKey()) return;
   const files = bootstrap.files;
-  const projectInputs = files.filter((file) => file.exists && file.active && file.scope !== 'global' && bootstrapInputKind(file));
+  const projectInputs = files.filter((file) => file.scope === 'project' && bootstrapInputKind(file)
+    && ((file.exists && file.active) || file.prefilled));
   const projectResources = files.filter((file) => file.exists && file.active && file.scope !== 'global');
   const globalTargets = files.filter((file) => file.target && file.scope === 'global');
-  const missingTargets = files.filter((file) => file.target && file.scope === 'project' && !file.exists
-    && !projectInputs.some((loaded) => loaded.kinds.some((kind) => file.kinds.includes(kind))));
   const editors = projectInputs.map((file) => {
     const kind = bootstrapInputKind(file);
     const global = globalTargets.find((target) => target.kinds.includes(kind));
@@ -3466,13 +3462,11 @@ async function renderProjectBootstrapMenu() {
       removable: Boolean(file.target && file.scope === 'project'),
     });
   }).join('');
-  const additions = missingTargets.map((file) => bootstrapAddEditor(file, `Create ${file.path.split(/[\\/]/).pop()}`)).join('');
   menu.innerHTML = `
     <div class="projectBootstrapHead"><b>Project agent input</b><code title="${esc(bootstrap.cwd)}">${esc(bootstrap.cwd)}</code></div>
     <div class="projectBootstrapScroll">
       ${bootstrapPromptPreview(bootstrap.effectivePrompt)}
       ${editors || '<div class="sys bootstrapEmpty">No project-specific instruction file is currently passed to the agent.</div>'}
-      ${additions ? `<div class="bootstrapAdditions"><span class="sys">Create an optional project instruction file</span>${additions}</div>` : ''}
       <div class="bootstrapCatalogHead"><b>Loaded project resources (${projectResources.length})</b><span class="sys">Always visible</span></div>
       <div class="bootstrapResourceList">${bootstrapResourceList(projectResources)}</div>
     </div>
