@@ -48,7 +48,8 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `POST /api/forms/:id/respond` *[s]* | `:id` = pending `request_form` tool-call id; `{ values }` keyed by field id | `{ ok, key, values }`; resolves the waiting tool call so the same model turn can continue | `400` `invalid_form_response` · `409` `form_not_pending` |
 | `POST /api/abort` *[s]* | – | `{ ok }`; pending app-owned prompts are discarded before aborting the run | – |
 | `GET /api/commands` *[s]* | – | `{ commands[] }` (extensions, prompt templates, skills) | – |
-| `GET /api/git` *[s]* | – | git status of the chat's folder | – |
+| `GET /api/git` *[s]* | – | git status of the chat's folder, including local branches | – |
+| `POST /api/git/branch` *[s]* | `{ branch }` naming an existing local branch | updated git status | `400` missing branch · `409` branch missing or checkout blocked by working-tree changes |
 | `GET /api/files` *[s]* | – | `{ files: [{ path, changes }] }` touched by this chat | – |
 | `GET /api/files/diff` *[s]* | `?path=…` | `{ path, write, hunks[] }`, secrets redacted | `404` file not tracked by this chat |
 

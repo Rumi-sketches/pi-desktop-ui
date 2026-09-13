@@ -43,6 +43,8 @@ import {
   filesForProject,
   diffForProjectFile,
   gitStatus,
+  gitBranches,
+  switchGitBranch,
   pickerModels,
   prepareFirstPrompt,
   refreshSessionMetrics,
@@ -303,7 +305,20 @@ export async function handlePickFolder({ res, sessionKey }) {
 
 export async function handleGetGitStatus({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
-  return send(res, 200, await gitStatus(ctx.cwd));
+  const status = await gitStatus(ctx.cwd);
+  if (!status.repo) return send(res, 200, status);
+  return send(res, 200, { ...status, branches: await gitBranches(ctx.cwd).catch(() => []) });
+}
+
+export async function handleSwitchGitBranch({ req, res, sessionKey }) {
+  const { branch } = await jsonBody(req);
+  if (!isNonEmptyString(branch)) return sendError(res, 400, "invalid_branch", "missing branch");
+  const ctx = await useContext(sessionKey);
+  try {
+    return send(res, 200, await switchGitBranch(ctx.cwd, branch));
+  } catch (error) {
+    return sendError(res, 409, "branch_switch_failed", String(error.message ?? error));
+  }
 }
 
 function skillPresentationText(text) {
