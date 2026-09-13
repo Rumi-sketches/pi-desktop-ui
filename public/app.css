@@ -592,6 +592,8 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 .logo img { object-fit: contain; }
 .logo.lg { width: 23px; height: 23px; border-radius: var(--r-2); }
 .logo-mono, .logo-neutral { display: none; }
+.logo.icon-failed .logo-brand, .logo.icon-failed .logo-mono { display: none !important; }
+.logo.icon-failed .logo-neutral { display: grid !important; }
 .logo-img-dark { display: block; }
 .logo-img-light { display: none; }
 [data-theme="daylight"] .logo-img-dark, [data-theme="paseo"] .logo-img-dark { display: none; }
