@@ -1476,10 +1476,11 @@ function renderModelMenu() {
     const headBox = sub.getBoundingClientRect();
     fly.style.left = '0px'; fly.style.top = '0px';       // measure at a known position
     const w = fly.offsetWidth, h = fly.offsetHeight;
-    // glued to the provider menu edge (the two borders overlap by 1px)
-    const flip = menuBox.right - 1 + w > window.innerWidth - 8;
+    // Keep a hairline gap between the two independently rounded panels.
+    const flyoutGap = 3;
+    const flip = menuBox.right + flyoutGap + w > window.innerWidth - 8;
     fly.classList.toggle('flip', flip);
-    fly.style.left = (flip ? Math.max(8, menuBox.left + 1 - w) : menuBox.right - 1) + 'px';
+    fly.style.left = (flip ? Math.max(8, menuBox.left - flyoutGap - w) : menuBox.right + flyoutGap) + 'px';
     fly.style.top = Math.max(8, Math.min(headBox.top - 5, window.innerHeight - 8 - h)) + 'px';
   };
   const closeSub = (sub) => { sub.classList.remove('open'); sub._fly.classList.remove('on'); };
@@ -3761,7 +3762,7 @@ async function renderSettings() {
       <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
       <div class="themeGrid">${LOGO_STYLES.map((s) => `
         <button class="themeCard logoStyleCard" data-l="${s.id}">
-          <span class="prev">${['openrouter', 'openai', 'google', 'kimi'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
+          <span class="prev">${['anthropic', 'openai', 'glm', 'openrouter'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
           <span class="nm">${esc(s.name)}</span>
         </button>`).join('')}</div>
     </div>
