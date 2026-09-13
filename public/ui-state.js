@@ -476,7 +476,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
 
   function startResponse(key) {
     const target = chatState(key);
-    if (!target.streaming) {
+    if (!target.responseStartedAt) {
       target.responseStartedAt = Date.now();
       target.responseActivityLabel = null;
     }
@@ -497,8 +497,6 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     target.streaming = false;
     target.awaitingInput = false;
     target.responsePhase = RESPONSE_IDLE;
-    target.responseStartedAt = null;
-    target.responseActivityLabel = null;
     return target;
   }
 

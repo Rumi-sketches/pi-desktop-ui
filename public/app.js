@@ -1093,13 +1093,15 @@ async function cancelQueuedPrompt(id) {
 }
 function renderComposerState(chatState = activeChatState()) {
   const running = chatState.streaming;
-  const modelActive = running && !chatState.awaitingInput;
+  // The streaming flag may be refreshed independently while the agent is
+  // still alive. The task closes only on agent_end, so it owns this indicator.
+  const activityRunning = !!chatState.agentTask && !chatState.agentTask.t1;
+  const modelActive = activityRunning && !chatState.awaitingInput;
   $('runState').classList.toggle('on', modelActive);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
-  const showResponseActivity = modelActive && chatState.responsePhase === RESPONSE_WAITING;
-  $('responseSpinner').classList.toggle('hide', !showResponseActivity);
-  if (showResponseActivity) renderResponseActivity(chatState);
+  $('responseSpinner').classList.toggle('hide', !modelActive);
+  if (modelActive) renderResponseActivity(chatState);
   input.placeholder = chatState.awaitingInput
     ? 'Complete the form above to continue…'
     : running
@@ -1127,15 +1129,12 @@ function renderResponseActivity(chatState = activeChatState()) {
 }
 setInterval(() => {
   const state = activeChatState();
-  if (state.streaming && !state.awaitingInput && state.responsePhase === RESPONSE_WAITING) {
-    renderResponseActivity(state);
-  }
+  if (state.agentTask && !state.agentTask.t1 && !state.awaitingInput) renderResponseActivity(state);
 }, 1000);
 function setAwaitingInput(on, key = activeChatKey() ?? renderedChatKey) {
   const state = key ? uiState.chatState(key) : activeChatState();
   state.awaitingInput = on;
   if (key === activeChatKey() || (!key && !activeChatKey())) renderComposerState(state);
-  setAgentTask(!on && state.streaming, state.turnModel, key);
 }
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
@@ -2697,8 +2696,13 @@ function setAgentTask(on, model, key = activeChatKey()) {
     owner.agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
   } else if (!on && owner.agentTask && !owner.agentTask.t1) {
     owner.agentTask.t1 = Date.now();
+    owner.responseStartedAt = null;
+    owner.responseActivityLabel = null;
   }
-  if (key === activeChatKey()) syncTasks();
+  if (key === activeChatKey()) {
+    syncTasks();
+    if (typeof renderComposerState === 'function') renderComposerState(owner);
+  }
 }
 function taskList(key = activeChatKey()) {
   const owner = taskOwner(key);
