@@ -470,7 +470,16 @@ export async function fetchOpenAIUsage({
   if (!enabled) return { enabled: false, configured: false };
   if (!force && fresh(cacheStore.openai, now)) return cacheStore.openai.data;
 
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  // AbortSignal.timeout() uses an unref'ed timer in Node. A standalone caller
+  // can therefore lose the pending request when no other event-loop handles
+  // exist (as happens in the Linux test runner). Keep this operation alive
+  // until it completes, and always release the timer afterwards.
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(
+    () => timeoutController.abort(new DOMException("The operation timed out", "TimeoutError")),
+    timeoutMs,
+  );
+  const timeoutSignal = timeoutController.signal;
   let data;
   try {
     const auth = await resolveOpenAIUsageAuth(modelRuntime, { signal: timeoutSignal });
@@ -517,6 +526,8 @@ export async function fetchOpenAIUsage({
       // credential fragments. The stable code is enough for the UI and tests.
       data = openAIUsageError("request_failed", "OpenAI usage is temporarily unavailable.", true);
     }
+  } finally {
+    clearTimeout(timeout);
   }
   cacheStore.openai = { at: now, data };
   return data;
