@@ -11,7 +11,7 @@
 import path from "node:path";
 import { pickFolder, openFolder, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
 import { terminateTerminalsForChat } from "./terminals.mjs";
-import { isNonEmptyString, jsonBody, openSseStream, send, sendError } from "./http.mjs";
+import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "./http.mjs";
 import { titleFor } from "./titles.mjs";
 import {
   SESSIONS_DIR,
@@ -588,8 +588,11 @@ export async function handleGetHistory({ res, sessionKey }) {
     const blocks = skill
       ? [skill]
       : (typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content ?? []))
-        .map((c) => {
+        .map((c, contentIndex) => {
           if (c.type === "text") return c.text ? { type: "text", text: c.text } : null;
+          if (c.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string") {
+            return { type: "image", mimeType: c.mimeType, contentIndex };
+          }
           if (c.type === "thinking") return c.thinking ? { type: "thinking", text: c.thinking } : null;
           if (c.type === "toolCall") {
             const r = toolResults.get(c.id);
@@ -639,6 +642,33 @@ export async function handleGetHistory({ res, sessionKey }) {
     live: ctx.running ? ctx.live : [],
     streaming: ctx.running || session.isStreaming,
   });
+}
+
+const SAFE_IMAGE_MIME = /^image\/[a-z0-9][a-z0-9.+-]*$/i;
+
+// Keep large base64 payloads out of /api/history. A thumbnail fetch resolves a
+// stable message/block reference against the active branch of this chat.
+export async function handleGetAttachment({ res, url, sessionKey }) {
+  const entryId = url.searchParams.get("entry") ?? "";
+  const contentIndex = Number(url.searchParams.get("block"));
+  if (!entryId || !Number.isInteger(contentIndex) || contentIndex < 0) {
+    return send(res, 400, { error: "invalid attachment reference" });
+  }
+  const ctx = await useContext(sessionKey);
+  let entry;
+  try {
+    entry = (ctx.session.sessionManager?.getBranch?.() ?? []).find((item) => item.id === entryId);
+  } catch {
+    return send(res, 404, { error: "attachment not found" });
+  }
+  const block = Array.isArray(entry?.message?.content) ? entry.message.content[contentIndex] : null;
+  if (entry?.type !== "message" || block?.type !== "image"
+      || typeof block.data !== "string" || !SAFE_IMAGE_MIME.test(block.mimeType ?? "")) {
+    return send(res, 404, { error: "attachment not found" });
+  }
+  const bytes = Buffer.from(block.data, "base64");
+  if (!bytes.length) return send(res, 404, { error: "attachment not found" });
+  return sendBytes(res, 200, bytes, block.mimeType);
 }
 
 function sendPromptQueueError(res, error) {

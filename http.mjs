@@ -92,6 +92,20 @@ export function send(res, code, data, type = "application/json; charset=utf-8") 
   res.end(typeof data === "string" ? data : JSON.stringify(data));
 }
 
+/** Send binary content with the same no-sniff/no-store policy as every API response. */
+export function sendBytes(res, code, data, type) {
+  if (res.headersSent) {
+    console.error(`${PRODUCT_ID}: tried to send twice on the same response (code ${code}), ignored`);
+    return;
+  }
+  res.writeHead(code, {
+    "Content-Type": type,
+    "Content-Length": data.byteLength,
+    ...SECURITY_HEADERS,
+  });
+  res.end(data);
+}
+
 // The normalized failure shape: `{ error: { code, message } }` with a 4xx.
 // `code` is for the program (stable, snake_case), `message` for the human.
 // Only the endpoints that used to answer a failure with 200 speak it — the
