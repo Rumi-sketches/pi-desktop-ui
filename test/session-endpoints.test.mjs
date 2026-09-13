@@ -134,7 +134,9 @@ describe("the agent bootstrap routes", () => {
       content: "# Global instructions\n\nUse the bootstrap fixture.\n",
     });
     assert.equal(saved.status, 200);
-    assert.equal(saved.body.bootstrap.files.find((file) => file.key === "global-agents").active, true);
+    const savedGlobalAgents = saved.body.bootstrap.files.find((file) => file.key === "global-agents");
+    assert.equal(savedGlobalAgents.active, true);
+    assert.match(savedGlobalAgents.content, /bootstrap fixture/);
     assert.match(await readFile(path.join(agentDir, "AGENTS.md"), "utf8"), /bootstrap fixture/);
 
     const arbitrary = await sendJson("PUT", "/api/agent-bootstrap/file", { id: "not-catalogued", content: "x" });
@@ -158,6 +160,22 @@ describe("the agent bootstrap routes", () => {
     assert.equal(reset.status, 200);
     assert.equal(reset.body.bootstrap.toolsMode, "pi-default");
     assert.equal(reset.body.bootstrap.tools.find((tool) => tool.name === "request_form")?.active, true);
+  });
+
+  test("the catalog returns the contents pi loaded for a project", async () => {
+    const { createContext } = await import("../contexts.mjs");
+    const projectDir = path.join(agentDir, "catalog-project");
+    const projectAgents = path.join(projectDir, "AGENTS.md");
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(projectAgents, "PROJECT_CONTENT_VISIBLE_IN_EDITOR", "utf8");
+    const ctx = await createContext({ cwd: projectDir, mode: "new" });
+
+    const payload = await getJson(`/api/agent-bootstrap?s=${encodeURIComponent(ctx.key)}`);
+    assert.equal(payload.status, 200);
+    const loaded = payload.body.files.find((file) => file.path === projectAgents);
+    assert.equal(loaded.scope, "project");
+    assert.equal(loaded.active, true);
+    assert.equal(loaded.content, "PROJECT_CONTENT_VISIBLE_IN_EDITOR");
   });
 
   test("a file saved outside the UI after draft creation reaches its first prompt", async () => {

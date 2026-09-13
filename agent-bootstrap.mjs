@@ -5,7 +5,7 @@
  */
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { AGENT_DIR } from "./session-store.mjs";
 
 const MAX_EDIT_BYTES = 512 * 1024;
@@ -26,12 +26,12 @@ const resourceId = (file) => createHash("sha256").update(normalizedPath(file)).d
 
 function targetFiles(cwd) {
   return [
-    { key: "global-agents", label: "Global context", scope: "global", kinds: ["context"], path: path.join(AGENT_DIR, "AGENTS.md") },
-    { key: "global-system", label: "Global system prompt", scope: "global", kinds: ["system"], path: path.join(AGENT_DIR, "SYSTEM.md") },
-    { key: "global-append", label: "Global appended prompt", scope: "global", kinds: ["append"], path: path.join(AGENT_DIR, "APPEND_SYSTEM.md") },
-    { key: "project-agents", label: "Project context", scope: "project", kinds: ["context"], path: path.join(cwd, "AGENTS.md") },
-    { key: "project-system", label: "Project system prompt", scope: "project", kinds: ["system"], path: path.join(cwd, ".pi", "SYSTEM.md") },
-    { key: "project-append", label: "Project appended prompt", scope: "project", kinds: ["append"], path: path.join(cwd, ".pi", "APPEND_SYSTEM.md") },
+    { key: "global-agents", label: "Global AGENTS.md", scope: "global", kinds: ["context"], path: path.join(AGENT_DIR, "AGENTS.md") },
+    { key: "global-system", label: "Global SYSTEM.md", scope: "global", kinds: ["system"], path: path.join(AGENT_DIR, "SYSTEM.md") },
+    { key: "global-append", label: "Global APPEND_SYSTEM.md", scope: "global", kinds: ["append"], path: path.join(AGENT_DIR, "APPEND_SYSTEM.md") },
+    { key: "project-agents", label: "Project AGENTS.md", scope: "project", kinds: ["context"], path: path.join(cwd, "AGENTS.md") },
+    { key: "project-system", label: "Project SYSTEM.md", scope: "project", kinds: ["system"], path: path.join(cwd, ".pi", "SYSTEM.md") },
+    { key: "project-append", label: "Project APPEND_SYSTEM.md", scope: "project", kinds: ["append"], path: path.join(cwd, ".pi", "APPEND_SYSTEM.md") },
   ].map((target, order) => ({ ...target, order }));
 }
 
@@ -43,6 +43,12 @@ function inferredScope(file, cwd) {
   if (target.startsWith(agentRoot)) return "global";
   if (target.startsWith(projectRoot)) return "project";
   return "inherited";
+}
+
+function loaderScope(scope, file, cwd) {
+  if (scope === "user") return "global";
+  if (scope === "project") return "project";
+  return inferredScope(file, cwd);
 }
 
 function addResource(catalog, file, kind, options = {}) {
@@ -85,14 +91,17 @@ function resourceCatalog(session, cwd) {
   }
   for (const prompt of loader.getPrompts().prompts) {
     const file = prompt.sourceInfo?.path ?? prompt.filePath;
-    addResource(catalog, file, "prompt", { active: true, scope: prompt.sourceInfo?.scope ?? inferredScope(file, cwd) });
+    addResource(catalog, file, "prompt", { active: true, scope: loaderScope(prompt.sourceInfo?.scope, file, cwd) });
   }
   for (const skill of loader.getSkills().skills) {
     const file = skill.sourceInfo?.path ?? skill.filePath;
-    addResource(catalog, file, "skill", { active: true, scope: skill.sourceInfo?.scope ?? inferredScope(file, cwd) });
+    addResource(catalog, file, "skill", { active: true, scope: loaderScope(skill.sourceInfo?.scope, file, cwd) });
   }
   for (const extension of loader.getExtensions().extensions ?? []) {
-    addResource(catalog, extension.path, "extension", { active: true, scope: inferredScope(extension.path, cwd) });
+    addResource(catalog, extension.path, "extension", {
+      active: true,
+      scope: loaderScope(extension.sourceInfo?.scope, extension.path, cwd),
+    });
   }
   return catalog;
 }
@@ -100,12 +109,14 @@ function resourceCatalog(session, cwd) {
 const canEditInline = (resource) => resource.kinds.some((kind) => ["context", "system", "append", "prompt"].includes(kind));
 
 async function describeResource(resource) {
+  let linkInfo = null;
   let info = null;
   try {
-    info = await lstat(resource.path);
+    linkInfo = await lstat(resource.path);
+    info = linkInfo.isSymbolicLink() ? await stat(resource.path) : linkInfo;
   } catch {}
-  const symlink = Boolean(info?.isSymbolicLink());
-  const exists = Boolean(!symlink && info?.isFile());
+  const symlink = Boolean(linkInfo?.isSymbolicLink());
+  const exists = Boolean(info?.isFile());
   const editable = canEditInline(resource);
   const tooLarge = Boolean(exists && editable && info.size > MAX_EDIT_BYTES);
   let content = null;
