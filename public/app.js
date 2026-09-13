@@ -3278,6 +3278,7 @@ applyTheme(localStorage.getItem('piTheme') || DEFAULT_THEME);
 // settings page sections listed in the sidebar (in place of the chats)
 const SETTINGS_SECTIONS = [
   ['analytics', 'Cost analytics'],
+  ['sec-agent', 'Agent bootstrap'],
   ['sec-pi', 'pi settings'],
   ['sec-theme', 'Theme'],
   ['sec-usage', 'Account limits'],
@@ -3579,8 +3580,13 @@ $('navSettings').addEventListener('click', showSettings);
 async function renderSettings() {
   const body = $('settingsBody');
   body.innerHTML = '<div class="sys">Loading…</div>';
-  const [st, c, usageCfg] = await Promise.all([api('/api/settings'), api('/api/config'), api('/api/usage/config')]);
-  if (st.error || c.error) { body.innerHTML = '<div class="sys">Could not load the configuration</div>'; return; }
+  const [st, c, usageCfg, bootstrap] = await Promise.all([
+    api('/api/settings'),
+    api('/api/config'),
+    api('/api/usage/config'),
+    api('/api/agent-bootstrap'),
+  ]);
+  if (st.error || c.error || bootstrap.error) { body.innerHTML = '<div class="sys">Could not load the configuration</div>'; return; }
   $('agentDir').textContent = st.agentDir ?? c.paths.agentDir;
 
   /* ---- 1. pi settings, editable where possible ---- */
@@ -3616,7 +3622,77 @@ async function renderSettings() {
       }).join('')}
     </div>`).join('');
 
+  const editorLabel = c.platform?.os === 'win32' ? 'Open in Notepad' : 'Open in text editor';
+  const bootstrapTargets = bootstrap.files.filter((file) => file.target);
+  const loadedResources = bootstrap.files.filter((file) => file.active && file.exists);
+  const bootstrapEditors = bootstrapTargets.map((file) => `
+    <details class="bootstrapFile" ${file.exists ? '' : 'open'}>
+      <summary>
+        <span><b>${esc(file.label)}</b><code>${esc(file.path)}</code></span>
+        <span class="bootstrapBadges"><span class="badge">${esc(file.scope)}</span>
+          <span class="badge ${file.active ? 'ok' : ''}">${file.symlink ? 'symlink blocked' : (file.active ? 'active' : (file.exists ? 'shadowed' : 'missing'))}</span></span>
+      </summary>
+      ${file.tooLarge
+        ? '<div class="sys bootstrapNotice">This file is larger than 512 KiB. Open it in the native editor.</div>'
+        : `<textarea class="bootstrapEditor" data-bootstrap-editor="${file.id}" rows="8"
+             placeholder="Write the instructions pi should load…">${esc(file.content ?? '')}</textarea>`}
+      <div class="bootstrapActions">
+        ${file.tooLarge || file.symlink ? '' : `<button class="btn teal" data-bootstrap-save="${file.id}">${file.exists ? 'Save' : 'Create file'}</button>`}
+        ${file.exists && c.platform?.openTextFile ? `<button class="btn outline" data-bootstrap-open="${file.id}">${editorLabel}</button>` : ''}
+        ${file.exists ? `<button class="btn outline danger" data-bootstrap-delete="${file.id}">Remove override</button>` : ''}
+        <span class="sys" data-bootstrap-message="${file.id}"></span>
+      </div>
+    </details>`).join('');
+  const resourceRows = loadedResources.map((file) => `
+    <div class="bootstrapResource">
+      <span><b>${esc(file.path.split(/[\\/]/).pop())}</b><code>${esc(file.path)}</code></span>
+      <span class="bootstrapBadges">${file.kinds.map((kind) => `<span class="badge">${esc(kind)}</span>`).join('')}
+        ${c.platform?.openTextFile ? `<button class="btn outline mini" data-bootstrap-open="${file.id}">${editorLabel}</button>` : ''}</span>
+    </div>`).join('');
+  const bootstrapTools = bootstrap.tools.map((tool) => `
+    <label class="bootstrapTool" title="${esc(tool.description)}">
+      <input type="checkbox" data-bootstrap-tool="${esc(tool.name)}" ${tool.selected ? 'checked' : ''}>
+      <span><b>${esc(tool.name)}</b><small>${esc(tool.source)}</small></span>
+    </label>`).join('');
+  const bootstrapCommands = bootstrap.commands.map((command) => `
+    <div class="toolItem"><span class="n">/${esc(command.name)}</span>
+      <span class="d">${esc(command.description || command.path || '')}</span><span style="flex:1"></span>
+      <span class="badge">${esc(command.source)}</span></div>`).join('');
+
   body.innerHTML = `
+    <div class="sec" id="sec-agent">
+      <h3>Agent bootstrap</h3>
+      <p class="lead">Control the files and tools pi loads before the first prompt in <code>${esc(bootstrap.cwd)}</code>. Empty drafts reload automatically; an existing chat changes only when you explicitly reload it.</p>
+
+      <h4 class="bootstrapHeading">Initial prompt files</h4>
+      <div class="card bootstrapEditors">${bootstrapEditors}</div>
+
+      <details class="card bootstrapCatalog">
+        <summary><b>Loaded resources (${loadedResources.length})</b><span class="sys">context, prompts, skills and extensions</span></summary>
+        <div class="bootstrapResourceList">${resourceRows || '<div class="sys">No file-based resources loaded</div>'}</div>
+      </details>
+
+      <h4 class="bootstrapHeading">Tools for agent sessions</h4>
+      <div class="card bootstrapTools">
+        <div class="bootstrapToolGrid">${bootstrapTools || '<div class="sys">No tools registered</div>'}</div>
+        <div class="bootstrapActions">
+          <button class="btn teal" id="bootstrapToolsSave">Save selected tools</button>
+          <button class="btn outline" id="bootstrapToolsReset">Use pi defaults</button>
+          <span class="sys" id="bootstrapToolsMsg">${bootstrap.toolsMode === 'pi-default' ? 'Using pi defaults' : 'Custom selection'}</span>
+        </div>
+      </div>
+
+      <details class="card bootstrapCatalog">
+        <summary><b>Available slash commands (${bootstrap.commands.length})</b><span class="sys">extensions, prompt templates and skills</span></summary>
+        <div class="bootstrapResourceList">${bootstrapCommands || '<div class="sys">No slash commands loaded</div>'}</div>
+      </details>
+
+      <div class="bootstrapActions">
+        <button class="btn outline" id="bootstrapReload">Reload current chat for the next turn</button>
+        <span class="sys" id="bootstrapReloadMsg"></span>
+      </div>
+    </div>
+
     <div class="sec" id="sec-pi">
       <h3>pi settings — <span style="color:var(--txt-dim);text-transform:none;letter-spacing:0">${esc(st.path)}</span></h3>
       <p class="lead" style="margin:-.3rem 0 .8rem">Changes are saved to the file right away. Most of them are read by pi at startup: restart the server (⏻) or the CLI to apply them.</p>
@@ -4061,6 +4137,58 @@ async function renderSettings() {
     setCfgBadge('kimiCfgBadge', false);
     $('kimiBearer').value = ''; cfgMsg('kimiCfgMsg', '', '');
     refreshUsage();
+  });
+
+  /* ---- agent bootstrap ---- */
+  body.querySelectorAll('[data-bootstrap-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      await post('/api/agent-bootstrap/file/open', { id: button.dataset.bootstrapOpen });
+      button.disabled = false;
+    });
+  });
+  body.querySelectorAll('[data-bootstrap-save]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.bootstrapSave;
+      const editor = body.querySelector(`[data-bootstrap-editor="${id}"]`);
+      const message = body.querySelector(`[data-bootstrap-message="${id}"]`);
+      button.disabled = true;
+      const result = await sendJson('PUT', '/api/agent-bootstrap/file', { id, content: editor?.value ?? '' });
+      button.disabled = false;
+      if (result.error) { if (message) message.textContent = result.error; return; }
+      toast('Agent input saved');
+      await renderSettings();
+      $('sec-agent')?.scrollIntoView({ block: 'start' });
+    });
+  });
+  body.querySelectorAll('[data-bootstrap-delete]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Remove this prompt override file? This cannot be undone.')) return;
+      const result = await sendJson('DELETE', '/api/agent-bootstrap/file', { id: button.dataset.bootstrapDelete });
+      if (result.error) return;
+      toast('Agent input removed');
+      await renderSettings();
+      $('sec-agent')?.scrollIntoView({ block: 'start' });
+    });
+  });
+  $('bootstrapToolsSave').addEventListener('click', async () => {
+    const tools = $$('[data-bootstrap-tool]:checked', body).map((input) => input.dataset.bootstrapTool);
+    const result = await sendJson('PUT', '/api/agent-bootstrap/tools', { tools });
+    if (result.error) return;
+    $('bootstrapToolsMsg').textContent = 'Saved · empty drafts reloaded';
+  });
+  $('bootstrapToolsReset').addEventListener('click', async () => {
+    const result = await sendJson('PUT', '/api/agent-bootstrap/tools', { tools: null });
+    if (result.error) return;
+    await renderSettings();
+    $('sec-agent')?.scrollIntoView({ block: 'start' });
+  });
+  $('bootstrapReload').addEventListener('click', async () => {
+    const button = $('bootstrapReload');
+    button.disabled = true;
+    const result = await post('/api/agent-bootstrap/reload', {});
+    button.disabled = false;
+    $('bootstrapReloadMsg').textContent = result.error ? result.error : 'Reloaded for the next turn';
   });
 
   /* ---- save handlers ---- */

@@ -49,6 +49,7 @@ No external service is required. **Do not open a pull request with a red verify.
 | `server.mjs` | Boot, the route table, and the wiring between the modules below. |
 | `http.mjs` | Request/response helpers, body parsing, the router, the static assets. |
 | `session-store.mjs` | What is persisted under `~/.pi/agent`, and reading the session log. |
+| `agent-bootstrap.mjs` | Safe discovery and editing of the files that shape pi's initial prompt. |
 | `contexts.mjs` | One agent context per open chat, plus its SSE event stream. |
 | `analytics.mjs` | Cost/token history aggregated from the session log. |
 | `network.mjs` | The listening address and the LAN access token. |

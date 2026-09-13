@@ -11,12 +11,13 @@
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { PRODUCT_ID } from "./product.mjs";
-import { platformCapabilities } from "./platform.mjs";
+import { openTextFile, platformCapabilities } from "./platform.mjs";
 import { provesSameOrigin } from "./access-control.mjs";
 import { jsonBody, send, sendError } from "./http.mjs";
 import {
   AGENT_DIR,
   SETTINGS_PATH,
+  agentBootstrapState,
   agentJsonFile,
   archiveStaleChats,
   archivingState,
@@ -29,6 +30,7 @@ import {
   isTitleGenerationEnabled,
   openAIUsageState,
   setArchivingEnabled,
+  setAgentBootstrapTools,
   setFullSearchEnabled,
   setOpenAIUsageEnabled,
   setPath,
@@ -43,6 +45,9 @@ import {
   broadcastGlobal,
   getModelRuntime,
   liveSessions,
+  reloadContextBootstrap,
+  reloadEmptyBootstrapContexts,
+  sessionCommands,
   supportedThinkingLevels,
   useContext,
 } from "./contexts.mjs";
@@ -62,6 +67,105 @@ import {
   saveUsageConfig,
   clearUsageConfig,
 } from "./usage-tracker.mjs";
+import {
+  AgentBootstrapError,
+  agentBootstrapFiles,
+  deleteAgentBootstrapFile,
+  resolveAgentBootstrapFile,
+  saveAgentBootstrapFile,
+} from "./agent-bootstrap.mjs";
+
+function sendBootstrapError(res, error) {
+  if (!(error instanceof AgentBootstrapError) && error?.code !== "agent_busy") throw error;
+  return sendError(res, error.status ?? 400, error.code ?? "agent_bootstrap_error", error.message);
+}
+
+async function bootstrapPayload(ctx) {
+  const { session, cwd } = ctx;
+  const configuredTools = agentBootstrapState().tools;
+  const active = new Set(session.getActiveToolNames?.() ?? []);
+  return {
+    cwd,
+    files: await agentBootstrapFiles(session, cwd),
+    toolsMode: configuredTools === null ? "pi-default" : "custom",
+    tools: (session.getAllTools?.() ?? []).map((tool) => ({
+      name: tool.name,
+      description: (tool.description ?? "").split("\n")[0].slice(0, 160),
+      source: tool.sourceInfo?.source ?? "unknown",
+      active: active.has(tool.name),
+      selected: configuredTools === null ? active.has(tool.name) : configuredTools.includes(tool.name),
+    })),
+    commands: await sessionCommands(ctx),
+  };
+}
+
+export async function handleGetAgentBootstrap({ res, sessionKey }) {
+  return send(res, 200, await bootstrapPayload(await useContext(sessionKey)));
+}
+
+export async function handleSaveAgentBootstrapFile({ req, res, sessionKey }) {
+  const ctx = await useContext(sessionKey);
+  const { id, content } = await jsonBody(req);
+  try {
+    await saveAgentBootstrapFile(ctx.session, ctx.cwd, id, content);
+    await reloadEmptyBootstrapContexts();
+    return send(res, 200, { ok: true, bootstrap: await bootstrapPayload(ctx) });
+  } catch (error) {
+    return sendBootstrapError(res, error);
+  }
+}
+
+export async function handleDeleteAgentBootstrapFile({ req, res, sessionKey }) {
+  const ctx = await useContext(sessionKey);
+  const { id } = await jsonBody(req);
+  try {
+    await deleteAgentBootstrapFile(ctx.session, ctx.cwd, id);
+    await reloadEmptyBootstrapContexts();
+    return send(res, 200, { ok: true, bootstrap: await bootstrapPayload(ctx) });
+  } catch (error) {
+    return sendBootstrapError(res, error);
+  }
+}
+
+export async function handleOpenAgentBootstrapFile({ req, res, sessionKey }) {
+  const ctx = await useContext(sessionKey);
+  const { id } = await jsonBody(req);
+  try {
+    const resource = await resolveAgentBootstrapFile(ctx.session, ctx.cwd, id);
+    if (!resource.exists) return sendError(res, 404, "resource_not_found", "resource file does not exist");
+    const opened = await openTextFile(resource.path);
+    if (!opened.ok) return sendError(res, 501, "text_editor_unavailable", "opening a text editor is not available on this system");
+    return send(res, 200, { ok: true });
+  } catch (error) {
+    return sendBootstrapError(res, error);
+  }
+}
+
+export async function handleSetAgentBootstrapTools({ req, res, sessionKey }) {
+  const ctx = await useContext(sessionKey);
+  const { tools } = await jsonBody(req);
+  if (tools !== null && (!Array.isArray(tools) || tools.some((name) => typeof name !== "string"))) {
+    return sendError(res, 400, "invalid_tools", "tools must be an array of names or null");
+  }
+  const clean = tools === null ? null : [...new Set(tools.map((name) => name.trim()).filter(Boolean))];
+  if (clean && clean.length > 128) return sendError(res, 400, "invalid_tools", "too many tools");
+  const known = new Set(ctx.session.getAllTools?.().map((tool) => tool.name) ?? []);
+  const unknown = clean?.find((name) => !known.has(name));
+  if (unknown) return sendError(res, 400, "unknown_tool", `unknown tool: ${unknown}`);
+  await setAgentBootstrapTools(clean);
+  await reloadEmptyBootstrapContexts();
+  return send(res, 200, { ok: true, bootstrap: await bootstrapPayload(ctx) });
+}
+
+export async function handleReloadAgentBootstrap({ res, sessionKey }) {
+  const ctx = await useContext(sessionKey);
+  try {
+    await reloadContextBootstrap(ctx);
+    return send(res, 200, { ok: true, bootstrap: await bootstrapPayload(ctx) });
+  } catch (error) {
+    return sendBootstrapError(res, error);
+  }
+}
 
 export async function handleGetSettings({ res }) {
   const [schema, current] = await Promise.all([settingsSchema(), readSettingsFile()]);
