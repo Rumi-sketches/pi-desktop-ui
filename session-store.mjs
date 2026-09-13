@@ -186,6 +186,35 @@ export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, m
 // settings.json / models.json belong to pi itself: we only ever read them.
 export const agentJsonFile = (name) => jsonFile(path.join(AGENT_DIR, name));
 
+// ---- agent bootstrap preferences -----------------------------------------
+// Pi owns the prompt/context files themselves. This tiny UI-owned store only
+// remembers the exact tool set new desktop sessions should start with; null
+// means "use pi's defaults". Pi has CLI flags for this choice, but no matching
+// settings.json key, so putting it in settings.json would create fake pi state.
+const AGENT_BOOTSTRAP_PATH = path.join(AGENT_DIR, "web-ui-agent-bootstrap.json");
+const defaultAgentBootstrap = () => ({ tools: null });
+const agentBootstrapStore = jsonFile(AGENT_BOOTSTRAP_PATH, {
+  fallback: defaultAgentBootstrap,
+  revive: (raw) => {
+    if (!raw || typeof raw !== "object") return undefined;
+    if (raw.tools === null || raw.tools === undefined) return defaultAgentBootstrap();
+    if (!Array.isArray(raw.tools) || raw.tools.some((name) => typeof name !== "string")) return undefined;
+    return { tools: [...new Set(raw.tools.map((name) => name.trim()).filter(Boolean))] };
+  },
+});
+let agentBootstrap = defaultAgentBootstrap();
+async function loadAgentBootstrap() {
+  agentBootstrap = await agentBootstrapStore.load();
+}
+export const agentBootstrapState = () => ({
+  tools: agentBootstrap.tools === null ? null : [...agentBootstrap.tools],
+});
+export async function setAgentBootstrapTools(tools) {
+  agentBootstrap.tools = tools === null ? null : [...new Set(tools)];
+  await agentBootstrapStore.save(agentBootstrap);
+  return agentBootstrapState();
+}
+
 // ---- favorite chats (pinned on top of the sidebar) -------------------------
 // Stored server-side so they are the same in every tab/browser of this machine.
 const FAVORITES_PATH = path.join(AGENT_DIR, "web-ui-favorites.json");
@@ -451,6 +480,7 @@ export async function loadPersistedState() {
     loadOpenAIUsage(),
     loadFullSearch(),
     loadRecentCwds(),
+    loadAgentBootstrap(),
   ]);
 }
 
