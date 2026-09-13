@@ -174,6 +174,7 @@ export function normalizeStatePayload(value) {
     totals: totals(source.totals, "state payload.totals"),
     metrics: normalizeChatMetrics(source.metrics, "state payload.metrics"),
     streaming: boolean(source.streaming, "state payload.streaming"),
+    awaitingInput: boolean(source.awaitingInput, "state payload.awaitingInput"),
     queuedPrompts: normalizeQueuedPrompts(source.queuedPrompts, "state payload.queuedPrompts"),
     platform: platform(source.platform, "state payload.platform"),
     chatArchiving: boolean(source.chatArchiving, "state payload.chatArchiving"),
@@ -286,6 +287,7 @@ function newChatState(key = null) {
     thinking: "off",
     thinkingLevels: ["off"],
     streaming: false,
+    awaitingInput: false,
     turnModel: null,
     metrics: null,
     queuedPrompts: [],
@@ -452,6 +454,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
       thinking: payload.thinkingLevel ?? "off",
       thinkingLevels: payload.thinkingLevels.length ? payload.thinkingLevels : ["off"],
       streaming: payload.streaming,
+      awaitingInput: payload.awaitingInput,
       queuedPrompts: payload.queuedPrompts,
       responsePhase,
       metrics: payload.metrics,
@@ -478,6 +481,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
       target.responseActivityLabel = null;
     }
     target.streaming = true;
+    target.awaitingInput = false;
     target.responsePhase = RESPONSE_WAITING;
     return target;
   }
@@ -491,6 +495,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
   function finishResponse(key) {
     const target = chatState(key);
     target.streaming = false;
+    target.awaitingInput = false;
     target.responsePhase = RESPONSE_IDLE;
     target.responseStartedAt = null;
     target.responseActivityLabel = null;
