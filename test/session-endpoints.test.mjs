@@ -33,6 +33,7 @@ let transcriptFile;
 
 const SKILL_BODY_SENTINEL = "SECRET_SKILL_INSTRUCTION_BODY";
 const SKILL_EXPANDED_TEXT = `<skill name="release-check" location="C:/skills/release-check/SKILL.md">\n${SKILL_BODY_SENTINEL}\n</skill>\n\n--strict package-a`;
+const IMAGE_BYTES = Buffer.from("persisted-image-fixture");
 
 const SESSION_HEADER = {
   type: "session",
@@ -82,6 +83,14 @@ before(async () => {
       message: {
         role: "toolResult", toolCallId: "tool-fixture", toolName: "read", isError: false,
         content: [{ type: "text", text: "fixture output" }], timestamp,
+      },
+    },
+    {
+      type: "message", id: "image-user", parentId: "tool-result", timestamp,
+      message: {
+        role: "user",
+        content: [{ type: "image", data: IMAGE_BYTES.toString("base64"), mimeType: "image/png" }],
+        timestamp,
       },
     },
   ];
@@ -305,6 +314,20 @@ describe("the transcript route", () => {
     assert.deepEqual(answer.blocks.map((block) => block.type), ["thinking", "text", "tool"]);
     assert.equal(answer.blocks[0].text, "Inspecting the release.");
     assert.equal(answer.blocks[2].output, "fixture output");
+  });
+
+  test("image-only messages survive history reload without embedding base64", async () => {
+    const session = encodeURIComponent(transcriptFile);
+    const history = await getJson(`/api/history?s=${session}`);
+    assert.equal(history.status, 200);
+    const message = history.body.messages.find((item) => item.entryId === "image-user");
+    assert.deepEqual(message.blocks, [{ type: "image", mimeType: "image/png", contentIndex: 0 }]);
+    assert.equal(JSON.stringify(history.body).includes(IMAGE_BYTES.toString("base64")), false);
+
+    const response = await fetch(`${origin}/api/attachment?s=${session}&entry=image-user&block=0`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), IMAGE_BYTES);
   });
 
   test("OpenAI streaming reasoning uses the provider-agnostic SSE shape", async () => {
