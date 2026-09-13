@@ -290,6 +290,8 @@ function newChatState(key = null) {
     metrics: null,
     queuedPrompts: [],
     responsePhase: RESPONSE_IDLE,
+    responseStartedAt: null,
+    responseActivityLabel: null,
     started: false,
     tasks: new Map(),
     agentTask: null,
@@ -471,6 +473,10 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
 
   function startResponse(key) {
     const target = chatState(key);
+    if (!target.streaming) {
+      target.responseStartedAt = Date.now();
+      target.responseActivityLabel = null;
+    }
     target.streaming = true;
     target.responsePhase = RESPONSE_WAITING;
     return target;
@@ -486,6 +492,8 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     const target = chatState(key);
     target.streaming = false;
     target.responsePhase = RESPONSE_IDLE;
+    target.responseStartedAt = null;
+    target.responseActivityLabel = null;
     return target;
   }
 
