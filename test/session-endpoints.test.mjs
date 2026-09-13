@@ -128,13 +128,20 @@ describe("the agent bootstrap routes", () => {
     const globalAgents = initial.body.files.find((file) => file.key === "global-agents");
     assert.ok(globalAgents);
     assert.equal(globalAgents.exists, false);
+    const globalSystem = initial.body.files.find((file) => file.key === "global-system");
+    assert.equal(globalSystem.exists, false);
+    assert.equal(globalSystem.prefilled, true);
+    assert.match(globalSystem.content, /expert coding assistant/);
+    assert.match(initial.body.effectivePrompt, /Available tools:/);
 
     const saved = await sendJson("PUT", "/api/agent-bootstrap/file", {
       id: globalAgents.id,
       content: "# Global instructions\n\nUse the bootstrap fixture.\n",
     });
     assert.equal(saved.status, 200);
-    assert.equal(saved.body.bootstrap.files.find((file) => file.key === "global-agents").active, true);
+    const savedGlobalAgents = saved.body.bootstrap.files.find((file) => file.key === "global-agents");
+    assert.equal(savedGlobalAgents.active, true);
+    assert.match(savedGlobalAgents.content, /bootstrap fixture/);
     assert.match(await readFile(path.join(agentDir, "AGENTS.md"), "utf8"), /bootstrap fixture/);
 
     const arbitrary = await sendJson("PUT", "/api/agent-bootstrap/file", { id: "not-catalogued", content: "x" });
@@ -146,6 +153,20 @@ describe("the agent bootstrap routes", () => {
     const removed = await sendJson("DELETE", "/api/agent-bootstrap/file", { id: globalAgents.id });
     assert.equal(removed.status, 200);
     assert.equal(existsSync(path.join(agentDir, "AGENTS.md")), false);
+
+    const savedSystem = await sendJson("PUT", "/api/agent-bootstrap/file", {
+      id: globalSystem.id,
+      content: "CUSTOM_SYSTEM_PROMPT",
+    });
+    assert.equal(savedSystem.status, 200);
+    assert.equal(await readFile(path.join(agentDir, "SYSTEM.md"), "utf8"), "CUSTOM_SYSTEM_PROMPT");
+    const resetSystem = await postJson("/api/agent-bootstrap/file/reset", { id: globalSystem.id });
+    assert.equal(resetSystem.status, 200);
+    assert.equal(resetSystem.body.restored, true);
+    assert.equal(existsSync(path.join(agentDir, "SYSTEM.md")), false);
+    const resetPayloadSystem = resetSystem.body.bootstrap.files.find((file) => file.key === "global-system");
+    assert.equal(resetPayloadSystem.prefilled, true);
+    assert.match(resetPayloadSystem.content, /expert coding assistant/);
   });
 
   test("the desktop tool selection persists and null restores pi defaults", async () => {
@@ -158,6 +179,56 @@ describe("the agent bootstrap routes", () => {
     assert.equal(reset.status, 200);
     assert.equal(reset.body.bootstrap.toolsMode, "pi-default");
     assert.equal(reset.body.bootstrap.tools.find((tool) => tool.name === "request_form")?.active, true);
+  });
+
+  test("the catalog returns the contents pi loaded for a project", async () => {
+    const { createContext } = await import("../contexts.mjs");
+    const projectDir = path.join(agentDir, "catalog-project");
+    const projectAgents = path.join(projectDir, "AGENTS.md");
+    const globalSystem = path.join(agentDir, "SYSTEM.md");
+    const projectSystem = path.join(projectDir, ".pi", "SYSTEM.md");
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(projectAgents, "PROJECT_CONTENT_VISIBLE_IN_EDITOR", "utf8");
+    await writeFile(globalSystem, "INHERITED_SYSTEM_VISIBLE_IN_EDITOR", "utf8");
+    const ctx = await createContext({ cwd: projectDir, mode: "new" });
+
+    const payload = await getJson(`/api/agent-bootstrap?s=${encodeURIComponent(ctx.key)}`);
+    assert.equal(payload.status, 200);
+    const loaded = payload.body.files.find((file) => file.path === projectAgents);
+    assert.equal(loaded.scope, "project");
+    assert.equal(loaded.active, true);
+    assert.equal(loaded.content, "PROJECT_CONTENT_VISIBLE_IN_EDITOR");
+    const systemOverride = payload.body.files.find((file) => file.key === "project-system");
+    assert.equal(systemOverride.exists, false);
+    assert.equal(systemOverride.prefilled, true);
+    assert.equal(systemOverride.prefillSource, "inherited");
+    assert.equal(systemOverride.content, "INHERITED_SYSTEM_VISIBLE_IN_EDITOR");
+
+    const savedSystem = await sendJson("PUT", `/api/agent-bootstrap/file?s=${encodeURIComponent(ctx.key)}`, {
+      id: systemOverride.id,
+      content: "PROJECT_SYSTEM_CHANGED_IN_EDITOR",
+    });
+    assert.equal(savedSystem.status, 200);
+    assert.equal(await readFile(projectSystem, "utf8"), "PROJECT_SYSTEM_CHANGED_IN_EDITOR");
+    const resetSystem = await postJson(`/api/agent-bootstrap/file/reset?s=${encodeURIComponent(ctx.key)}`, { id: systemOverride.id });
+    assert.equal(resetSystem.status, 200);
+    assert.equal(resetSystem.body.restored, true);
+    assert.equal(existsSync(projectSystem), false);
+    const resetProjectSystem = resetSystem.body.bootstrap.files.find((file) => file.key === "project-system");
+    assert.equal(resetProjectSystem.prefilled, true);
+    assert.equal(resetProjectSystem.content, "INHERITED_SYSTEM_VISIBLE_IN_EDITOR");
+
+    const changed = await sendJson("PUT", `/api/agent-bootstrap/file?s=${encodeURIComponent(ctx.key)}`, {
+      id: loaded.id,
+      content: "PROJECT_CONTENT_CHANGED_IN_EDITOR",
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(await readFile(projectAgents, "utf8"), "PROJECT_CONTENT_CHANGED_IN_EDITOR");
+    const reset = await postJson(`/api/agent-bootstrap/file/reset?s=${encodeURIComponent(ctx.key)}`, { id: loaded.id });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.body.restored, true);
+    assert.equal(await readFile(projectAgents, "utf8"), "PROJECT_CONTENT_VISIBLE_IN_EDITOR");
+    await rm(globalSystem, { force: true });
   });
 
   test("a file saved outside the UI after draft creation reaches its first prompt", async () => {
