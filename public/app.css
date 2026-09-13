@@ -940,6 +940,13 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   border: 1px solid var(--line-2); border-radius: var(--r-3); font: .76rem/1.5 var(--font-mono);
 }
 .bootstrapEditor:focus { outline: none; border-color: var(--teal); }
+.bootstrapPromptPreview { margin-top: .7rem; overflow: hidden; }
+.bootstrapPromptPreview > summary {
+  display: flex; justify-content: space-between; align-items: center; gap: .8rem;
+  padding: .75rem 1rem; cursor: pointer;
+}
+.bootstrapPromptPreview[open] > summary { border-bottom: 1px solid var(--line); }
+.bootstrapPromptPreview > .bootstrapEditor { margin-top: .7rem; min-height: 240px; }
 .bootstrapActions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: 0 1rem .8rem; }
 .bootstrapNotice { padding: 0 1rem .7rem; }
 .bootstrapCatalog { margin-top: .7rem; }

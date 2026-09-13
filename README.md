@@ -142,7 +142,9 @@ PORT=3778 npm start
 - **Agent input controls** that show the contents of the instruction files pi actually loads. Global
   files and tool defaults live in Settings; project files live in the chat header, can be saved for
   that project or promoted globally, and every loaded resource has an always-visible native-editor
-  action. Slash commands remain inspectable alongside the global configuration.
+  action. The exact generated prompt is visible before a turn, a missing global `SYSTEM.md` starts
+  from Pi's real built-in prompt instead of an empty form, and every editable file can be restored
+  to its pre-edit state. Slash commands remain inspectable alongside the global configuration.
 - **Chat metrics from pi's session APIs.** The header shows the current context size, context percentage
   (or `?` when pi cannot calculate either value) and cumulative cost. The detail shows cumulative
   processed tokens—including input, output, cache reads and cache writes—per model, and labels

@@ -128,6 +128,11 @@ describe("the agent bootstrap routes", () => {
     const globalAgents = initial.body.files.find((file) => file.key === "global-agents");
     assert.ok(globalAgents);
     assert.equal(globalAgents.exists, false);
+    const globalSystem = initial.body.files.find((file) => file.key === "global-system");
+    assert.equal(globalSystem.exists, false);
+    assert.equal(globalSystem.prefilled, true);
+    assert.match(globalSystem.content, /expert coding assistant/);
+    assert.match(initial.body.effectivePrompt, /Available tools:/);
 
     const saved = await sendJson("PUT", "/api/agent-bootstrap/file", {
       id: globalAgents.id,
@@ -148,6 +153,20 @@ describe("the agent bootstrap routes", () => {
     const removed = await sendJson("DELETE", "/api/agent-bootstrap/file", { id: globalAgents.id });
     assert.equal(removed.status, 200);
     assert.equal(existsSync(path.join(agentDir, "AGENTS.md")), false);
+
+    const savedSystem = await sendJson("PUT", "/api/agent-bootstrap/file", {
+      id: globalSystem.id,
+      content: "CUSTOM_SYSTEM_PROMPT",
+    });
+    assert.equal(savedSystem.status, 200);
+    assert.equal(await readFile(path.join(agentDir, "SYSTEM.md"), "utf8"), "CUSTOM_SYSTEM_PROMPT");
+    const resetSystem = await postJson("/api/agent-bootstrap/file/reset", { id: globalSystem.id });
+    assert.equal(resetSystem.status, 200);
+    assert.equal(resetSystem.body.restored, true);
+    assert.equal(existsSync(path.join(agentDir, "SYSTEM.md")), false);
+    const resetPayloadSystem = resetSystem.body.bootstrap.files.find((file) => file.key === "global-system");
+    assert.equal(resetPayloadSystem.prefilled, true);
+    assert.match(resetPayloadSystem.content, /expert coding assistant/);
   });
 
   test("the desktop tool selection persists and null restores pi defaults", async () => {
@@ -176,6 +195,17 @@ describe("the agent bootstrap routes", () => {
     assert.equal(loaded.scope, "project");
     assert.equal(loaded.active, true);
     assert.equal(loaded.content, "PROJECT_CONTENT_VISIBLE_IN_EDITOR");
+
+    const changed = await sendJson("PUT", `/api/agent-bootstrap/file?s=${encodeURIComponent(ctx.key)}`, {
+      id: loaded.id,
+      content: "PROJECT_CONTENT_CHANGED_IN_EDITOR",
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(await readFile(projectAgents, "utf8"), "PROJECT_CONTENT_CHANGED_IN_EDITOR");
+    const reset = await postJson(`/api/agent-bootstrap/file/reset?s=${encodeURIComponent(ctx.key)}`, { id: loaded.id });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.body.restored, true);
+    assert.equal(await readFile(projectAgents, "utf8"), "PROJECT_CONTENT_VISIBLE_IN_EDITOR");
   });
 
   test("a file saved outside the UI after draft creation reaches its first prompt", async () => {
