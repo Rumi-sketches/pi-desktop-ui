@@ -124,6 +124,7 @@ describe("the agent bootstrap routes", () => {
   test("catalogued prompt files can be created and removed, arbitrary ids cannot", async () => {
     const initial = await getJson("/api/agent-bootstrap");
     assert.equal(initial.status, 200);
+    assert.equal(initial.body.tools.find((tool) => tool.name === "request_form")?.active, true);
     const globalAgents = initial.body.files.find((file) => file.key === "global-agents");
     assert.ok(globalAgents);
     assert.equal(globalAgents.exists, false);
@@ -156,6 +157,7 @@ describe("the agent bootstrap routes", () => {
     const reset = await sendJson("PUT", "/api/agent-bootstrap/tools", { tools: null });
     assert.equal(reset.status, 200);
     assert.equal(reset.body.bootstrap.toolsMode, "pi-default");
+    assert.equal(reset.body.bootstrap.tools.find((tool) => tool.name === "request_form")?.active, true);
   });
 
   test("a file saved outside the UI after draft creation reaches its first prompt", async () => {
