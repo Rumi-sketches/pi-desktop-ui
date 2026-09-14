@@ -272,6 +272,18 @@ test("state keeps an open turn distinct from a model waiting on a form", () => {
   assert.equal(ui.chatState(CHAT_A).awaitingInput, false);
 });
 
+test("each response starts a fresh elapsed timer", () => {
+  const ui = createUiState();
+  const state = ui.chatState(CHAT_A);
+  state.responseStartedAt = 1;
+  state.responseActivityLabel = "Working";
+
+  ui.startResponse(CHAT_A);
+
+  assert.ok(state.responseStartedAt > 1);
+  assert.equal(state.responseActivityLabel, null);
+});
+
 test("queued prompt normalizer rejects invalid identity fields and strips attachment data", () => {
   const item = { id: "opaque", type: "steer", text: "x", attachments: [], bytes: 1 };
   assert.throws(() => normalizeQueuedPrompts([item, item]), /must be unique/);
