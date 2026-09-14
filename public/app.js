@@ -2271,6 +2271,10 @@ function selectCurrentChatState(key = renderedChatKey) {
 function saveProjTabs() {
   localStorage.setItem('piProjTabs', JSON.stringify({ tabs: projState.tabs, active: activeProjectCwd() }));
 }
+// Chromium protects drag payloads between dragstart and drop, so dragover
+// cannot reliably read dataTransfer. Keep the source in page state while the
+// gesture is active; the payload remains a fallback for the final drop.
+let draggedProjectCwd = null;
 function renderProjTabs() {
   const list = $('projTabList');
   list.innerHTML = '';
@@ -2294,15 +2298,17 @@ function renderProjTabs() {
       x.addEventListener('click', (e) => { e.stopPropagation(); closeProjTab(cwd); });
       t.appendChild(x);
       t.addEventListener('dragstart', (e) => {
+        draggedProjectCwd = cwd;
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', cwd);
         requestAnimationFrame(() => t.classList.add('dragging'));
       });
       t.addEventListener('dragend', () => {
+        draggedProjectCwd = null;
         $$('.projTab').forEach((tab) => tab.classList.remove('dragging', 'drop-before', 'drop-after'));
       });
       t.addEventListener('dragover', (e) => {
-        const source = e.dataTransfer.getData('text/plain');
+        const source = draggedProjectCwd;
         if (!source || source === cwd) return;
         e.preventDefault();
         const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
@@ -2312,7 +2318,7 @@ function renderProjTabs() {
       t.addEventListener('dragleave', () => t.classList.remove('drop-before', 'drop-after'));
       t.addEventListener('drop', (e) => {
         e.preventDefault();
-        const source = e.dataTransfer.getData('text/plain');
+        const source = draggedProjectCwd || e.dataTransfer.getData('text/plain');
         const from = projState.tabs.indexOf(source);
         const target = projState.tabs.indexOf(cwd);
         if (from < 0 || target < 0 || from === target) return;
