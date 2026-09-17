@@ -115,6 +115,20 @@ Turning the web UI into a desktop app, without giving up the terminal + browser 
   isolated endpoint tests. OpenAI quota and Luna fallback were not called live because their
   opt-ins were off and no consent was supplied. Final `npm test`: 239 tests, 237 passed and 2
   pre-existing platform skips; syntax, API-doc, lint, typecheck, lifecycle and smoke gates passed.
+- **Release 2.1 completed the desktop interaction pass.** Project tabs can be reordered in Electron,
+  local chat links open through the native path handler, the Windows title bar follows the active
+  theme, the header fits narrower windows and text inputs use the operating system's spellchecker
+  languages.
+- **Agent inputs are split by scope.** Settings owns global files and tool defaults. The chat header
+  owns project files. Both show the effective generated prompt, open files in the native editor and
+  restore the first pre-edit state. Missing prompt files inherit the prompt pi would use instead of
+  presenting an empty editor.
+- **Interactive forms and response activity now share one lifecycle.** The `request_form` UI survives
+  bootstrap reloads, keeps the turn open until a valid answer arrives and leaves completed forms in
+  the transcript. The response timer starts per prompt, remains visible through thinking and tool
+  calls, and pauses while a form waits for input.
+- **Provider presentation is consistent.** The model menu uses the maintained PNG icon set where its
+  terms allow it and falls back to the neutral mark for unsupported or restricted brands.
 
 **Not done, on purpose**
 

@@ -49,7 +49,9 @@ No external service is required. **Do not open a pull request with a red verify.
 | `server.mjs` | Boot, the route table, and the wiring between the modules below. |
 | `http.mjs` | Request/response helpers, body parsing, the router, the static assets. |
 | `session-store.mjs` | What is persisted under `~/.pi/agent`, and reading the session log. |
-| `agent-bootstrap.mjs` | Safe discovery and editing of the files that shape pi's initial prompt. |
+| `agent-bootstrap.mjs` | Safe discovery and editing of global and project files that shape pi's initial prompt. |
+| `interactive-forms.mjs` | Validation and lifecycle of forms opened by the agent's `request_form` tool. |
+| `prompt-queue.mjs` | Cancellable steering and follow-up messages for a running chat. |
 | `contexts.mjs` | One agent context per open chat, plus its SSE event stream. |
 | `analytics.mjs` | Cost/token history aggregated from the session log. |
 | `network.mjs` | The listening address and the LAN access token. |
@@ -62,10 +64,11 @@ No external service is required. **Do not open a pull request with a red verify.
 | `public/index.html` | The frontend markup. |
 | `public/app.js` | The frontend logic, loaded as an ES module. |
 | `public/app.css` | The frontend styles. |
+| `public/ui-state.js` | Small, testable state helpers shared by activity and navigation behavior. |
 | `bin/pi-desktop-ui.mjs` | The `npm start` launcher: boots the server and opens the browser. |
 | `jsconfig.json` | Type-check configuration (`checkJs`); lists the files `tsc` reads. |
 | `scripts/verify.mjs` | The verification gate described above. |
-| `scripts/create-shortcut.mjs` | Optional Windows desktop shortcut that opens the app window. |
+| `scripts/create-shortcut.mjs` | Optional Windows Desktop and Start menu shortcuts for the app. |
 | `test/` | Unit tests (`node:test`). |
 
 ## Things to know before touching the code
@@ -122,10 +125,10 @@ No external service is required. **Do not open a pull request with a red verify.
 3. Run `npm test` until it is green.
 4. Open a pull request describing **what** changed and **why**.
 
-## Pre-publish checklist
+## Pre-release checklist
 
-Run these before every release to npm. They are cheap, and each one has bitten a project
-like this one before.
+Run these before every release. The project is private on npm today, but the package check still
+catches files that should not ship.
 
 1. **`npm audit --omit=dev`** — audit what ships, not the toolchain. Fix `high` and `critical`
    findings that a non-breaking bump of a direct dependency in `package.json` can fix.
