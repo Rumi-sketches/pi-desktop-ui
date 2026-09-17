@@ -11,7 +11,7 @@ export default [
   // Kept as its own entry: merging it with the block below would let that
   // block's `rules` key replace the whole recommended set instead of
   // overriding two rules of it.
-  { ...js.configs.recommended, files: ["**/*.mjs", "public/*.js"] },
+  { ...js.configs.recommended, files: ["**/*.mjs", "**/*.cjs", "public/*.js"] },
   {
     files: ["**/*.mjs", "public/*.js"],
     languageOptions: {
@@ -28,6 +28,14 @@ export default [
     },
   },
   { files: ["**/*.mjs"], languageOptions: { globals: { ...globals.node } } },
+  {
+    files: ["**/*.cjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "commonjs",
+      globals: { ...globals.node },
+    },
+  },
   // public/app.js is the only browser source: it runs in the page, next to the
   // vendored libraries. Those are reached through the `win` view of the global
   // object, never as bare identifiers, so no extra global is declared here.

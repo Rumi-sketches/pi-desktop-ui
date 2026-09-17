@@ -74,6 +74,14 @@ export function broadcastUsage(ctx) {
   broadcast(ctx, { kind: "usage", totals, metrics: ctx.metrics });
 }
 
+// The SDK announces a tool immediately before entering its execute function.
+// Consult the live segment as well as the broker to close that tiny observation
+// window for tabs attaching at exactly that boundary.
+export function contextAwaitingInput(ctx) {
+  return ctx.formBroker.waiting || ctx.live.some((segment) =>
+    segment.type === "tool" && segment.tool.name === "request_form" && segment.tool.status !== "end");
+}
+
 // A tab subscribing to a chat: it joins the context's own audience and the
 // global one (running badges, session list), gets told what it attached to, and
 // is kept alive by a ping — a chat can stay quiet for minutes, and without
@@ -87,6 +95,7 @@ export function attachEventClient(ctx, res) {
     key: ctx.key,
     cwd: ctx.cwd,
     running: ctx.promptStarting || ctx.running || ctx.session.isStreaming,
+    awaitingInput: contextAwaitingInput(ctx),
     queuedPrompts: ctx.promptQueue.publicItems(),
   });
   const ping = setInterval(() => sseWrite(res, SSE_PING), SSE_PING_MS);

@@ -120,7 +120,7 @@ PORT=3778 npm start
   last eight visited chats also keep their rendered view, scroll position, composer text and
   in-memory attachments. Returning to one of them paints the cached view before HTTP sync starts.
 - **Streaming answers** with markdown, syntax highlighting, thinking blocks and tool calls rendered
-  as they arrive. A text-free spinner waits for the first model text; thinking and tool activity do
+  as they arrive. A timed activity indicator stays visible for the whole run; thinking and tool activity do
   not dismiss it.
 - **Native interactive forms.** The built-in `request_form` tool lets the model collect related text,
   numeric, date, single-choice, multi-choice and confirmation fields in one accessible form. The tool
@@ -139,10 +139,13 @@ PORT=3778 npm start
   thinking-level selector.
 - **Enabled providers and models**: pick which providers/models show up in the picker; the choice is
   written to `enabledModels` in `~/.pi/agent/settings.json`.
-- **Settings panel** over your real pi configuration: edit the global/project `AGENTS.md`,
-  `SYSTEM.md` and `APPEND_SYSTEM.md` inputs, open every loaded resource in the native text editor,
-  choose the tools used by desktop sessions, and inspect slash commands, providers, paths and raw
-  `settings.json` / `models.json`.
+- **Agent input controls** that show the contents of the instruction files pi actually loads. Global
+  files and tool defaults live in Settings; project files live in the chat header, can be saved for
+  that project or promoted globally, and every loaded resource has an always-visible native-editor
+  action. The exact generated prompt is visible before a turn; missing global and project
+  `SYSTEM.md` files start from the effective inherited prompt instead of an empty form, and every
+  editable file can be restored to its pre-edit state. Slash commands remain inspectable alongside
+  the global configuration.
 - **Chat metrics from pi's session APIs.** The header shows the current context size, context percentage
   (or `?` when pi cannot calculate either value) and cumulative cost. The detail shows cumulative
   processed tokens—including input, output, cache reads and cache writes—per model, and labels

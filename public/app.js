@@ -20,6 +20,17 @@ import {
 import { createTransport, withSessionKey } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 
+// During a development hot reload the page can briefly outlive the server that
+// learned the new icon route. Never expose the browser's broken-image glyph:
+// the next full app restart loads the PNG, while this run degrades cleanly.
+document.addEventListener('error', (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.classList.contains('logo-img')) return;
+  const logo = image.closest('.logo');
+  if (!logo) return;
+  logo.classList.add('icon-failed');
+}, true);
+
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
 // scripts and land on `window` with no declarations of their own. One untyped
 // view of the global object, instead of a cast per call site.
@@ -302,11 +313,15 @@ let sessionGroup = localStorage.getItem('piGroupBy') || 'none';
 const modelDd = setupDd('modelDd', 'modelBtn');
 const thinkDd = setupDd('thinkDd', 'thinkBtn');
 const cwdDd = setupDd('cwdDd', 'cwdChip');
+const projectBootstrapDd = setupDd('projectBootstrapDd', 'projectBootstrapBtn');
 setupDd('statsDd', 'stats');
 const termsDd = setupDd('termsDd', 'termsChip');
 const filterDd = setupDd('filterDd', 'filterBtn');
 const sortDd = setupDd('sortDd', 'sortBtn');
 const groupDd = setupDd('groupDd', 'groupBtn');
+$('projectBootstrapBtn').addEventListener('click', () => {
+  if (projectBootstrapDd.classList.contains('open')) renderProjectBootstrapMenu();
+});
 function renderFilterMenu() {
   $('filterMenu').querySelectorAll('[data-filter]').forEach((b) => {
     b.classList.toggle('sel', sessionFilter[b.dataset.filter] === b.dataset.val);
@@ -751,6 +766,7 @@ function interactiveFormValues(card, definition) {
 function renderInteractiveForm(ev) {
   let card = ev.id ? toolCards.get(ev.id) : null;
   if (!card && ev.status === 'start') {
+    setAwaitingInput(true);
     const definition = ev.args ?? {};
     card = document.createElement('section');
     card.className = 'interactiveForm';
@@ -821,12 +837,14 @@ function renderInteractiveForm(ev) {
         return;
       }
       finishInteractiveForm(card, definition, { values: result.values });
+      setAwaitingInput(false);
     });
   }
   if (!card) return null;
   let definition = {};
   try { definition = JSON.parse(card.dataset.definition || '{}'); } catch {}
   if (ev.status === 'end') {
+    setAwaitingInput(false);
     const result = formResult(ev.output);
     finishInteractiveForm(card, definition, { values: result?.values ?? null, error: !!ev.isError || !result });
   }
@@ -1086,13 +1104,48 @@ async function cancelQueuedPrompt(id) {
 }
 function renderComposerState(chatState = activeChatState()) {
   const running = chatState.streaming;
-  $('runState').classList.toggle('on', running);
+  // The streaming flag may be refreshed independently while the agent is
+  // still alive. The task closes only on agent_end, so it owns this indicator.
+  const activityRunning = !!chatState.agentTask && !chatState.agentTask.t1;
+  const modelActive = activityRunning && !chatState.awaitingInput;
+  $('runState').classList.toggle('on', modelActive);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
-  $('responseSpinner').classList.toggle('hide', chatState.responsePhase !== RESPONSE_WAITING);
-  input.placeholder = running
+  $('responseSpinner').classList.toggle('hide', !modelActive);
+  if (modelActive) renderResponseActivity(chatState);
+  input.placeholder = chatState.awaitingInput
+    ? 'Complete the form above to continue…'
+    : running
     ? 'Scrivi una nuova istruzione mentre l’agente lavora…'
     : 'Ask me anything…  (drop files and images here)';
+}
+const RESPONSE_ACTIVITY_WORDS = ['Thinking', 'Building', 'Cooking', 'Crafting', 'Working', 'Exploring', 'Solving'];
+function responseDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+function renderResponseActivity(chatState = activeChatState()) {
+  if (!chatState.responseActivityLabel) {
+    chatState.responseActivityLabel = RESPONSE_ACTIVITY_WORDS[Math.floor(Math.random() * RESPONSE_ACTIVITY_WORDS.length)];
+  }
+  if (!chatState.responseStartedAt) chatState.responseStartedAt = Date.now();
+  $('responseActivityLabel').textContent = chatState.responseActivityLabel;
+  $('responseElapsed').textContent = responseDuration(Date.now() - chatState.responseStartedAt);
+  $('responseSpinner').setAttribute('aria-label', `${chatState.responseActivityLabel}, ${$('responseElapsed').textContent}`);
+}
+setInterval(() => {
+  const state = activeChatState();
+  if (state.agentTask && !state.agentTask.t1 && !state.awaitingInput) renderResponseActivity(state);
+}, 1000);
+function setAwaitingInput(on, key = activeChatKey() ?? renderedChatKey) {
+  const state = key ? uiState.chatState(key) : activeChatState();
+  state.awaitingInput = on;
+  if (key === activeChatKey() || (!key && !activeChatKey())) renderComposerState(state);
 }
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
@@ -1105,6 +1158,8 @@ function setRunning(on, { newResponse = false } = {}) {
   } else {
     state.streaming = false;
     state.responsePhase = RESPONSE_IDLE;
+    state.responseStartedAt = null;
+    state.responseActivityLabel = null;
   }
   renderComposerState(state);
   if (!on) { currentAssistant = currentThinking = currentTurn = null; }
@@ -1331,6 +1386,7 @@ function handleEvent(ev, ownerKey) {
       }
       applyQueueChange(ev.queuedPrompts ?? [], activeChatKey());
       setRunning(!!ev.running);
+      setAwaitingInput(!!ev.awaitingInput, activeChatKey());
       if (ev.running && !activeChatState().agentTask) setAgentTask(true, activeChatState().turnModel, activeChatKey());
       break;
     case 'queue':
@@ -1476,10 +1532,11 @@ function renderModelMenu() {
     const headBox = sub.getBoundingClientRect();
     fly.style.left = '0px'; fly.style.top = '0px';       // measure at a known position
     const w = fly.offsetWidth, h = fly.offsetHeight;
-    // glued to the provider menu edge (the two borders overlap by 1px)
-    const flip = menuBox.right - 1 + w > window.innerWidth - 8;
+    // Keep a hairline gap between the two independently rounded panels.
+    const flyoutGap = 3;
+    const flip = menuBox.right + flyoutGap + w > window.innerWidth - 8;
     fly.classList.toggle('flip', flip);
-    fly.style.left = (flip ? Math.max(8, menuBox.left + 1 - w) : menuBox.right - 1) + 'px';
+    fly.style.left = (flip ? Math.max(8, menuBox.left - flyoutGap - w) : menuBox.right + flyoutGap) + 'px';
     fly.style.top = Math.max(8, Math.min(headBox.top - 5, window.innerHeight - 8 - h)) + 'px';
   };
   const closeSub = (sub) => { sub.classList.remove('open'); sub._fly.classList.remove('on'); };
@@ -2214,6 +2271,10 @@ function selectCurrentChatState(key = renderedChatKey) {
 function saveProjTabs() {
   localStorage.setItem('piProjTabs', JSON.stringify({ tabs: projState.tabs, active: activeProjectCwd() }));
 }
+// Chromium protects drag payloads between dragstart and drop, so dragover
+// cannot reliably read dataTransfer. Keep the source in page state while the
+// gesture is active; the payload remains a fallback for the final drop.
+let draggedProjectCwd = null;
 function renderProjTabs() {
   const list = $('projTabList');
   list.innerHTML = '';
@@ -2237,15 +2298,17 @@ function renderProjTabs() {
       x.addEventListener('click', (e) => { e.stopPropagation(); closeProjTab(cwd); });
       t.appendChild(x);
       t.addEventListener('dragstart', (e) => {
+        draggedProjectCwd = cwd;
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', cwd);
         requestAnimationFrame(() => t.classList.add('dragging'));
       });
       t.addEventListener('dragend', () => {
+        draggedProjectCwd = null;
         $$('.projTab').forEach((tab) => tab.classList.remove('dragging', 'drop-before', 'drop-after'));
       });
       t.addEventListener('dragover', (e) => {
-        const source = e.dataTransfer.getData('text/plain');
+        const source = draggedProjectCwd;
         if (!source || source === cwd) return;
         e.preventDefault();
         const after = e.clientX > t.getBoundingClientRect().left + t.offsetWidth / 2;
@@ -2255,7 +2318,7 @@ function renderProjTabs() {
       t.addEventListener('dragleave', () => t.classList.remove('drop-before', 'drop-after'));
       t.addEventListener('drop', (e) => {
         e.preventDefault();
-        const source = e.dataTransfer.getData('text/plain');
+        const source = draggedProjectCwd || e.dataTransfer.getData('text/plain');
         const from = projState.tabs.indexOf(source);
         const target = projState.tabs.indexOf(cwd);
         if (from < 0 || target < 0 || from === target) return;
@@ -2542,6 +2605,7 @@ async function loadHistory({
       : RESPONSE_WAITING;
   }
   setRunning(!!res.streaming);
+  setAwaitingInput(!!res.awaitingInput, key);
   renderQueuedPrompts(owner);
   if (res.streaming && !owner.agentTask) setAgentTask(true, res.turnModel, key);
   else if (!res.streaming && owner.agentTask && !owner.agentTask.t1) setAgentTask(false, null, key);
@@ -2649,8 +2713,13 @@ function setAgentTask(on, model, key = activeChatKey()) {
     owner.agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
   } else if (!on && owner.agentTask && !owner.agentTask.t1) {
     owner.agentTask.t1 = Date.now();
+    owner.responseStartedAt = null;
+    owner.responseActivityLabel = null;
   }
-  if (key === activeChatKey()) syncTasks();
+  if (key === activeChatKey()) {
+    syncTasks();
+    if (typeof renderComposerState === 'function') renderComposerState(owner);
+  }
 }
 function taskList(key = activeChatKey()) {
   const owner = taskOwner(key);
@@ -3319,6 +3388,168 @@ function applyTheme(id) {
 applyTheme(localStorage.getItem('piTheme') || DEFAULT_THEME);
 
 /* ---------------- views ---------------- */
+const BOOTSTRAP_INPUT_KINDS = new Set(['context', 'system', 'append']);
+const bootstrapInputKind = (file) => file.kinds.find((kind) => BOOTSTRAP_INPUT_KINDS.has(kind));
+const nativeEditorLabel = (short = false, os = platformCaps?.os) => short
+  ? 'Open'
+  : (os === 'win32' ? 'Open in Notepad' : 'Open in text editor');
+
+function bootstrapFileEditor(file, {
+  saveLabel = 'Save',
+  promoteId = null,
+  promoteLabel = 'Save globally',
+  removable = true,
+} = {}) {
+  const prefilledState = file.prefillSource === 'inherited' ? 'inherited · not overridden' : 'Pi default · not overridden';
+  const state = file.symlink ? 'linked · read only' : (file.prefilled ? prefilledState : (!file.exists ? 'new override' : (file.active ? 'passed to agent' : 'saved override')));
+  return `<div class="bootstrapEditorCard">
+    <div class="bootstrapFileHead">
+      <span><b>${esc(file.label)}</b><code title="${esc(file.path)}">${esc(file.path)}</code></span>
+      <span class="bootstrapBadges"><span class="badge">${esc(file.scope)}</span><span class="badge ${file.active ? 'ok' : ''}">${state}</span></span>
+    </div>
+    ${file.tooLarge
+      ? '<div class="sys bootstrapNotice">This file is larger than 512 KiB. Open it in the native editor.</div>'
+      : `<textarea class="bootstrapEditor" data-bootstrap-editor="${file.id}" rows="8"
+           ${file.symlink ? 'readonly' : ''}>${esc(file.content ?? '')}</textarea>`}
+    <div class="bootstrapActions">
+      ${file.tooLarge || file.symlink ? '' : `<button class="btn teal" data-bootstrap-save="${file.id}">${saveLabel}</button>`}
+      ${promoteId && !file.tooLarge && !file.symlink ? `<button class="btn outline" data-bootstrap-promote="${promoteId}" data-bootstrap-source="${file.id}">${promoteLabel}</button>` : ''}
+      ${file.exists && platformCaps?.openTextFile ? `<button class="btn outline" data-bootstrap-open="${file.id}">${nativeEditorLabel()}</button>` : ''}
+      ${file.tooLarge || file.symlink ? '' : `<button class="btn outline" data-bootstrap-reset="${file.id}">Restore original</button>`}
+      ${file.exists && removable && !file.symlink ? `<button class="btn outline danger" data-bootstrap-delete="${file.id}">Remove</button>` : ''}
+      <span class="sys" data-bootstrap-message="${file.id}"></span>
+    </div>
+  </div>`;
+}
+
+function bootstrapPromptPreview(prompt, { open = false } = {}) {
+  return `<details class="card bootstrapPromptPreview" ${open ? 'open' : ''}>
+    <summary><b>Exact initial prompt passed to the agent</b><span class="sys">generated by Pi from tools and loaded resources</span></summary>
+    <textarea class="bootstrapEditor" rows="14" readonly>${esc(prompt || '')}</textarea>
+  </details>`;
+}
+
+function bootstrapResourceList(files) {
+  if (!files.length) return '<div class="sys bootstrapEmpty">No file-based resources are loaded in this scope.</div>';
+  return files.map((file) => `<div class="bootstrapResource">
+    <span><b>${esc(file.path.split(/[\\/]/).pop())}</b><code title="${esc(file.path)}">${esc(file.path)}</code></span>
+    <span class="bootstrapResourceActions">
+      <span class="bootstrapResourceKinds">${file.kinds.map((kind) => `<span class="badge">${esc(kind)}</span>`).join('')}</span>
+      ${platformCaps?.openTextFile ? `<button class="btn outline bootstrapOpen" title="${nativeEditorLabel()}" data-bootstrap-open="${file.id}"><span aria-hidden="true">↗</span>${nativeEditorLabel()}</button>` : ''}
+    </span>
+  </div>`).join('');
+}
+
+function bindBootstrapFileActions(root, { key, refresh }) {
+  root.querySelectorAll('[data-bootstrap-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const result = await post('/api/agent-bootstrap/file/open', { id: button.dataset.bootstrapOpen }, { key, followKey: false });
+      button.disabled = false;
+      if (!result.error) toast(`Opened in ${platformCaps?.os === 'win32' ? 'Notepad' : 'the text editor'}`, true);
+    });
+  });
+  root.querySelectorAll('[data-bootstrap-save]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.bootstrapSave;
+      const editor = root.querySelector(`[data-bootstrap-editor="${id}"]`);
+      const message = root.querySelector(`[data-bootstrap-message="${id}"]`);
+      button.disabled = true;
+      const result = await sendJson('PUT', '/api/agent-bootstrap/file', { id, content: editor?.value ?? '' }, { key, followKey: false });
+      button.disabled = false;
+      if (result.error) { if (message) message.textContent = result.error; return; }
+      toast('Agent input saved');
+      await refresh();
+    });
+  });
+  root.querySelectorAll('[data-bootstrap-reset]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.bootstrapReset;
+      const message = root.querySelector(`[data-bootstrap-message="${id}"]`);
+      if (!confirm('Restore this file to the state it had before it was edited here?')) return;
+      button.disabled = true;
+      const result = await post('/api/agent-bootstrap/file/reset', { id }, { key, followKey: false });
+      button.disabled = false;
+      if (result.error) { if (message) message.textContent = result.error; return; }
+      toast(result.restored ? 'Original agent input restored' : 'Unsaved changes discarded');
+      await refresh();
+    });
+  });
+  root.querySelectorAll('[data-bootstrap-promote]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const sourceId = button.dataset.bootstrapSource;
+      const editor = root.querySelector(`[data-bootstrap-editor="${sourceId}"]`);
+      button.disabled = true;
+      const result = await sendJson('PUT', '/api/agent-bootstrap/file', {
+        id: button.dataset.bootstrapPromote,
+        content: editor?.value ?? '',
+      }, { key, followKey: false });
+      button.disabled = false;
+      if (result.error) return;
+      toast('Saved globally for other projects');
+      await refresh();
+    });
+  });
+  root.querySelectorAll('[data-bootstrap-delete]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Remove this agent input file? This cannot be undone.')) return;
+      const result = await sendJson('DELETE', '/api/agent-bootstrap/file', {
+        id: button.dataset.bootstrapDelete,
+      }, { key, followKey: false });
+      if (result.error) return;
+      toast('Agent input removed');
+      await refresh();
+    });
+  });
+}
+
+async function renderProjectBootstrapMenu() {
+  const menu = $('projectBootstrapMenu');
+  const key = activeChatKey();
+  if (!key) {
+    menu.innerHTML = '<div class="sys bootstrapEmpty">Open a chat to edit its project inputs.</div>';
+    return;
+  }
+  menu.innerHTML = '<div class="sys bootstrapEmpty">Loading project inputs…</div>';
+  const bootstrap = await api('/api/agent-bootstrap', undefined, { key, guardChat: true, followKey: false });
+  if (bootstrap.error || key !== activeChatKey()) return;
+  const files = bootstrap.files;
+  const projectInputs = files.filter((file) => file.scope === 'project' && bootstrapInputKind(file)
+    && ((file.exists && file.active) || file.prefilled));
+  const projectResources = files.filter((file) => file.exists && file.active && file.scope !== 'global');
+  const globalTargets = files.filter((file) => file.target && file.scope === 'global');
+  const editors = projectInputs.map((file) => {
+    const kind = bootstrapInputKind(file);
+    const global = globalTargets.find((target) => target.kinds.includes(kind));
+    return bootstrapFileEditor(file, {
+      saveLabel: 'Save for this project',
+      promoteId: global?.id,
+      removable: Boolean(file.target && file.scope === 'project'),
+    });
+  }).join('');
+  menu.innerHTML = `
+    <div class="projectBootstrapHead"><b>Project agent input</b><code title="${esc(bootstrap.cwd)}">${esc(bootstrap.cwd)}</code></div>
+    <div class="projectBootstrapScroll">
+      ${bootstrapPromptPreview(bootstrap.effectivePrompt)}
+      ${editors || '<div class="sys bootstrapEmpty">No project-specific instruction file is currently passed to the agent.</div>'}
+      <div class="bootstrapCatalogHead"><b>Loaded project resources (${projectResources.length})</b><span class="sys">Always visible</span></div>
+      <div class="bootstrapResourceList">${bootstrapResourceList(projectResources)}</div>
+    </div>
+    <div class="bootstrapActions projectBootstrapFoot">
+      <button class="btn outline" id="projectBootstrapReload">Reload for the next turn</button>
+      <span class="sys" id="projectBootstrapMessage"></span>
+    </div>`;
+  bindBootstrapFileActions(menu, { key, refresh: renderProjectBootstrapMenu });
+  $('projectBootstrapReload').addEventListener('click', async () => {
+    const button = $('projectBootstrapReload');
+    button.disabled = true;
+    const result = await post('/api/agent-bootstrap/reload', {}, { key, followKey: false });
+    button.disabled = false;
+    $('projectBootstrapMessage').textContent = result.error ? result.error : 'Reloaded';
+    if (!result.error) await renderProjectBootstrapMenu();
+  });
+}
+
 // settings page sections listed in the sidebar (in place of the chats)
 const SETTINGS_SECTIONS = [
   ['analytics', 'Cost analytics'],
@@ -3666,33 +3897,10 @@ async function renderSettings() {
       }).join('')}
     </div>`).join('');
 
-  const editorLabel = c.platform?.os === 'win32' ? 'Open in Notepad' : 'Open in text editor';
-  const bootstrapTargets = bootstrap.files.filter((file) => file.target);
-  const loadedResources = bootstrap.files.filter((file) => file.active && file.exists);
-  const bootstrapEditors = bootstrapTargets.map((file) => `
-    <details class="bootstrapFile" ${file.exists ? '' : 'open'}>
-      <summary>
-        <span><b>${esc(file.label)}</b><code>${esc(file.path)}</code></span>
-        <span class="bootstrapBadges"><span class="badge">${esc(file.scope)}</span>
-          <span class="badge ${file.active ? 'ok' : ''}">${file.symlink ? 'symlink blocked' : (file.active ? 'active' : (file.exists ? 'shadowed' : 'missing'))}</span></span>
-      </summary>
-      ${file.tooLarge
-        ? '<div class="sys bootstrapNotice">This file is larger than 512 KiB. Open it in the native editor.</div>'
-        : `<textarea class="bootstrapEditor" data-bootstrap-editor="${file.id}" rows="8"
-             placeholder="Write the instructions pi should load…">${esc(file.content ?? '')}</textarea>`}
-      <div class="bootstrapActions">
-        ${file.tooLarge || file.symlink ? '' : `<button class="btn teal" data-bootstrap-save="${file.id}">${file.exists ? 'Save' : 'Create file'}</button>`}
-        ${file.exists && c.platform?.openTextFile ? `<button class="btn outline" data-bootstrap-open="${file.id}">${editorLabel}</button>` : ''}
-        ${file.exists ? `<button class="btn outline danger" data-bootstrap-delete="${file.id}">Remove override</button>` : ''}
-        <span class="sys" data-bootstrap-message="${file.id}"></span>
-      </div>
-    </details>`).join('');
-  const resourceRows = loadedResources.map((file) => `
-    <div class="bootstrapResource">
-      <span><b>${esc(file.path.split(/[\\/]/).pop())}</b><code>${esc(file.path)}</code></span>
-      <span class="bootstrapBadges">${file.kinds.map((kind) => `<span class="badge">${esc(kind)}</span>`).join('')}
-        ${c.platform?.openTextFile ? `<button class="btn outline mini" data-bootstrap-open="${file.id}">${editorLabel}</button>` : ''}</span>
-    </div>`).join('');
+  applyPlatformCapabilities(c.platform);
+  const globalInputs = bootstrap.files.filter((file) => (file.exists || file.prefilled) && file.scope === 'global' && bootstrapInputKind(file));
+  const globalResources = bootstrap.files.filter((file) => file.exists && file.active && file.scope === 'global');
+  const bootstrapEditors = globalInputs.map((file) => bootstrapFileEditor(file, { removable: Boolean(file.target) })).join('');
   const bootstrapTools = bootstrap.tools.map((tool) => `
     <label class="bootstrapTool" title="${esc(tool.description)}">
       <input type="checkbox" data-bootstrap-tool="${esc(tool.name)}" ${tool.selected ? 'checked' : ''}>
@@ -3706,15 +3914,17 @@ async function renderSettings() {
   body.innerHTML = `
     <div class="sec" id="sec-agent">
       <h3>Agent bootstrap</h3>
-      <p class="lead">Control the files and tools pi loads before the first prompt in <code>${esc(bootstrap.cwd)}</code>. Empty drafts reload automatically; an existing chat changes only when you explicitly reload it.</p>
+      <p class="lead">Global inputs shared by pi and every project. Project-specific inputs are edited from the <b>Agent input</b> menu in each chat.</p>
 
-      <h4 class="bootstrapHeading">Initial prompt files</h4>
-      <div class="card bootstrapEditors">${bootstrapEditors}</div>
+      ${bootstrapPromptPreview(bootstrap.effectivePrompt, { open: true })}
 
-      <details class="card bootstrapCatalog">
-        <summary><b>Loaded resources (${loadedResources.length})</b><span class="sys">context, prompts, skills and extensions</span></summary>
-        <div class="bootstrapResourceList">${resourceRows || '<div class="sys">No file-based resources loaded</div>'}</div>
-      </details>
+      <h4 class="bootstrapHeading">Editable global sources</h4>
+      <div class="card bootstrapEditors">${bootstrapEditors || '<div class="sys bootstrapEmpty">No global instruction file is currently passed to the agent.</div>'}</div>
+
+      <div class="card bootstrapCatalog">
+        <div class="bootstrapCatalogHead"><b>Loaded global resources (${globalResources.length})</b><span class="sys">context, prompts, skills and extensions</span></div>
+        <div class="bootstrapResourceList">${bootstrapResourceList(globalResources)}</div>
+      </div>
 
       <h4 class="bootstrapHeading">Tools for agent sessions</h4>
       <div class="card bootstrapTools">
@@ -3730,11 +3940,6 @@ async function renderSettings() {
         <summary><b>Available slash commands (${bootstrap.commands.length})</b><span class="sys">extensions, prompt templates and skills</span></summary>
         <div class="bootstrapResourceList">${bootstrapCommands || '<div class="sys">No slash commands loaded</div>'}</div>
       </details>
-
-      <div class="bootstrapActions">
-        <button class="btn outline" id="bootstrapReload">Reload current chat for the next turn</button>
-        <span class="sys" id="bootstrapReloadMsg"></span>
-      </div>
     </div>
 
     <div class="sec" id="sec-pi">
@@ -3761,7 +3966,7 @@ async function renderSettings() {
       <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
       <div class="themeGrid">${LOGO_STYLES.map((s) => `
         <button class="themeCard logoStyleCard" data-l="${s.id}">
-          <span class="prev">${['openrouter', 'openai', 'google', 'kimi'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
+          <span class="prev">${['anthropic', 'openai', 'glm', 'openrouter'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
           <span class="nm">${esc(s.name)}</span>
         </button>`).join('')}</div>
     </div>
@@ -4184,36 +4389,12 @@ async function renderSettings() {
   });
 
   /* ---- agent bootstrap ---- */
-  body.querySelectorAll('[data-bootstrap-open]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      await post('/api/agent-bootstrap/file/open', { id: button.dataset.bootstrapOpen });
-      button.disabled = false;
-    });
-  });
-  body.querySelectorAll('[data-bootstrap-save]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const id = button.dataset.bootstrapSave;
-      const editor = body.querySelector(`[data-bootstrap-editor="${id}"]`);
-      const message = body.querySelector(`[data-bootstrap-message="${id}"]`);
-      button.disabled = true;
-      const result = await sendJson('PUT', '/api/agent-bootstrap/file', { id, content: editor?.value ?? '' });
-      button.disabled = false;
-      if (result.error) { if (message) message.textContent = result.error; return; }
-      toast('Agent input saved');
+  bindBootstrapFileActions(body, {
+    key: renderedChatKey,
+    refresh: async () => {
       await renderSettings();
       $('sec-agent')?.scrollIntoView({ block: 'start' });
-    });
-  });
-  body.querySelectorAll('[data-bootstrap-delete]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      if (!confirm('Remove this prompt override file? This cannot be undone.')) return;
-      const result = await sendJson('DELETE', '/api/agent-bootstrap/file', { id: button.dataset.bootstrapDelete });
-      if (result.error) return;
-      toast('Agent input removed');
-      await renderSettings();
-      $('sec-agent')?.scrollIntoView({ block: 'start' });
-    });
+    },
   });
   $('bootstrapToolsSave').addEventListener('click', async () => {
     const tools = $$('[data-bootstrap-tool]:checked', body).map((input) => input.dataset.bootstrapTool);
@@ -4227,14 +4408,6 @@ async function renderSettings() {
     await renderSettings();
     $('sec-agent')?.scrollIntoView({ block: 'start' });
   });
-  $('bootstrapReload').addEventListener('click', async () => {
-    const button = $('bootstrapReload');
-    button.disabled = true;
-    const result = await post('/api/agent-bootstrap/reload', {});
-    button.disabled = false;
-    $('bootstrapReloadMsg').textContent = result.error ? result.error : 'Reloaded for the next turn';
-  });
-
   /* ---- save handlers ---- */
   async function saveSetting(key, value, okEl) {
     const r = await post('/api/settings', { key, value });
@@ -4278,8 +4451,8 @@ async function renderSettings() {
   const authedProviders = [...new Set(authedModels.map((m) => m.provider))].sort();
   let enabledPatterns = c.options?.enabledModels ?? [];
 
-  const checkbox = (pattern, label, on) =>
-    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}> ${esc(label)}</label>`;
+  const checkbox = (pattern, label, on, provider, modelId = '') =>
+    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}>${providerIconHtml(provider, modelId)} ${esc(label)}</label>`;
 
   function drawEnabled() {
     const on = new Set(enabledPatterns);
@@ -4287,13 +4460,13 @@ async function renderSettings() {
       ? `${enabledPatterns.length} active patterns: ${enabledPatterns.join(', ')}`
       : 'Empty list: every model of the authenticated providers is enabled.';
     $('enabledProviders').innerHTML = authedProviders
-      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)))).join('')
+      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)), p)).join('')
       || '<div class="sys">No authenticated provider</div>';
     const q = $('enabledSearch').value.trim().toLowerCase();
     const list = authedModels.filter((m) => !q
       || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q));
     $('enabledModelList').innerHTML = list
-      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)))).join('')
+      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)), m.provider, m.id)).join('')
       || '<div class="sys">No model matches the search</div>';
   }
 
