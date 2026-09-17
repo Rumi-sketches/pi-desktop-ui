@@ -430,7 +430,8 @@ test('active composer exposes the approved actions and a persistent timed activi
   assert.match(indexSource, /id="responseSpinner"[\s\S]*id="responseActivityLabel">Thinking<\/span>/);
   assert.match(indexSource, /id="responseElapsed">00:00<\/span>/);
   assert.match(cssSource, /\.responseSpinnerRing\s*\{[^}]*border-radius:\s*50%/s);
-  assert.match(source, /classList\.toggle\('hide', !activityRunning\)/);
+  assert.match(source, /const modelActive = activityRunning && !chatState\.awaitingInput/);
+  assert.match(source, /classList\.toggle\('hide', !modelActive/);
   assert.match(source, /task closes only on agent_end/);
   assert.match(cssSource, /\.queuedPrompt\s*\{[^}]*grid-template-columns/s);
 });

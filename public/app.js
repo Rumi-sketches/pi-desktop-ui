@@ -762,6 +762,7 @@ function interactiveFormValues(card, definition) {
 function renderInteractiveForm(ev) {
   let card = ev.id ? toolCards.get(ev.id) : null;
   if (!card && ev.status === 'start') {
+    setAwaitingInput(true);
     const definition = ev.args ?? {};
     card = document.createElement('section');
     card.className = 'interactiveForm';
@@ -832,12 +833,14 @@ function renderInteractiveForm(ev) {
         return;
       }
       finishInteractiveForm(card, definition, { values: result.values });
+      setAwaitingInput(false);
     });
   }
   if (!card) return null;
   let definition = {};
   try { definition = JSON.parse(card.dataset.definition || '{}'); } catch {}
   if (ev.status === 'end') {
+    setAwaitingInput(false);
     const result = formResult(ev.output);
     finishInteractiveForm(card, definition, { values: result?.values ?? null, error: !!ev.isError || !result });
   }
@@ -1100,14 +1103,24 @@ function renderComposerState(chatState = activeChatState()) {
   // The streaming flag may be refreshed independently while the agent is
   // still alive. The task closes only on agent_end, so it owns this indicator.
   const activityRunning = !!chatState.agentTask && !chatState.agentTask.t1;
-  $('runState').classList.toggle('on', running);
+  // While a form awaits input the agent is idle: pause the activity UI.
+  const modelActive = activityRunning && !chatState.awaitingInput;
+  $('runState').classList.toggle('on', modelActive);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
-  $('responseSpinner').classList.toggle('hide', !activityRunning);
-  if (activityRunning) renderResponseActivity(chatState);
-  input.placeholder = running
+  $('responseSpinner').classList.toggle('hide', !modelActive || chatState.responsePhase !== RESPONSE_WAITING);
+  if (modelActive) renderResponseActivity(chatState);
+  input.placeholder = chatState.awaitingInput
+    ? 'Complete the form above to continue…'
+    : running
     ? 'Scrivi una nuova istruzione mentre l’agente lavora…'
     : 'Ask me anything…  (drop files and images here)';
+}
+function setAwaitingInput(on, key = activeChatKey() ?? renderedChatKey) {
+  const state = key ? uiState.chatState(key) : activeChatState();
+  state.awaitingInput = on;
+  if (key === activeChatKey() || (!key && !activeChatKey())) renderComposerState(state);
+  setAgentTask(!on && state.streaming, state.turnModel, key);
 }
 const RESPONSE_ACTIVITY_WORDS = ['Thinking', 'Building', 'Cooking', 'Crafting', 'Working', 'Exploring', 'Solving'];
 function responseDuration(ms) {
@@ -1130,8 +1143,10 @@ function renderResponseActivity(chatState = activeChatState()) {
 }
 setInterval(() => {
   const state = activeChatState();
+  if (state.awaitingInput) return;
   if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
 }, 1000);
+
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
   const state = activeChatState();
@@ -1371,6 +1386,7 @@ function handleEvent(ev, ownerKey) {
       }
       applyQueueChange(ev.queuedPrompts ?? [], activeChatKey());
       setRunning(!!ev.running);
+      setAwaitingInput(!!ev.awaitingInput, activeChatKey());
       if (ev.running && !activeChatState().agentTask) setAgentTask(true, activeChatState().turnModel, activeChatKey());
       break;
     case 'queue':
@@ -2583,6 +2599,7 @@ async function loadHistory({
       : RESPONSE_WAITING;
   }
   setRunning(!!res.streaming);
+  setAwaitingInput(!!res.awaitingInput, key);
   renderQueuedPrompts(owner);
   if (res.streaming && !owner.agentTask) setAgentTask(true, res.turnModel, key);
   else if (!res.streaming && owner.agentTask && !owner.agentTask.t1) setAgentTask(false, null, key);

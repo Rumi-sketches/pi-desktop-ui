@@ -55,6 +55,7 @@ import {
   summarizeTool,
   supportedThinkingLevels,
   availableModels,
+  contextAwaitingInput,
   openContextKeys,
   runningContextKeys,
   tabCwd,
@@ -96,6 +97,7 @@ export async function handleEvents({ req, res, sessionKey }) {
  * @property {object} metrics canonical session totals, per-model attribution,
  *   optional Session work difference and nullable SDK context usage.
  * @property {boolean} streaming whether a turn is running right now.
+ * @property {boolean} awaitingInput whether that turn is paused on an interactive form.
  * @property {Array<{id: string, type: "steer"|"followUp", text: string,
  *   attachments: Array<{mimeType: string, bytes: number}>, bytes: number}>} queuedPrompts
  *   cancellable prompts pending in this context; attachment data is never exposed.
@@ -119,6 +121,7 @@ export async function handleGetState({ res, sessionKey }) {
     totals,
     metrics: ctx.metrics,
     streaming: contextIsBusy(ctx),
+    awaitingInput: contextAwaitingInput(ctx),
     queuedPrompts: ctx.promptQueue.publicItems(),
     // the UI hides the native buttons this machine cannot honour
     platform: await platformCapabilities(),
@@ -690,6 +693,7 @@ export async function handleGetHistory({ res, sessionKey }) {
     // whatever is streaming right now, so re-entering a busy chat shows it
     live: ctx.running ? ctx.live : [],
     streaming: ctx.running || session.isStreaming,
+    awaitingInput: contextAwaitingInput(ctx),
   });
 }
 
