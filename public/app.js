@@ -1150,7 +1150,6 @@ setInterval(() => {
   if (state.awaitingInput) return;
   if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
 }, 1000);
-
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
   const state = activeChatState();
@@ -2275,6 +2274,9 @@ function selectCurrentChatState(key = renderedChatKey) {
 function saveProjTabs() {
   localStorage.setItem('piProjTabs', JSON.stringify({ tabs: projState.tabs, active: activeProjectCwd() }));
 }
+// Chromium protects drag payloads between dragstart and drop, so dragover
+// cannot reliably read dataTransfer. Keep the source in page state while the
+// gesture is active; the payload remains a fallback for the final drop.
 function reorderProjectTabs(tabs, source, target, after) {
   const from = tabs.indexOf(source);
   const targetIndex = tabs.indexOf(target);

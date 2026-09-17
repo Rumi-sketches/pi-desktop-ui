@@ -230,7 +230,10 @@ input, textarea, select { font: inherit; color: inherit; }
 #projTabs .logo-tile:hover { background: color-mix(in srgb, var(--teal) 88%, var(--txt)); }
 /* the tabs are what scrolls, not the strip: min-width 0 here plus flex:none on each
    tab keeps "+" and the π tile in place however many projects are open */
-#projTabList { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+#projTabList {
+  display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
 #projTabList::-webkit-scrollbar { display: none; }
 #projAddDd { flex: none; }
 .projTab {

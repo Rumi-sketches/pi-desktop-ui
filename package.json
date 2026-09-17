@@ -1,6 +1,6 @@
 {
   "name": "pi-desktop-ui",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A local desktop app for the pi coding agent: chat, sessions, diffs and usage analytics in an Electron window, or in the browser.",
   "license": "MIT",
   "author": "Rumi-sketches <rumi.sketches@outlook.com>",
