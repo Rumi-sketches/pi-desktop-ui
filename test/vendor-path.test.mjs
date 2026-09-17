@@ -31,6 +31,10 @@ test("the provider icon module is a served page asset", async () => {
 
 test("vendorFilePath: an allowed asset resolves inside node_modules", () => {
   assert.equal(vendorFilePath("/vendor/marked/lib/marked.esm.js"), path.join(VENDOR_ROOT, "marked/lib/marked.esm.js"));
+  assert.equal(
+    vendorFilePath("/vendor/@lobehub/icons-static-png/light/openai.png"),
+    path.join(VENDOR_ROOT, "@lobehub/icons-static-png/light/openai.png"),
+  );
 });
 
 test("vendorFilePath: a percent-escape is decoded, not passed through", () => {
