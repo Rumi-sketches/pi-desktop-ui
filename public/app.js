@@ -1089,11 +1089,16 @@ async function cancelQueuedPrompt(id) {
 }
 function renderComposerState(chatState = activeChatState()) {
   const running = chatState.streaming;
-  const modelActive = running && !chatState.awaitingInput;
+  // The streaming flag may be refreshed independently while the agent is
+  // still alive. The task closes only on agent_end, so it owns this indicator.
+  const activityRunning = !!chatState.agentTask && !chatState.agentTask.t1;
+  // While a form awaits input the agent is idle: pause the activity UI.
+  const modelActive = activityRunning && !chatState.awaitingInput;
   $('runState').classList.toggle('on', modelActive);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
   $('responseSpinner').classList.toggle('hide', !modelActive || chatState.responsePhase !== RESPONSE_WAITING);
+  if (modelActive) renderResponseActivity(chatState);
   input.placeholder = chatState.awaitingInput
     ? 'Complete the form above to continue…'
     : running
@@ -1106,6 +1111,31 @@ function setAwaitingInput(on, key = activeChatKey() ?? renderedChatKey) {
   if (key === activeChatKey() || (!key && !activeChatKey())) renderComposerState(state);
   setAgentTask(!on && state.streaming, state.turnModel, key);
 }
+const RESPONSE_ACTIVITY_WORDS = ['Thinking', 'Building', 'Cooking', 'Crafting', 'Working', 'Exploring', 'Solving'];
+function responseDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+function renderResponseActivity(chatState = activeChatState()) {
+  if (!chatState.responseActivityLabel) {
+    chatState.responseActivityLabel = RESPONSE_ACTIVITY_WORDS[Math.floor(Math.random() * RESPONSE_ACTIVITY_WORDS.length)];
+  }
+  if (!chatState.responseStartedAt) chatState.responseStartedAt = Date.now();
+  $('responseActivityLabel').textContent = chatState.responseActivityLabel;
+  $('responseElapsed').textContent = responseDuration(Date.now() - chatState.responseStartedAt);
+  $('responseSpinner').setAttribute('aria-label', `${chatState.responseActivityLabel}, ${$('responseElapsed').textContent}`);
+}
+setInterval(() => {
+  const state = activeChatState();
+  if (state.awaitingInput) return;
+  if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
+}, 1000);
+
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
   const state = activeChatState();
@@ -1117,6 +1147,8 @@ function setRunning(on, { newResponse = false } = {}) {
   } else {
     state.streaming = false;
     state.responsePhase = RESPONSE_IDLE;
+    state.responseStartedAt = null;
+    state.responseActivityLabel = null;
   }
   renderComposerState(state);
   if (!on) { currentAssistant = currentThinking = currentTurn = null; }
@@ -2663,8 +2695,13 @@ function setAgentTask(on, model, key = activeChatKey()) {
     owner.agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
   } else if (!on && owner.agentTask && !owner.agentTask.t1) {
     owner.agentTask.t1 = Date.now();
+    owner.responseStartedAt = null;
+    owner.responseActivityLabel = null;
   }
-  if (key === activeChatKey()) syncTasks();
+  if (key === activeChatKey()) {
+    syncTasks();
+    if (typeof renderComposerState === 'function') renderComposerState(owner);
+  }
 }
 function taskList(key = activeChatKey()) {
   const owner = taskOwner(key);
