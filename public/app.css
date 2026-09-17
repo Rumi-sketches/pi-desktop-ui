@@ -448,6 +448,7 @@ header .spacer { flex: 1 1 auto; min-width: 0; }
 }
 #mainHeader:not([data-view="chat"]) > .crumb,
 #mainHeader:not([data-view="chat"]) > #gitDd,
+#mainHeader:not([data-view="chat"]) > #projectBootstrapDd,
 #mainHeader:not([data-view="chat"]) > .spacer,
 #mainHeader:not([data-view="chat"]) > #runState,
 #mainHeader:not([data-view="chat"]) > #ctxBar,
@@ -968,15 +969,15 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 
 .bootstrapHeading { margin: 1rem 0 .45rem; font-size: .82rem; color: var(--teal); }
 .bootstrapEditors { overflow: hidden; }
-.bootstrapFile { border-bottom: 1px solid var(--line); }
-.bootstrapFile:last-child { border-bottom: none; }
-.bootstrapFile > summary, .bootstrapCatalog > summary {
+.bootstrapEditorCard { border-bottom: 1px solid var(--line); }
+.bootstrapEditorCard:last-child { border-bottom: none; }
+.bootstrapFileHead, .bootstrapCatalogHead {
   display: flex; justify-content: space-between; gap: .8rem; align-items: center;
-  padding: .75rem 1rem; cursor: pointer;
+  padding: .75rem 1rem;
 }
-.bootstrapFile > summary > span:first-child, .bootstrapResource > span:first-child { min-width: 0; }
-.bootstrapFile summary b, .bootstrapResource b { display: block; font-size: .82rem; }
-.bootstrapFile summary code, .bootstrapResource code {
+.bootstrapFileHead > span:first-child, .bootstrapResource > span:first-child { min-width: 0; }
+.bootstrapFileHead b, .bootstrapResource b { display: block; font-size: .82rem; }
+.bootstrapFileHead code, .bootstrapResource code, .projectBootstrapHead code {
   display: block; margin-top: .15rem; color: var(--faint); font-size: .7rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -987,12 +988,31 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   border: 1px solid var(--line-2); border-radius: var(--r-3); font: .76rem/1.5 var(--font-mono);
 }
 .bootstrapEditor:focus { outline: none; border-color: var(--teal); }
+.bootstrapPromptPreview { margin-top: .7rem; overflow: hidden; }
+.bootstrapPromptPreview > summary {
+  display: flex; justify-content: space-between; align-items: center; gap: .8rem;
+  padding: .75rem 1rem; cursor: pointer;
+}
+.bootstrapPromptPreview[open] > summary { border-bottom: 1px solid var(--line); }
+.bootstrapPromptPreview > .bootstrapEditor { margin-top: .7rem; min-height: 240px; }
 .bootstrapActions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: 0 1rem .8rem; }
 .bootstrapNotice { padding: 0 1rem .7rem; }
 .bootstrapCatalog { margin-top: .7rem; }
-.bootstrapCatalog > summary .sys { margin-left: auto; }
 .bootstrapResourceList { max-height: 360px; overflow: auto; padding: 0 1rem .65rem; }
 .bootstrapResource { display: flex; justify-content: space-between; align-items: center; gap: .7rem; padding: .45rem 0; border-top: 1px solid var(--line); }
+.bootstrapResourceActions { display: flex; align-items: center; justify-content: flex-end; gap: .65rem; flex: 0 0 auto; }
+.bootstrapResourceKinds { display: flex; align-items: center; gap: .35rem; }
+.bootstrapOpen { display: inline-flex; align-items: center; gap: .35rem; min-width: 124px; justify-content: center; }
+.bootstrapEmpty { padding: 1rem; }
+.bootstrapAdditions { margin-top: .55rem; }
+.bootstrapAdditions > .sys { display: block; margin-bottom: .35rem; }
+.bootstrapAdd {
+  margin-bottom: .35rem; overflow: hidden; background: var(--card-bg);
+  border: 1px solid var(--line); border-radius: var(--r-3);
+}
+.bootstrapAdd > summary { padding: .55rem .7rem; cursor: pointer; color: var(--txt-dim); font-size: .78rem; }
+.bootstrapAdd[open] > summary { border-bottom: 1px solid var(--line); color: var(--txt); }
+.bootstrapAdd .bootstrapEditorCard { border-bottom: 0; }
 .btn.mini { padding: .24rem .45rem; font-size: .68rem; }
 .btn.danger { color: var(--crit); border-color: var(--crit); }
 .bootstrapTools { padding: .8rem 1rem; }
@@ -1001,6 +1021,19 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .bootstrapTool b { display: block; font: .78rem var(--font-mono); }
 .bootstrapTool small { display: block; margin-top: .08rem; color: var(--faint); font-size: .66rem; }
 .bootstrapTools > .bootstrapActions { padding: .8rem 0 0; }
+
+#projectBootstrapDd .dd-menu {
+  position: fixed; top: 3.4rem; left: auto; right: 1rem;
+  width: min(680px, calc(100vw - 2rem)); max-height: 82vh;
+  padding: 0; overflow: hidden;
+}
+.projectBootstrapHead { padding: .75rem 1rem; border-bottom: 1px solid var(--line); }
+.projectBootstrapHead b { display: block; font-size: .86rem; }
+.projectBootstrapScroll { max-height: calc(82vh - 112px); overflow-y: auto; }
+.projectBootstrapScroll > .bootstrapEditorCard { background: var(--card-bg); }
+.projectBootstrapScroll > .bootstrapAdditions { padding: .7rem 1rem .35rem; }
+.projectBootstrapScroll .bootstrapResourceList { max-height: none; }
+.projectBootstrapFoot { padding: .7rem 1rem; border-top: 1px solid var(--line); background: var(--panel-2); }
 
 /* settings form */
 .setRow { display: grid; grid-template-columns: 1fr 260px; gap: .8rem; align-items: start; padding: .7rem 0; border-bottom: 1px solid var(--line); }
@@ -1248,6 +1281,8 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 
   /* dropdown menus: keep on-screen on narrow viewports */
   .dd-menu { position: fixed; left: .5rem; right: .5rem; top: auto; min-width: 0; width: auto; max-height: 70vh; }
+  #projectBootstrapDd .dd-menu { top: 3.2rem; left: .5rem; right: .5rem; width: auto; max-height: calc(100dvh - 3.7rem); }
+  #projectBootstrapBtn span { display: none; }
   .usagePop { position: fixed; left: .5rem; right: .5rem; bottom: 4.2rem; min-width: 0; }
   /* no hover on touch: there the icon just opens the sidebar */
   #quickChats { display: none !important; }
@@ -1265,8 +1300,9 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   .setRow { grid-template-columns: 1fr; gap: .35rem; }
   .setRow .ctl { justify-content: flex-start; }
   .setRow input[type=text], .setRow input[type=number], .setRow select { font-size: 16px; }
-  .bootstrapFile > summary, .bootstrapResource { align-items: flex-start; flex-direction: column; }
+  .bootstrapFileHead, .bootstrapResource { align-items: flex-start; flex-direction: column; }
   .bootstrapBadges { flex-wrap: wrap; }
+  .bootstrapResourceActions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   .kv { grid-template-columns: 1fr; gap: .1rem .5rem; }
   .themeGrid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 
