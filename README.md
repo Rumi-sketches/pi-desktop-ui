@@ -120,7 +120,7 @@ PORT=3778 npm start
   last eight visited chats also keep their rendered view, scroll position, composer text and
   in-memory attachments. Returning to one of them paints the cached view before HTTP sync starts.
 - **Streaming answers** with markdown, syntax highlighting, thinking blocks and tool calls rendered
-  as they arrive. A text-free spinner waits for the first model text; thinking and tool activity do
+  as they arrive. A timed activity indicator stays visible for the whole run; thinking and tool activity do
   not dismiss it.
 - **Native interactive forms.** The built-in `request_form` tool lets the model collect related text,
   numeric, date, single-choice, multi-choice and confirmation fields in one accessible form. The tool

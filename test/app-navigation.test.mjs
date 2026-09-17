@@ -434,13 +434,15 @@ test('copying a compact skill mention cannot fall back to hidden body text', asy
   assert.equal(copied, '/skill:release-check --strict');
 });
 
-test('active composer exposes the approved two actions and a text-free spinner', () => {
+test('active composer exposes the approved actions and a persistent timed activity indicator', () => {
   assert.match(indexSource, /data-queue-type="steer"[^>]*>Reindirizza<\/button>/);
   assert.match(indexSource, /data-queue-type="followUp"[^>]*>Dopo<\/button>/);
-  const spinner = indexSource.match(/<div id="responseSpinner"[^>]*><\/div>/)?.[0] ?? '';
-  assert.ok(spinner, 'response spinner exists');
-  assert.doesNotMatch(spinner, />\s*[^<\s]/, 'spinner has no visible text');
-  assert.match(cssSource, /#responseSpinner\s*\{[^}]*border-radius:\s*50%/s);
+  assert.match(indexSource, /id="responseSpinner"[\s\S]*id="responseActivityLabel">Thinking<\/span>/);
+  assert.match(indexSource, /id="responseElapsed">00:00<\/span>/);
+  assert.match(cssSource, /\.responseSpinnerRing\s*\{[^}]*border-radius:\s*50%/s);
+  assert.match(source, /const modelActive = activityRunning && !chatState\.awaitingInput/);
+  assert.match(source, /classList\.toggle\('hide', !modelActive/);
+  assert.match(source, /task closes only on agent_end/);
   assert.match(cssSource, /\.queuedPrompt\s*\{[^}]*grid-template-columns/s);
 });
 

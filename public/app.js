@@ -20,6 +20,17 @@ import {
 import { createTransport, withSessionKey } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 
+// During a development hot reload the page can briefly outlive the server that
+// learned the new icon route. Never expose the browser's broken-image glyph:
+// the next full app restart loads the PNG, while this run degrades cleanly.
+document.addEventListener('error', (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.classList.contains('logo-img')) return;
+  const logo = image.closest('.logo');
+  if (!logo) return;
+  logo.classList.add('icon-failed');
+}, true);
+
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
 // scripts and land on `window` with no declarations of their own. One untyped
 // view of the global object, instead of a cast per call site.
@@ -751,6 +762,7 @@ function interactiveFormValues(card, definition) {
 function renderInteractiveForm(ev) {
   let card = ev.id ? toolCards.get(ev.id) : null;
   if (!card && ev.status === 'start') {
+    setAwaitingInput(true);
     const definition = ev.args ?? {};
     card = document.createElement('section');
     card.className = 'interactiveForm';
@@ -821,12 +833,14 @@ function renderInteractiveForm(ev) {
         return;
       }
       finishInteractiveForm(card, definition, { values: result.values });
+      setAwaitingInput(false);
     });
   }
   if (!card) return null;
   let definition = {};
   try { definition = JSON.parse(card.dataset.definition || '{}'); } catch {}
   if (ev.status === 'end') {
+    setAwaitingInput(false);
     const result = formResult(ev.output);
     finishInteractiveForm(card, definition, { values: result?.values ?? null, error: !!ev.isError || !result });
   }
@@ -1086,14 +1100,53 @@ async function cancelQueuedPrompt(id) {
 }
 function renderComposerState(chatState = activeChatState()) {
   const running = chatState.streaming;
-  $('runState').classList.toggle('on', running);
+  // The streaming flag may be refreshed independently while the agent is
+  // still alive. The task closes only on agent_end, so it owns this indicator.
+  const activityRunning = !!chatState.agentTask && !chatState.agentTask.t1;
+  // While a form awaits input the agent is idle: pause the activity UI.
+  const modelActive = activityRunning && !chatState.awaitingInput;
+  $('runState').classList.toggle('on', modelActive);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
-  $('responseSpinner').classList.toggle('hide', chatState.responsePhase !== RESPONSE_WAITING);
-  input.placeholder = running
+  $('responseSpinner').classList.toggle('hide', !modelActive || chatState.responsePhase !== RESPONSE_WAITING);
+  if (modelActive) renderResponseActivity(chatState);
+  input.placeholder = chatState.awaitingInput
+    ? 'Complete the form above to continue…'
+    : running
     ? 'Scrivi una nuova istruzione mentre l’agente lavora…'
     : 'Ask me anything…  (drop files and images here)';
 }
+function setAwaitingInput(on, key = activeChatKey() ?? renderedChatKey) {
+  const state = key ? uiState.chatState(key) : activeChatState();
+  state.awaitingInput = on;
+  if (key === activeChatKey() || (!key && !activeChatKey())) renderComposerState(state);
+  setAgentTask(!on && state.streaming, state.turnModel, key);
+}
+const RESPONSE_ACTIVITY_WORDS = ['Thinking', 'Building', 'Cooking', 'Crafting', 'Working', 'Exploring', 'Solving'];
+function responseDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+function renderResponseActivity(chatState = activeChatState()) {
+  if (!chatState.responseActivityLabel) {
+    chatState.responseActivityLabel = RESPONSE_ACTIVITY_WORDS[Math.floor(Math.random() * RESPONSE_ACTIVITY_WORDS.length)];
+  }
+  if (!chatState.responseStartedAt) chatState.responseStartedAt = Date.now();
+  $('responseActivityLabel').textContent = chatState.responseActivityLabel;
+  $('responseElapsed').textContent = responseDuration(Date.now() - chatState.responseStartedAt);
+  $('responseSpinner').setAttribute('aria-label', `${chatState.responseActivityLabel}, ${$('responseElapsed').textContent}`);
+}
+setInterval(() => {
+  const state = activeChatState();
+  if (state.awaitingInput) return;
+  if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
+}, 1000);
+
 function setRunning(on, { newResponse = false } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
   const state = activeChatState();
@@ -1105,6 +1158,8 @@ function setRunning(on, { newResponse = false } = {}) {
   } else {
     state.streaming = false;
     state.responsePhase = RESPONSE_IDLE;
+    state.responseStartedAt = null;
+    state.responseActivityLabel = null;
   }
   renderComposerState(state);
   if (!on) { currentAssistant = currentThinking = currentTurn = null; }
@@ -1331,6 +1386,7 @@ function handleEvent(ev, ownerKey) {
       }
       applyQueueChange(ev.queuedPrompts ?? [], activeChatKey());
       setRunning(!!ev.running);
+      setAwaitingInput(!!ev.awaitingInput, activeChatKey());
       if (ev.running && !activeChatState().agentTask) setAgentTask(true, activeChatState().turnModel, activeChatKey());
       break;
     case 'queue':
@@ -1476,10 +1532,11 @@ function renderModelMenu() {
     const headBox = sub.getBoundingClientRect();
     fly.style.left = '0px'; fly.style.top = '0px';       // measure at a known position
     const w = fly.offsetWidth, h = fly.offsetHeight;
-    // glued to the provider menu edge (the two borders overlap by 1px)
-    const flip = menuBox.right - 1 + w > window.innerWidth - 8;
+    // Keep a hairline gap between the two independently rounded panels.
+    const flyoutGap = 3;
+    const flip = menuBox.right + flyoutGap + w > window.innerWidth - 8;
     fly.classList.toggle('flip', flip);
-    fly.style.left = (flip ? Math.max(8, menuBox.left + 1 - w) : menuBox.right - 1) + 'px';
+    fly.style.left = (flip ? Math.max(8, menuBox.left - flyoutGap - w) : menuBox.right + flyoutGap) + 'px';
     fly.style.top = Math.max(8, Math.min(headBox.top - 5, window.innerHeight - 8 - h)) + 'px';
   };
   const closeSub = (sub) => { sub.classList.remove('open'); sub._fly.classList.remove('on'); };
@@ -2550,6 +2607,7 @@ async function loadHistory({
       : RESPONSE_WAITING;
   }
   setRunning(!!res.streaming);
+  setAwaitingInput(!!res.awaitingInput, key);
   renderQueuedPrompts(owner);
   if (res.streaming && !owner.agentTask) setAgentTask(true, res.turnModel, key);
   else if (!res.streaming && owner.agentTask && !owner.agentTask.t1) setAgentTask(false, null, key);
@@ -2657,8 +2715,13 @@ function setAgentTask(on, model, key = activeChatKey()) {
     owner.agentTask = { name: 'Agent', summary: model?.name || model?.id || '', t0: Date.now(), t1: null, error: false };
   } else if (!on && owner.agentTask && !owner.agentTask.t1) {
     owner.agentTask.t1 = Date.now();
+    owner.responseStartedAt = null;
+    owner.responseActivityLabel = null;
   }
-  if (key === activeChatKey()) syncTasks();
+  if (key === activeChatKey()) {
+    syncTasks();
+    if (typeof renderComposerState === 'function') renderComposerState(owner);
+  }
 }
 function taskList(key = activeChatKey()) {
   const owner = taskOwner(key);
@@ -3769,7 +3832,7 @@ async function renderSettings() {
       <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
       <div class="themeGrid">${LOGO_STYLES.map((s) => `
         <button class="themeCard logoStyleCard" data-l="${s.id}">
-          <span class="prev">${['openrouter', 'openai', 'google', 'kimi'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
+          <span class="prev">${['anthropic', 'openai', 'glm', 'openrouter'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
           <span class="nm">${esc(s.name)}</span>
         </button>`).join('')}</div>
     </div>
@@ -4286,8 +4349,8 @@ async function renderSettings() {
   const authedProviders = [...new Set(authedModels.map((m) => m.provider))].sort();
   let enabledPatterns = c.options?.enabledModels ?? [];
 
-  const checkbox = (pattern, label, on) =>
-    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}> ${esc(label)}</label>`;
+  const checkbox = (pattern, label, on, provider, modelId = '') =>
+    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}>${providerIconHtml(provider, modelId)} ${esc(label)}</label>`;
 
   function drawEnabled() {
     const on = new Set(enabledPatterns);
@@ -4295,13 +4358,13 @@ async function renderSettings() {
       ? `${enabledPatterns.length} active patterns: ${enabledPatterns.join(', ')}`
       : 'Empty list: every model of the authenticated providers is enabled.';
     $('enabledProviders').innerHTML = authedProviders
-      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)))).join('')
+      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)), p)).join('')
       || '<div class="sys">No authenticated provider</div>';
     const q = $('enabledSearch').value.trim().toLowerCase();
     const list = authedModels.filter((m) => !q
       || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q));
     $('enabledModelList').innerHTML = list
-      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)))).join('')
+      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)), m.provider, m.id)).join('')
       || '<div class="sys">No model matches the search</div>';
   }
 
