@@ -20,6 +20,17 @@ import {
 import { createTransport, withSessionKey } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 
+// During a development hot reload the page can briefly outlive the server that
+// learned the new icon route. Never expose the browser's broken-image glyph:
+// the next full app restart loads the PNG, while this run degrades cleanly.
+document.addEventListener('error', (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.classList.contains('logo-img')) return;
+  const logo = image.closest('.logo');
+  if (!logo) return;
+  logo.classList.add('icon-failed');
+}, true);
+
 // The vendored libraries (marked, DOMPurify, highlight.js) load as classic
 // scripts and land on `window` with no declarations of their own. One untyped
 // view of the global object, instead of a cast per call site.
@@ -1505,10 +1516,11 @@ function renderModelMenu() {
     const headBox = sub.getBoundingClientRect();
     fly.style.left = '0px'; fly.style.top = '0px';       // measure at a known position
     const w = fly.offsetWidth, h = fly.offsetHeight;
-    // glued to the provider menu edge (the two borders overlap by 1px)
-    const flip = menuBox.right - 1 + w > window.innerWidth - 8;
+    // Keep a hairline gap between the two independently rounded panels.
+    const flyoutGap = 3;
+    const flip = menuBox.right + flyoutGap + w > window.innerWidth - 8;
     fly.classList.toggle('flip', flip);
-    fly.style.left = (flip ? Math.max(8, menuBox.left + 1 - w) : menuBox.right - 1) + 'px';
+    fly.style.left = (flip ? Math.max(8, menuBox.left - flyoutGap - w) : menuBox.right + flyoutGap) + 'px';
     fly.style.top = Math.max(8, Math.min(headBox.top - 5, window.innerHeight - 8 - h)) + 'px';
   };
   const closeSub = (sub) => { sub.classList.remove('open'); sub._fly.classList.remove('on'); };
@@ -3795,7 +3807,7 @@ async function renderSettings() {
       <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model logos</h4>
       <div class="themeGrid">${LOGO_STYLES.map((s) => `
         <button class="themeCard logoStyleCard" data-l="${s.id}">
-          <span class="prev">${['openrouter', 'openai', 'google', 'kimi'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
+          <span class="prev">${['anthropic', 'openai', 'glm', 'openrouter'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
           <span class="nm">${esc(s.name)}</span>
         </button>`).join('')}</div>
     </div>
@@ -4312,8 +4324,8 @@ async function renderSettings() {
   const authedProviders = [...new Set(authedModels.map((m) => m.provider))].sort();
   let enabledPatterns = c.options?.enabledModels ?? [];
 
-  const checkbox = (pattern, label, on) =>
-    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}> ${esc(label)}</label>`;
+  const checkbox = (pattern, label, on, provider, modelId = '') =>
+    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}>${providerIconHtml(provider, modelId)} ${esc(label)}</label>`;
 
   function drawEnabled() {
     const on = new Set(enabledPatterns);
@@ -4321,13 +4333,13 @@ async function renderSettings() {
       ? `${enabledPatterns.length} active patterns: ${enabledPatterns.join(', ')}`
       : 'Empty list: every model of the authenticated providers is enabled.';
     $('enabledProviders').innerHTML = authedProviders
-      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)))).join('')
+      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)), p)).join('')
       || '<div class="sys">No authenticated provider</div>';
     const q = $('enabledSearch').value.trim().toLowerCase();
     const list = authedModels.filter((m) => !q
       || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q));
     $('enabledModelList').innerHTML = list
-      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)))).join('')
+      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)), m.provider, m.id)).join('')
       || '<div class="sys">No model matches the search</div>';
   }
 
