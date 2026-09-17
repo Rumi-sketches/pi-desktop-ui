@@ -5,7 +5,8 @@ backup/
 # PRD e stato del Ralph Loop: vivono fuori dal repo, in ~/Desktop/Projects/PRDs/<progetto>/
 PRDs/
 
-# project memory: local only
+# local agent instructions and project memory
+CLAUDE.md
 .memory/
 
 # editors / OS
