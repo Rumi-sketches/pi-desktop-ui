@@ -434,7 +434,7 @@ test('copying a compact skill mention cannot fall back to hidden body text', asy
   assert.equal(copied, '/skill:release-check --strict');
 });
 
-test('active composer exposes the approved actions and a persistent timed activity indicator', () => {
+test('active composer exposes the approved actions and pauses its persistent activity for forms', () => {
   assert.match(indexSource, /data-queue-type="steer"[^>]*>Reindirizza<\/button>/);
   assert.match(indexSource, /data-queue-type="followUp"[^>]*>Dopo<\/button>/);
   assert.match(indexSource, /id="responseSpinner"[\s\S]*id="responseActivityLabel">Thinking<\/span>/);
