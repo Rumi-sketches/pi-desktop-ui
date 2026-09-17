@@ -249,7 +249,14 @@
   <div id="chatView">
     <div id="chatWrap"><div id="chat"></div></div>
     <div id="composerWrap">
-      <div id="responseSpinner" class="hide" role="status" aria-label="Waiting for the response text"></div>
+      <div id="responseSpinner" class="hide" role="status" aria-live="polite">
+        <span class="responseSpinnerRing" aria-hidden="true"></span>
+        <span id="responseActivityLabel">Thinking</span>
+        <span class="responseTimer">
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5M9 2h6M12 2v3"/></svg>
+          <span id="responseElapsed">00:00</span>
+        </span>
+      </div>
       <form id="composer">
         <div class="cmdMenu" id="cmdMenu"></div>
         <div id="attachments"></div>
