@@ -15,6 +15,7 @@ import { startServer } from "../server.mjs";
 import { describeWork } from "../lifecycle.mjs";
 import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
+import { spellCheckerLanguages } from "./spellchecker-languages.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Sandboxed preloads run in Electron's restricted CommonJS environment.  An
@@ -169,6 +170,20 @@ function loadInto(win, url) {
   win.loadURL(url).catch((err) => fail(`Could not load ${url}`, err));
 }
 
+// Electron does not auto-detect the language of text typed on Windows and
+// Linux. Synchronize Chromium's active dictionaries with the OS preference
+// list instead of hard-coding the UI language or a product-specific list.
+function configureSpellChecker(contents) {
+  const preferred = app.getPreferredSystemLanguages();
+  const available = contents.session.availableSpellCheckerLanguages;
+  const languages = spellCheckerLanguages(preferred, available);
+  if (languages.length > 0) {
+    contents.session.setSpellCheckerLanguages(languages);
+  } else {
+    console.warn(`${PRODUCT_ID}: none of the preferred system languages has an available spell-check dictionary`);
+  }
+}
+
 // The restart button in the UI. Outside Electron the server spawns a
 // replacement process and dies; here the process *is* the app, so the server is
 // swapped underneath the windows and only they reload. Fire-and-forget by
@@ -295,7 +310,9 @@ async function boot() {
   }
   installMenu();
   installTitleBarThemeBridge();
-  loadInto(new BrowserWindow(windowOptions()), url);
+  const win = new BrowserWindow(windowOptions());
+  configureSpellChecker(win.webContents);
+  loadInto(win, url);
 }
 
 // Second launch: hand the existing window to the user instead of racing it for
