@@ -13,6 +13,7 @@ import {
   normalizeChatMetrics,
   normalizeModelsPayload,
   normalizeQueuedPrompts,
+  normalizeSearchPayload,
   normalizeSessionsPayload,
   normalizeStatePayload,
   normalizeTerminalsPayload,
@@ -78,6 +79,7 @@ function sessionsPayload() {
         status: "active",
         provider: "openai",
         model: "gpt-test",
+        pullRequests: [{ number: 21, url: "https://github.com/Rumi-sketches/pi-desktop-ui/pull/21" }],
       },
       {
         path: CHAT_B,
@@ -342,6 +344,26 @@ test("rapid state changes keep canonical metrics with their owning chat", () => 
   assert.equal(ui.chatState(CHAT_B).metrics.context, null);
 });
 
+test("session and search payloads normalize pull request metadata at the boundary", () => {
+  const normalized = normalizeSessionsPayload(sessionsPayload());
+  assert.deepEqual(normalized.sessions[0].pullRequests, [
+    { number: 21, url: "https://github.com/Rumi-sketches/pi-desktop-ui/pull/21" },
+  ]);
+  assert.deepEqual(normalized.sessions[1].pullRequests, []);
+
+  const search = normalizeSearchPayload({
+    query: "draft",
+    cwd: PROJECT_A,
+    scope: "all",
+    scanned: 2,
+    capped: false,
+    truncated: false,
+    sessions: sessionsPayload().sessions,
+  });
+  assert.equal(search.sessions[0].pullRequests[0].number, 21);
+  assert.deepEqual(search.sessions[1].pullRequests, []);
+});
+
 test("API normalizers reject malformed state before it reaches a scope", () => {
   assert.throws(
     () => normalizeStatePayload(statePayload({ key: "" })),
@@ -361,6 +383,23 @@ test("API normalizers reject malformed state before it reaches a scope", () => {
       sessions: [{ ...sessionsPayload().sessions[0], status: "archived" }],
     }),
     /must be active, done or reopened/,
+  );
+  assert.throws(
+    () => normalizeSessionsPayload({
+      ...sessionsPayload(),
+      sessions: [{ ...sessionsPayload().sessions[0], pullRequests: "#21" }],
+    }),
+    /pullRequests must be an array/,
+  );
+  assert.throws(
+    () => normalizeSessionsPayload({
+      ...sessionsPayload(),
+      sessions: [{
+        ...sessionsPayload().sessions[0],
+        pullRequests: [{ number: 21, url: "javascript:alert(1)" }],
+      }],
+    }),
+    /must identify the matching GitHub pull request/,
   );
   assert.throws(
     () => normalizeTerminalsPayload({ terminals: [{ ...terminalsPayload().terminals[0], kind: "bash" }] }),

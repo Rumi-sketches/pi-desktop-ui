@@ -8,6 +8,7 @@ import {
   VIEW_SETTINGS,
   VIEW_TERMINAL,
   createUiState,
+  normalizeSearchPayload,
   projectTabId,
 } from './ui-state.js';
 import { createChatCache } from './chat-cache.js';
@@ -66,14 +67,36 @@ function savePersistedComposerDraftMeta() {
 }
 function restoreComposerDraftChats(state, drafts, metadata) {
   for (const [key, meta] of Object.entries(metadata)) {
-    if (!drafts[key]?.trim() || !meta || typeof meta !== 'object') continue;
+    if (!meta || typeof meta !== 'object') continue;
+    const pending = meta.pending === true;
+    if (!drafts[key]?.trim() && !pending) continue;
     if (typeof meta.cwd !== 'string' || typeof meta.title !== 'string' || typeof meta.modified !== 'string') continue;
     Object.assign(state.chatState(key), {
       cwd: meta.cwd,
       sidebarTitle: meta.title,
       sidebarModified: meta.modified,
+      sidebarPending: pending,
+      started: pending,
     });
   }
+}
+function persistComposerDraftMeta(key, state) {
+  persistedComposerDraftMeta[key] = {
+    cwd: state.cwd,
+    title: state.sidebarTitle,
+    modified: state.sidebarModified,
+    pending: state.sidebarPending,
+  };
+  savePersistedComposerDraftMeta();
+}
+function clearConfirmedComposerDraftMeta(sessions) {
+  let changed = false;
+  for (const session of sessions) {
+    if (!(session.path in persistedComposerDraftMeta)) continue;
+    delete persistedComposerDraftMeta[session.path];
+    changed = true;
+  }
+  if (changed) savePersistedComposerDraftMeta();
 }
 const chatCache = createChatCache({
   loadDraft: (key) => persistedComposerDrafts[key] ?? '',
@@ -159,8 +182,15 @@ function showChatResource(key, { reconnect = true, park = true } = {}) {
   if (reconnect) connect(key);
 }
 
+function storeComposerDraft(key, value) {
+  const entry = chatCache.setDraft(key, value);
+  const state = uiState.chatState(key);
+  if (value.trim() || state.sidebarPending) persistComposerDraftMeta(key, state);
+  return entry;
+}
+
 function stashComposerDraft(key) {
-  if (key) chatCache.setDraft(key, $('input').value);
+  if (key) storeComposerDraft(key, $('input').value);
 }
 
 function composerDraft(key) {
@@ -185,19 +215,13 @@ function rekeyChat(oldKey, newKey) {
 function updateComposerDraft(key, value) {
   if (!key) return;
   const hadDraft = Boolean(composerDraft(key).trim());
-  const entry = chatCache.setDraft(key, value);
   const hasDraft = Boolean(value.trim());
   const state = uiState.chatState(key);
   if (hasDraft) {
     state.sidebarTitle = draftTitle(value);
     state.sidebarModified ??= new Date().toISOString();
-    persistedComposerDraftMeta[key] = {
-      cwd: state.cwd,
-      title: state.sidebarTitle,
-      modified: state.sidebarModified,
-    };
-    savePersistedComposerDraftMeta();
   }
+  const entry = storeComposerDraft(key, value);
   if (hadDraft !== hasDraft) {
     renderSessions();
     return;
@@ -658,10 +682,14 @@ const MESSAGE_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
   day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 function timestampMillis(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
   if (typeof value !== 'string') return null;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
 }
 function runDuration(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -1927,6 +1955,7 @@ async function loadSessions() {
     if (raw.error) return;
     const res = uiState.applySessionsPayload(raw);
     allSessions = res.sessions;
+    clearConfirmedComposerDraftMeta(allSessions);
     if (!uiState.selection) selectCurrentChatState(renderedChatKey ?? res.current);
     runningKeys.clear();
     for (const k of res.running ?? []) runningKeys.add(k);
@@ -2006,6 +2035,7 @@ function localSessionEntry(chatState) {
     status: 'active',
     provider: chatState.model?.provider ?? '',
     model: chatState.model?.id ?? '',
+    pullRequests: [],
     local: true,
   };
 }
@@ -2025,7 +2055,8 @@ function sessionForKey(key) {
   const persisted = allSessions.find((session) => session.path === key);
   if (persisted) return persisted;
   const chatState = uiState.chats.get(key);
-  return chatState ? localSessionEntry(chatState) : null;
+  if (!chatState) return null;
+  return localSessionEntry(chatState);
 }
 
 function sessionsInOrder(projectCwd = activeProjectCwd()) {
@@ -2091,8 +2122,7 @@ function sessionItemEl(s) {
     <span class="prLinks"></span><span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
   const prLinks = div.querySelector('.prLinks');
-  for (const pr of s.pullRequests ?? []) {
-    if (!Number.isInteger(pr?.number) || typeof pr?.url !== 'string') continue;
+  for (const pr of s.pullRequests) {
     const link = document.createElement('a');
     link.className = 'prLink';
     link.href = pr.url;
@@ -2202,34 +2232,42 @@ function groupOf(s, mode) {
 // server and you find it again (result included) when you come back.
 async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   const previous = uiState.selection;
-  const ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
-  if (s.local) {
-    showChatResource(s.path);
-    await loadOpenChat(ticket);
-    return;
-  }
+  // A restored local row may outlive its server context. Resolve it before a
+  // committed transition opens SSE, otherwise the stale key can attach to the
+  // default context while the resume request is still in flight.
+  let ticket;
+  if (s.local) ticket = navigation.begin();
+  else ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
+  let route = '/api/sessions';
+  if (!s.local) route = sessionPath(s.path, 'activate');
   const r = await post(
-    sessionPath(s.path, 'activate'),
+    route,
     { cwd: s.cwd || undefined },
     { followKey: false, key: s.path, ticket },
   );
-  if (!navigation.isCurrent(ticket)) return;
+  if (!navigation.isCurrent(ticket)) return false;
   if (r.error) {
-    if (previous && isNavigationSelectionAvailable(previous) && uiState.canSelect(previous)) {
-      navigation.transition(previous);
-    } else {
-      navigation.restoreActive(fallbackSelectionForTab);
+    if (!s.local) {
+      if (previous && isNavigationSelectionAvailable(previous) && uiState.canSelect(previous)) {
+        navigation.transition(previous);
+      } else {
+        navigation.restoreActive(fallbackSelectionForTab);
+      }
     }
-    return;
+    return false;
   }
   const key = r.key ?? s.path;
+  if (key !== s.path) rekeyChat(s.path, key);
   let activeTicket = ticket;
-  if (key !== s.path) {
-    rekeyChat(s.path, key);
+  if (s.local) {
+    activeTicket = navigation.commit({ tabId, view: VIEW_CHAT, resourceId: key }, ticket);
+  } else if (key !== s.path) {
     activeTicket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: key });
   }
+  if (!activeTicket) return false;
   showChatResource(key);            // the cached view was already shown by the transition
   await loadOpenChat(activeTicket); // synchronize independently; never rely on SSE alone
+  return true;
 }
 
 async function openChatNotification(key) {
@@ -2333,7 +2371,7 @@ async function runDeepSearch() {
   updateDeepBtn();
   // scope=all like the chat list itself: the project tab, if any, filters the
   // results client-side, exactly as it does for the normal list
-  const res = await api('/api/search?scope=all&q=' + encodeURIComponent(query), { signal: ctrl.signal });
+  const raw = await api('/api/search?scope=all&q=' + encodeURIComponent(query), { signal: ctrl.signal });
   // aborted, or overtaken by a newer search: the one running now owns the state
   if (seq !== deepSearchSeq) return;
   deepSearching = false;
@@ -2341,8 +2379,9 @@ async function runDeepSearch() {
   // typing during the request has already put the sidebar back on the titles:
   // these results answer a question the user has moved on from.
   const stale = $('sessionSearch').value.trim() !== query;
-  if (!stale && !res.error) {
-    deepResults = res.sessions ?? [];
+  if (!stale && !raw.error) {
+    const res = normalizeSearchPayload(raw);
+    deepResults = res.sessions;
     // Two ways a search can come back short: 50 matches found, or the scan
     // stopped before the end of the list (the file budget, off with the
     // "full search" option in Settings).
@@ -4969,7 +5008,7 @@ function acceptedUserTurn(text, attachments) {
   return turn;
 }
 function clearAcceptedComposer(entry, draft, attachments) {
-  if (entry.composer.draft === draft) chatCache.setDraft(entry.key, '');
+  if (entry.composer.draft === draft) storeComposerDraft(entry.key, '');
   const sent = new Set(attachments);
   entry.composer.attachments = entry.composer.attachments.filter((attachment) => !sent.has(attachment));
   if (entry.key !== activeChatKey()) return;
@@ -4988,7 +5027,7 @@ async function submitPrompt(queueType = null) {
   const text = draft.trim();
   const attachments = [...pending];
   if (!text && !attachments.length) return;
-  chatCache.setDraft(key, draft);
+  storeComposerDraft(key, draft);
   entry.composer.attachments = pending;
 
   const images = attachments
@@ -5348,10 +5387,18 @@ async function loadState({ key = activeChatKey() ?? renderedChatKey, ticket = nu
   renderCachedChatState();
   renderProjectScope(projectScopeForChat(s.key));
 }
-(async () => {
-  if (renderedChatKey) restoreChatView(renderedChatKey);
+async function loadInitialChat() {
+  if (renderedChatKey) {
+    restoreChatView(renderedChatKey);
+    const restored = sessionForKey(renderedChatKey);
+    if (restored?.local) return await openSession(restored);
+  }
   connect();
   await loadState();
+  return true;
+}
+(async () => {
+  await loadInitialChat();
   // Global catalogs load once at bootstrap. Ordinary chat/tab switches only
   // synchronize the selected chat, its project and the global session list.
   await Promise.all([loadModels(), loadCommands(), loadRecentCwds()]);

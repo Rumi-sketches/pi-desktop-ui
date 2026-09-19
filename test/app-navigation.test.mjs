@@ -44,10 +44,13 @@ test('sidebar keeps local drafts and accepted first prompts visible before serve
 
   const restored = createUiState();
   context.restoreComposerDraftChats(restored, { hidden: 'keep me' }, {
-    hidden: { cwd: 'other-project', title: 'Keep me', modified: '2026-09-19T09:00:00.000Z' },
+    hidden: { cwd: 'other-project', title: 'Keep me', modified: '2026-09-19T09:00:00.000Z', pending: false },
+    accepted: { cwd: 'pending-project', title: 'Accepted prompt', modified: '2026-09-19T09:30:00.000Z', pending: true },
   });
   assert.equal(restored.chatState('hidden').cwd, 'other-project', 'a local draft remains reachable after reload');
   assert.equal(restored.chatState('hidden').sidebarTitle, 'Keep me');
+  assert.equal(restored.chatState('accepted').sidebarPending, true, 'an accepted prompt survives without draft text');
+  assert.equal(restored.chatState('accepted').started, true);
 
   let sessions = context.sidebarSessions();
   assert.deepEqual([...sessions.map((session) => session.path)], ['saved', 'local']);
@@ -63,6 +66,95 @@ test('sidebar keeps local drafts and accepted first prompts visible before serve
   allSessions.push({ path: 'local', title: 'Persisted chat' });
   sessions = context.sidebarSessions();
   assert.equal(sessions.filter((session) => session.path === 'local').length, 1, 'server entry replaces local projection');
+});
+
+test('accepted first prompt keeps its pending sidebar projection when its text is cleared', () => {
+  const chatState = {
+    cwd: 'project', sidebarTitle: 'Accepted prompt',
+    sidebarModified: '2026-09-19T10:00:00.000Z', sidebarPending: true,
+  };
+  const entry = { key: 'draft-key', composer: { draft: 'Accepted prompt', attachments: [] } };
+  let persisted = null;
+  const context = vm.createContext({
+    chatCache: {
+      setDraft(key, value) {
+        assert.equal(key, entry.key);
+        entry.composer.draft = value;
+        return entry;
+      },
+    },
+    uiState: { chatState: () => chatState },
+    persistComposerDraftMeta(key, state) { persisted = { key, pending: state.sidebarPending }; },
+    activeChatKey: () => null,
+  });
+  vm.runInContext(appFunction('storeComposerDraft'), context);
+  vm.runInContext(appFunction('clearAcceptedComposer'), context);
+
+  context.clearAcceptedComposer(entry, 'Accepted prompt', []);
+
+  assert.equal(entry.composer.draft, '');
+  assert.deepEqual(persisted, { key: 'draft-key', pending: true });
+});
+
+test('opening a restored local draft resolves its server context before committing navigation', async () => {
+  const calls = [];
+  const order = [];
+  let rekeyed = null;
+  let shown = null;
+  let loaded = null;
+  const pendingTicket = { revision: 1, selection: null };
+  const context = vm.createContext({
+    VIEW_CHAT,
+    uiState: { activeTabId: 'all', selection: null },
+    navigation: {
+      begin() { order.push('begin'); return pendingTicket; },
+      transition() { throw new Error('a local draft must not transition before it is resolved'); },
+      commit(selection, ticket) {
+        assert.equal(ticket, pendingTicket);
+        order.push('commit');
+        return { revision: 1, selection };
+      },
+      isCurrent: () => true,
+    },
+    async post(route, body, options) {
+      order.push('post');
+      calls.push({ route, body, options });
+      return { key: 'saved-key', cwd: body.cwd };
+    },
+    sessionPath: () => { throw new Error('a local draft must not use the persisted-session route'); },
+    rekeyChat(oldKey, newKey) { order.push('rekey'); rekeyed = { oldKey, newKey }; },
+    showChatResource(key) { order.push('show'); shown = key; },
+    async loadOpenChat(ticket) { order.push('load'); loaded = ticket; },
+  });
+  vm.runInContext(appFunction('openSession'), context);
+
+  assert.equal(await context.openSession({ path: 'draft-key', cwd: 'project', local: true }), true);
+
+  assert.equal(calls[0].route, '/api/sessions');
+  assert.equal(calls[0].body.cwd, 'project');
+  assert.deepEqual(Object.keys(calls[0].body), ['cwd']);
+  assert.equal(calls[0].options.key, 'draft-key');
+  assert.deepEqual(rekeyed, { oldKey: 'draft-key', newKey: 'saved-key' });
+  assert.equal(shown, 'saved-key');
+  assert.equal(loaded.selection.resourceId, 'saved-key');
+  assert.deepEqual(order, ['begin', 'post', 'rekey', 'commit', 'show', 'load']);
+});
+
+test('bootstrap resolves a restored local draft before opening any stream', async () => {
+  const order = [];
+  const local = { path: 'draft-key', cwd: 'project', local: true };
+  const context = vm.createContext({
+    renderedChatKey: 'draft-key',
+    restoreChatView(key) { order.push(`restore:${key}`); },
+    sessionForKey: () => local,
+    async openSession(session) { order.push(`resume:${session.path}`); return true; },
+    connect() { throw new Error('must not connect before the local draft is resumed'); },
+    loadState() { throw new Error('must not load state through the stale key'); },
+  });
+  vm.runInContext(appFunction('loadInitialChat'), context);
+
+  assert.equal(await context.loadInitialChat(), true);
+  assert.deepEqual(order, ['restore:draft-key', 'resume:draft-key']);
 });
 
 test('draft sidebar metadata follows an opaque chat rekey', () => {
@@ -644,6 +736,7 @@ test('a delayed enqueue acknowledgement cannot resurrect a delivered ghost', asy
     uiState, chatCache: uiState.chatCache, composerSubmitting: false,
     closeCmdMenu() {}, activeChatKey: () => 'a', input: { value: 'redirect' }, pending: [],
     chat: { lastElementChild: null }, setComposerSubmitting() {}, clearAcceptedComposer() {},
+    storeComposerDraft: (key, draft) => uiState.chatCache.setDraft(key, draft),
     post: () => response, renderSessions() {},
     applyQueueChange: (items, key) => uiState.applyQueuedPrompts(key, items),
   });
@@ -667,6 +760,7 @@ test('a delayed prompt acknowledgement cannot restart an already completed respo
     closeCmdMenu() {}, activeChatKey: () => 'a', renderedChatKey: 'a', input: { value: 'request' }, pending: [],
     chat: { lastElementChild: null, prepend: (turn) => turns.push(turn) },
     setComposerSubmitting() {}, clearAcceptedComposer() {}, renderSessions() {},
+    storeComposerDraft: (key, draft) => uiState.chatCache.setDraft(key, draft),
     draftTitle: (value) => value.trim(), allSessions: [],
     post: () => response, $: () => null, setHeroMode() {}, scrollDown() {},
     acceptedUserTurn: (text) => text,

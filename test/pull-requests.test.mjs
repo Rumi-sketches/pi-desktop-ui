@@ -31,6 +31,30 @@ test("tracks every distinct PR created by a chat in chronological order", () => 
   ]);
 });
 
+test("does not treat quoted, commented, or prefixed text as a gh invocation", () => {
+  const tracker = createPullRequestTracker();
+  for (const entry of [
+    call("quoted", "echo 'gh pr create'; echo done"),
+    result("quoted", "https://github.com/acme/widgets/pull/51"),
+    call("commented", "# gh pr create --fill\necho done"),
+    result("commented", "https://github.com/acme/widgets/pull/52"),
+    call("prefixed", "foo-gh pr create --fill"),
+    result("prefixed", "https://github.com/acme/widgets/pull/53"),
+  ]) tracker.accept(entry);
+
+  assert.deepEqual(tracker.values(), []);
+});
+
+test("recognizes gh at the start of an executed shell segment", () => {
+  const tracker = createPullRequestTracker();
+  tracker.accept(call("assigned", "echo ready && GH_REPO=acme/widgets gh pr create --fill"));
+  tracker.accept(result("assigned", "https://github.com/acme/widgets/pull/54"));
+
+  assert.deepEqual(tracker.values(), [
+    { number: 54, url: "https://github.com/acme/widgets/pull/54" },
+  ]);
+});
+
 test("ignores URLs not returned by a successful gh pr create call", () => {
   const tracker = createPullRequestTracker();
   for (const entry of [

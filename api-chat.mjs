@@ -58,6 +58,7 @@ import {
   contextAwaitingInput,
   openContextKeys,
   runningContextKeys,
+  resumeDraftContext,
   tabCwd,
   totals,
   useContext,
@@ -511,8 +512,18 @@ function sendContext(res, ctx) {
   return send(res, 200, { ok: true, key: ctx.key, cwd: ctx.cwd, running: contextIsBusy(ctx) });
 }
 
-export async function handleCreateSession({ res, sessionKey }) {
-  return sendContext(res, await createContext({ cwd: tabCwd(sessionKey), mode: "new" }));
+export async function handleCreateSession({ req, res, sessionKey }) {
+  const { cwd: restoredCwd } = await jsonBody(req);
+  if (restoredCwd === undefined) {
+    return sendContext(res, await createContext({ cwd: tabCwd(sessionKey), mode: "new" }));
+  }
+  let cwd;
+  try {
+    cwd = await resolveDir(restoredCwd);
+  } catch (e) {
+    return sendError(res, 400, "invalid_folder", String(e.message ?? e));
+  }
+  return sendContext(res, await resumeDraftContext(sessionKey, cwd));
 }
 
 // No id in the path: "the most recent chat of this folder", whichever it is.
@@ -611,10 +622,14 @@ function messageContentText(message, separator = "") {
 }
 
 function timestampMillis(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
 }
 
 export async function handleGetHistory({ res, sessionKey }) {
@@ -655,9 +670,10 @@ export async function handleGetHistory({ res, sessionKey }) {
     }
     const nextRole = chatMsgs[i + 1]?.role ?? null;
     const closesRun = m.role === "assistant" && (nextRole === "user" || (nextRole === null && !historyBusy));
-    const durationMs = closesRun && runStartedAt !== null && persistedAt !== null
-      ? Math.max(0, persistedAt - runStartedAt)
-      : null;
+    let durationMs = null;
+    if (closesRun && runStartedAt !== null && persistedAt !== null) {
+      durationMs = Math.max(0, persistedAt - runStartedAt);
+    }
     const rawText = messageContentText(m);
     const skill = m.role === "user" ? compactSkillBlock(rawText) : null;
     const blocks = skill
