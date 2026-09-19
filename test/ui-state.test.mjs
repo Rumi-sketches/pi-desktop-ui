@@ -277,11 +277,13 @@ test("each response starts a fresh elapsed timer", () => {
   const state = ui.chatState(CHAT_A);
   state.responseStartedAt = 1;
   state.responseActivityLabel = "Working";
+  state.pendingAssistantMeta = { timestamp: "stale" };
 
   ui.startResponse(CHAT_A);
 
   assert.ok(state.responseStartedAt > 1);
   assert.equal(state.responseActivityLabel, null);
+  assert.equal(state.pendingAssistantMeta, null);
 });
 
 test("queued prompt normalizer rejects invalid identity fields and strips attachment data", () => {

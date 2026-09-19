@@ -29,6 +29,28 @@ test('chat links distinguish local files from web navigation', () => {
   assert.equal(context.isLocalLink('file:///C:/work/project/app.js'), true);
 });
 
+test('message metadata shows run duration only from sixty seconds', () => {
+  const element = () => ({
+    children: [], className: '', textContent: '', dateTime: '', title: '',
+    appendChild(child) { this.children.push(child); },
+  });
+  const context = vm.createContext({
+    document: { createElement: element },
+    MESSAGE_TIME_FORMAT: { format: () => '28/07/2026, 17:02' },
+  });
+  for (const name of ['timestampMillis', 'runDuration', 'appendMessageMeta']) {
+    vm.runInContext(appFunction(name), context);
+  }
+
+  const shortBody = element();
+  context.appendMessageMeta(shortBody, { timestamp: 1, durationMs: 59_999, role: 'assistant' });
+  assert.equal(shortBody.children[0].children.length, 1);
+
+  const longBody = element();
+  context.appendMessageMeta(longBody, { timestamp: 1, durationMs: 65_000, role: 'assistant' });
+  assert.equal(longBody.children[0].children[1].textContent, '(1m 05s)');
+});
+
 test('project tabs reorder on either side of the drop target', () => {
   const context = vm.createContext({});
   vm.runInContext(appFunction('reorderProjectTabs'), context);
@@ -466,6 +488,7 @@ test('only a server dispatch fixes a queued prompt in the selected transcript', 
     $$: () => [],
     deliveredPromptElement: (item) => ({ queueId: item.id }),
     mutateTranscript: (fn) => fn(),
+    flushAssistantMeta() {},
     applyQueueChange: (items, key) => uiState.applyQueuedPrompts(key, items),
   });
   vm.runInContext(appFunction('handleQueueEvent'), context);
@@ -509,7 +532,7 @@ test('steering splits the live answer and pending follow-ups stay below its cont
     $: () => null, $$: () => [], setHeroMode() {}, modelsCache: () => [],
     currentTurn: null, currentAssistant: null, currentThinking: null,
     document: { createElement: () => node() },
-    markResponseText() {}, mutateTranscript: (fn) => fn(),
+    markResponseText() {}, mutateTranscript: (fn) => fn(), flushAssistantMeta() {},
     bubble(_cls, text, body) { const child = node(); child.text = text; body.appendChild(child); return child; },
     appendMd(element, delta) { element.text += delta; },
     deliveredPromptElement(item) { const turn = node('turn user'); turn.text = item.text; return turn; },
