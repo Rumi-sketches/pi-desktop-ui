@@ -384,10 +384,19 @@ body.sb-resizing #sidebar { transition: none; }
 }
 .sessGroup::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .sessionItem .title { display: flex; align-items: center; gap: .4rem; }
-/* running: red dot fading in and out */
-.sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--fav);
+/* a local composer draft is steady yellow; a running agent pulses red */
+.sessionItem .draftDot, .sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.sessionItem .draftDot { background: var(--warn); box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 45%, transparent); }
+.sessionItem .runDot { background: var(--fav);
   box-shadow: 0 0 6px var(--fav-glow); animation: pulse 1.4s ease-in-out infinite; }
 .sessionItem .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessionItem .prLinks { display: inline-flex; align-items: center; gap: .28rem; flex: none; }
+.sessionItem .prLink {
+  color: color-mix(in srgb, var(--ok) 82%, var(--txt)); font-size: .72rem;
+  font-weight: var(--w-semi); text-decoration: none; border-radius: var(--r-2);
+}
+.sessionItem .prLink:hover { color: var(--ok); text-decoration: underline; text-underline-offset: 2px; }
+.sessionItem .prLink:focus-visible { outline: 1px solid var(--ok); outline-offset: 2px; }
 /* modified date, pinned to the right edge of the row */
 .sessionItem .date { flex: none; font-size: .7rem; color: var(--faint); }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
@@ -724,6 +733,13 @@ body.sb-closed #chat { max-width: 1100px; }
 .msg.md th, .msg.md td { border: 1px solid var(--line); padding: .3rem .65rem; }
 .msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
 .msg.md a { color: var(--teal); }
+.msgMeta {
+  display: flex; align-items: baseline; gap: .25em; margin-top: .3rem;
+  color: var(--txt-faint); font: var(--w-normal) var(--fs-xs) var(--font-ui);
+  line-height: 1.2; white-space: nowrap;
+}
+.turn.user .msgMeta { justify-content: flex-end; }
+.msgMeta .runDuration { color: var(--faint); }
 .msg img { max-width: 220px; border-radius: var(--r-3); display: block; margin: .4rem 0; border: 1px solid var(--line); }
 /* attached images: compact thumbnails ABOVE the message text */
 .media { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .45rem; }

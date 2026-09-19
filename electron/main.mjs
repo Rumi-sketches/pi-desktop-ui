@@ -15,6 +15,7 @@ import { startServer } from "../server.mjs";
 import { describeWork } from "../lifecycle.mjs";
 import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
+import { isAllowedExternalUrl } from "./external-links.mjs";
 import { spellCheckerLanguages } from "./spellchecker-languages.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,10 +34,6 @@ const ICON = (process.platform === "win32"
   : ["icon.png", "favicon.png", "icon.ico", "favicon.ico"])
   .map((name) => path.join(ROOT, "public", name))
   .find((file) => existsSync(file));
-// Handed to the OS browser and nothing else: a `file:` or custom-scheme link
-// from a page is an attack surface, not a link.
-const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
-
 const errorMessage = (err) => err?.message ?? String(err);
 
 // The running server, or null before boot and once it has been released.
@@ -97,13 +94,7 @@ const isInternal = (target) => {
 };
 
 function openExternally(target) {
-  let protocol;
-  try {
-    protocol = new URL(target).protocol;
-  } catch {
-    return;
-  }
-  if (!EXTERNAL_PROTOCOLS.has(protocol)) return;
+  if (!isAllowedExternalUrl(target)) return;
   shell.openExternal(target).catch((err) => {
     console.error(`${PRODUCT_ID}: could not open ${target} (${errorMessage(err)})`);
   });

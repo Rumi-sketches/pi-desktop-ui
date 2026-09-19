@@ -421,6 +421,15 @@ export function assistantDeltaEvent(event) {
   return null;
 }
 
+export function assistantMessageMeta(completedAt = Date.now()) {
+  return {
+    kind: "message-meta",
+    role: "assistant",
+    timestamp: new Date(completedAt).toISOString(),
+    durationMs: null,
+  };
+}
+
 function wireSession(ctx) {
   ctx.session.subscribe((event) => {
     // The cancellable app queue owns prompts until a public turn boundary.
@@ -467,6 +476,9 @@ function wireSession(ctx) {
         output,
       });
     } else if (event.type === "message_end" && event.message?.role === "assistant") {
+      // The browser keeps streamed content in place, so it needs the same end
+      // metadata that a later /api/history reload derives from the session.
+      broadcast(ctx, assistantMessageMeta());
       // the message is now persisted in the session file: /api/history will
       // return it, so drop the text/thinking we buffered for it (tool cards of
       // the *current* turn are kept: they run after the message ends)
@@ -642,17 +654,43 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
   return ctx;
 }
 
+function liveContext(key) {
+  if (!key) return null;
+  const known = contexts.get(key) ?? contexts.get(adoptedDrafts.get(key));
+  if (known) known.lastActive = Date.now();
+  return known ?? null;
+}
+
+// A restored sidebar row may be either an unsaved draft key or a persisted
+// session whose composer has unsent text. Reuse a live/adopted context first,
+// then reopen a real session file, and create an empty draft only when the key
+// has never become persistent.
+export async function resumeDraftContext(key, cwd) {
+  const known = liveContext(key);
+  if (known) return known;
+  if (key) {
+    try {
+      const file = await resolveFile(key);
+      return await createContext({
+        cwd: (await sessionCwd(file)) ?? cwd,
+        mode: "open",
+        openPath: file,
+      });
+    } catch {
+      /* unsaved or stale draft key: recreate it in the persisted folder */
+    }
+  }
+  return await createContext({ cwd, mode: "new" });
+}
+
 // Resolve the context a request belongs to. `key` is the session file path sent
 // by the tab (query `?s=` or header `x-pi-session`); unknown keys are loaded
 // lazily (server restart, chat opened in another tab), missing ones fall back to
 // the most recent chat of the default folder.
 export async function useContext(key) {
   if (key) {
-    const known = contexts.get(key) ?? contexts.get(adoptedDrafts.get(key));
-    if (known) {
-      known.lastActive = Date.now();
-      return known;
-    }
+    const known = liveContext(key);
+    if (known) return known;
     try {
       const file = await resolveFile(key);
       return await createContext({

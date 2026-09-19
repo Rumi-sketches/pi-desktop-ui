@@ -50,6 +50,18 @@ function nonNegativeNumber(value, label) {
   return normalized;
 }
 
+function nonNegativeInteger(value, label) {
+  const normalized = nonNegativeNumber(value, label);
+  if (!Number.isInteger(normalized)) invalid(label, "must be an integer");
+  return normalized;
+}
+
+function positiveInteger(value, label) {
+  const normalized = nonNegativeInteger(value, label);
+  if (normalized === 0) invalid(label, "must be positive");
+  return normalized;
+}
+
 function nullableNonNegativeNumber(value, label) {
   return value === null ? null : nonNegativeNumber(value, label);
 }
@@ -217,11 +229,31 @@ export function normalizeCommandsPayload(value) {
   };
 }
 
-function session(value, index) {
-  const label = `sessions payload.sessions[${index}]`;
+function pullRequest(value, label) {
+  const source = record(value, label);
+  const prNumber = positiveInteger(source.number, `${label}.number`);
+  const url = string(source.url, `${label}.url`);
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    invalid(`${label}.url`, "must be a valid URL");
+  }
+  const match = /^\/[^/]+\/[^/]+\/pull\/(\d+)\/?$/.exec(parsed.pathname);
+  if (parsed.protocol !== "https:" || parsed.hostname !== "github.com" || parsed.search || parsed.hash
+      || !match || Number(match[1]) !== prNumber) {
+    invalid(`${label}.url`, "must identify the matching GitHub pull request");
+  }
+  return { number: prNumber, url };
+}
+
+function session(value, index, collectionLabel) {
+  const label = `${collectionLabel}[${index}]`;
   const source = record(value, label);
   const status = string(source.status, `${label}.status`);
   if (!SESSION_STATUSES.has(status)) invalid(`${label}.status`, "must be active, done or reopened");
+  const pullRequests = source.pullRequests ?? [];
+  if (!Array.isArray(pullRequests)) invalid(`${label}.pullRequests`, "must be an array");
   return {
     ...source,
     path: string(source.path, `${label}.path`),
@@ -236,21 +268,41 @@ function session(value, index) {
     status,
     provider: string(source.provider, `${label}.provider`, { empty: true }),
     model: string(source.model, `${label}.model`, { empty: true }),
+    pullRequests: pullRequests.map((item, pullRequestIndex) =>
+      pullRequest(item, `${label}.pullRequests[${pullRequestIndex}]`)),
   };
+}
+
+function sessionScope(value, label) {
+  const scope = string(value, label);
+  if (scope !== "all" && scope !== "cwd") invalid(label, "must be all or cwd");
+  return scope;
 }
 
 export function normalizeSessionsPayload(value) {
   const source = record(value, "sessions payload");
   if (!Array.isArray(source.sessions)) invalid("sessions payload.sessions", "must be an array");
-  const scope = string(source.scope, "sessions payload.scope");
-  if (scope !== "all" && scope !== "cwd") invalid("sessions payload.scope", "must be all or cwd");
   return {
     current: nullableString(source.current, "sessions payload.current"),
     cwd: string(source.cwd, "sessions payload.cwd"),
-    scope,
+    scope: sessionScope(source.scope, "sessions payload.scope"),
     running: stringArray(source.running, "sessions payload.running"),
     open: stringArray(source.open, "sessions payload.open"),
-    sessions: source.sessions.map(session),
+    sessions: source.sessions.map((item, index) => session(item, index, "sessions payload.sessions")),
+  };
+}
+
+export function normalizeSearchPayload(value) {
+  const source = record(value, "search payload");
+  if (!Array.isArray(source.sessions)) invalid("search payload.sessions", "must be an array");
+  return {
+    query: string(source.query, "search payload.query"),
+    cwd: string(source.cwd, "search payload.cwd"),
+    scope: sessionScope(source.scope, "search payload.scope"),
+    scanned: nonNegativeInteger(source.scanned, "search payload.scanned"),
+    capped: boolean(source.capped, "search payload.capped"),
+    truncated: boolean(source.truncated, "search payload.truncated"),
+    sessions: source.sessions.map((item, index) => session(item, index, "search payload.sessions")),
   };
 }
 
@@ -294,7 +346,11 @@ function newChatState(key = null) {
     responsePhase: RESPONSE_IDLE,
     responseStartedAt: null,
     responseActivityLabel: null,
+    pendingAssistantMeta: null,
     started: false,
+    sidebarTitle: "",
+    sidebarModified: null,
+    sidebarPending: false,
     tasks: new Map(),
     agentTask: null,
   };
@@ -478,6 +534,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     const target = chatState(key);
     target.responseStartedAt = Date.now();
     target.responseActivityLabel = null;
+    target.pendingAssistantMeta = null;
     target.streaming = true;
     target.awaitingInput = false;
     target.responsePhase = RESPONSE_WAITING;
@@ -516,6 +573,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
       const target = chatState(item.path);
       target.cwd = item.cwd;
       target.started ||= item.messageCount > 0;
+      target.sidebarPending = false;
       if (item.provider && item.model) target.model = { provider: item.provider, id: item.model };
       if (item.cwd) registerProject(item.cwd);
     }
