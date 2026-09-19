@@ -35,6 +35,7 @@ The package is not published on npm. Run it from the cloned folder.
 - Pin project folders as tabs, drag the tabs into your preferred order and switch Git branches from the project view.
 - Search chat titles and message contents, mark finished chats as done and fork a conversation from an earlier message.
 - Return to a recent chat without losing its scroll position, draft text or in-memory attachments.
+- See a new chat in the sidebar as soon as you start typing. A yellow dot marks chats with an unsent draft.
 - See changes from each source chat as separate diffs, even when two chats edit the same file.
 
 ### Control a running agent

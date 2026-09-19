@@ -187,6 +187,15 @@ test("session keys stay opaque while transitions retain independent chat state",
   assert.equal(ui.chatState(CHAT_B).thinking, "off");
 });
 
+test("a persisted session clears its optimistic sidebar state", () => {
+  const ui = createUiState();
+  ui.chatState(CHAT_A).sidebarPending = true;
+
+  ui.applySessionsPayload(sessionsPayload());
+
+  assert.equal(ui.chatState(CHAT_A).sidebarPending, false);
+});
+
 test("chat rekey transfers the bounded per-chat view state", () => {
   const cache = createChatCache();
   const ui = createUiState({ chatCache: cache });
