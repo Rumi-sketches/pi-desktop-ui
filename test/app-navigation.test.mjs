@@ -441,8 +441,10 @@ test('active composer exposes the approved actions and pauses its persistent act
   assert.match(indexSource, /id="responseElapsed">00:00<\/span>/);
   assert.match(cssSource, /\.responseSpinnerRing\s*\{[^}]*border-radius:\s*50%/s);
   assert.match(source, /const modelActive = activityRunning && !chatState\.awaitingInput/);
-  assert.match(source, /classList\.toggle\('hide', !modelActive/);
+  assert.match(source, /responseSpinner'\)\.classList\.toggle\('hide', !modelActive\)/);
+  assert.match(source, /activity timer covers the whole agent run/);
   assert.match(source, /task closes only on agent_end/);
+  assert.doesNotMatch(appFunction('handleEvent'), /case 'error':[\s\S]*closeResponseSpinner/);
   assert.match(cssSource, /\.queuedPrompt\s*\{[^}]*grid-template-columns/s);
 });
 

@@ -1112,7 +1112,9 @@ function renderComposerState(chatState = activeChatState()) {
   $('runState').classList.toggle('on', modelActive);
   $('sendBtn').classList.toggle('hide', running);
   $('queueActions').classList.toggle('hide', !running);
-  $('responseSpinner').classList.toggle('hide', !modelActive || chatState.responsePhase !== RESPONSE_WAITING);
+  // The activity timer covers the whole agent run, not only the wait for the
+  // first text token. agent_end is the authoritative point at which it stops.
+  $('responseSpinner').classList.toggle('hide', !modelActive);
   if (modelActive) renderResponseActivity(chatState);
   input.placeholder = chatState.awaitingInput
     ? 'Complete the form above to continue…'
@@ -1173,11 +1175,6 @@ function markResponseText() {
   else activeChatState().responsePhase = RESPONSE_TEXT;
   renderComposerState();
 }
-function closeResponseSpinner() {
-  activeChatState().responsePhase = RESPONSE_IDLE;
-  renderComposerState();
-}
-
 /* ---------------- account usage widget (real limits, dynamic on active provider) ---------------- */
 function fmtCountdown(iso) {
   if (!iso) return '';
@@ -1448,7 +1445,8 @@ function handleEvent(ev, ownerKey) {
       refreshAll(); break;
     case 'file': loadFiles(); break;
     case 'error':
-      closeResponseSpinner();
+      // Errors can be recoverable (for example an automatic retry). Keep the
+      // timer tied to agent_end instead of making an error event look terminal.
       bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message);
       toast(ev.message);
       break;
@@ -5011,8 +5009,9 @@ document.addEventListener('keydown', (e) => {
   }
 });
 $('abort').addEventListener('click', async () => {
-  const result = await post('/api/abort');
-  if (!result.error) closeResponseSpinner();
+  // Keep the run visible until the server confirms agent_end. The abort
+  // request being accepted does not itself mean the agent has stopped yet.
+  await post('/api/abort');
 });
 const STOPPED_PAGE = '<div style="margin:auto;padding:40px;text-align:center;color:#8d97a8">pi desktop ui server stopped.<br><br>Start it again with <code>npm start</code>.</div>';
 $('quit').addEventListener('click', async () => {
