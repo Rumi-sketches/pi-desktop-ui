@@ -390,6 +390,13 @@ body.sb-resizing #sidebar { transition: none; }
 .sessionItem .runDot { background: var(--fav);
   box-shadow: 0 0 6px var(--fav-glow); animation: pulse 1.4s ease-in-out infinite; }
 .sessionItem .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessionItem .prLinks { display: inline-flex; align-items: center; gap: .28rem; flex: none; }
+.sessionItem .prLink {
+  color: color-mix(in srgb, var(--ok) 82%, var(--txt)); font-size: .72rem;
+  font-weight: var(--w-semi); text-decoration: none; border-radius: var(--r-2);
+}
+.sessionItem .prLink:hover { color: var(--ok); text-decoration: underline; text-underline-offset: 2px; }
+.sessionItem .prLink:focus-visible { outline: 1px solid var(--ok); outline-offset: 2px; }
 /* modified date, pinned to the right edge of the row */
 .sessionItem .date { flex: none; font-size: .7rem; color: var(--faint); }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }

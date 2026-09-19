@@ -2088,8 +2088,22 @@ function sessionItemEl(s) {
     <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
     </div>`;
   div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
-    <span class="date">${fmtDate(s.modified)}</span></div>`;
+    <span class="prLinks"></span><span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
+  const prLinks = div.querySelector('.prLinks');
+  for (const pr of s.pullRequests ?? []) {
+    if (!Number.isInteger(pr?.number) || typeof pr?.url !== 'string') continue;
+    const link = document.createElement('a');
+    link.className = 'prLink';
+    link.href = pr.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = `#${pr.number}`;
+    link.title = `Open pull request #${pr.number}`;
+    link.setAttribute('aria-label', `Open pull request #${pr.number} in a new tab`);
+    link.addEventListener('click', (e) => e.stopPropagation());
+    prLinks.appendChild(link);
+  }
   div.title = label;
   // favorite: clicking the heart must not open the chat
   div.querySelector('.fav')?.addEventListener('click', async (e) => {
