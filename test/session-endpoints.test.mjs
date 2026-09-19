@@ -53,16 +53,19 @@ before(async () => {
   await writeFile(sessionFile, `${JSON.stringify({ ...SESSION_HEADER, timestamp: new Date().toISOString() })}\n`);
   transcriptFile = path.join(sessionsDir, "transcript.jsonl");
   const timestamp = new Date().toISOString();
+  const userTimestamp = "2026-07-28T15:01:25.000Z";
+  const assistantStartedAt = Date.parse("2026-07-28T15:01:30.000Z");
+  const assistantCompletedAt = "2026-07-28T15:02:35.000Z";
   const transcript = [
     { type: "session", version: 3, id: "transcript-fixture", cwd: process.cwd(), timestamp },
     {
-      type: "message", id: "skill-user", parentId: null, timestamp,
-      message: { role: "user", content: [{ type: "text", text: SKILL_EXPANDED_TEXT }], timestamp },
+      type: "message", id: "skill-user", parentId: null, timestamp: userTimestamp,
+      message: { role: "user", content: [{ type: "text", text: SKILL_EXPANDED_TEXT }], timestamp: Date.parse(userTimestamp) },
     },
     {
-      type: "message", id: "openai-answer", parentId: "skill-user", timestamp,
+      type: "message", id: "openai-answer", parentId: "skill-user", timestamp: assistantCompletedAt,
       message: {
-        role: "assistant", provider: "openai-codex", model: "gpt-fixture", timestamp,
+        role: "assistant", provider: "openai-codex", model: "gpt-fixture", timestamp: assistantStartedAt,
         content: [
           { type: "thinking", thinking: "Inspecting the release." },
           { type: "text", text: "Ready." },
@@ -79,7 +82,7 @@ before(async () => {
       },
     },
     {
-      type: "message", id: "tool-result", parentId: "openai-answer", timestamp,
+      type: "message", id: "tool-result", parentId: "openai-answer", timestamp: assistantCompletedAt,
       message: {
         role: "toolResult", toolCallId: "tool-fixture", toolName: "read", isError: false,
         content: [{ type: "text", text: "fixture output" }], timestamp,
@@ -452,6 +455,7 @@ describe("the transcript route", () => {
       arguments: "--strict package-a",
     }]);
     assert.equal(skillMessage.text, "/skill:release-check --strict package-a");
+    assert.equal(skillMessage.timestamp, "2026-07-28T15:01:25.000Z");
     assert.equal(JSON.stringify(body).includes(SKILL_BODY_SENTINEL), false);
     assert.equal(JSON.stringify(body).includes("C:/skills/release-check/SKILL.md"), false);
   });
@@ -461,6 +465,8 @@ describe("the transcript route", () => {
     assert.equal(status, 200);
     const answer = body.messages.find((message) => message.role === "assistant");
     assert.equal(answer.provider, "openai-codex");
+    assert.equal(answer.timestamp, "2026-07-28T15:02:35.000Z");
+    assert.equal(answer.durationMs, 70_000);
     assert.deepEqual(answer.blocks.map((block) => block.type), ["thinking", "text", "tool"]);
     assert.equal(answer.blocks[0].text, "Inspecting the release.");
     assert.equal(answer.blocks[2].output, "fixture output");
@@ -491,6 +497,16 @@ describe("the transcript route", () => {
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "Answer", partial: openAiPartial },
     }), { kind: "text", delta: "Answer" });
+  });
+
+  test("assistant completion metadata reports its timestamp", async () => {
+    const { assistantMessageMeta } = await import("../contexts.mjs");
+    assert.deepEqual(assistantMessageMeta(66_000), {
+      kind: "message-meta",
+      role: "assistant",
+      timestamp: "1970-01-01T00:01:06.000Z",
+      durationMs: null,
+    });
   });
 });
 
