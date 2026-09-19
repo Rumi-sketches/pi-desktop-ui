@@ -384,8 +384,10 @@ body.sb-resizing #sidebar { transition: none; }
 }
 .sessGroup::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .sessionItem .title { display: flex; align-items: center; gap: .4rem; }
-/* running: red dot fading in and out */
-.sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--fav);
+/* a local composer draft is steady yellow; a running agent pulses red */
+.sessionItem .draftDot, .sessionItem .runDot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.sessionItem .draftDot { background: var(--warn); box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 45%, transparent); }
+.sessionItem .runDot { background: var(--fav);
   box-shadow: 0 0 6px var(--fav-glow); animation: pulse 1.4s ease-in-out infinite; }
 .sessionItem .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* modified date, pinned to the right edge of the row */
