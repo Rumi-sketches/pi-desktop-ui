@@ -141,20 +141,33 @@ const FILE_MANAGER = {
 const fileManager = () => FILE_MANAGER[process.platform] ?? "xdg-open";
 
 const canOpenFolder = once(() => (
-  process.platform === WINDOWS || process.platform === MACOS
+  process.versions.electron || process.platform === WINDOWS || process.platform === MACOS
     ? Promise.resolve(true)
     : hasCommand(fileManager())
 ));
+
+/**
+ * Open through Electron's native shell when the server is embedded in it.
+ * @returns {Promise<{ok: true} | {ok: false, reason: string} | null>}
+ */
+async function openWithDesktopShell(target) {
+  if (!process.versions.electron) return null;
+  try {
+    const { shell } = await import("electron");
+    const error = await shell.openPath(target);
+    return error ? UNAVAILABLE : { ok: true };
+  } catch {
+    // Keep the platform fallback if the Electron bridge cannot be loaded.
+    return null;
+  }
+}
 
 /**
  * Reveal `dir` in the system file manager.
  * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
  */
 export async function openFolder(dir) {
-  if (!(await canOpenFolder())) return UNAVAILABLE;
-  // explorer.exe exits with code 1 even on success when it hands the path to an
-  // already running instance: fire and forget, the exit code means nothing.
-  return (await detach(fileManager(), [dir])) ? { ok: true } : UNAVAILABLE;
+  return openPath(dir);
 }
 
 /* ------------------------------ open text file ---------------------------- */
@@ -173,9 +186,16 @@ export async function openTextFile(file) {
   return (await detach(textEditor(), args, { windowsHide: false })) ? { ok: true } : UNAVAILABLE;
 }
 
-/** Open a file or directory with the OS default application. */
+/**
+ * Open a file or directory with the OS default application.
+ * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
+ */
 export async function openPath(target) {
   if (!(await canOpenFolder())) return UNAVAILABLE;
+  const desktopResult = await openWithDesktopShell(target);
+  if (desktopResult) return desktopResult;
+  // explorer.exe exits with code 1 even on success when it hands the path to an
+  // already running instance: fire and forget, the exit code means nothing.
   return (await detach(fileManager(), [target])) ? { ok: true } : UNAVAILABLE;
 }
 

@@ -143,10 +143,10 @@ function stashComposerDraft(key) {
 }
 
 if (win.marked) win.marked.setOptions({ breaks: true, gfm: true });
-// DOMPurify's default URL policy deliberately drops file: and Windows-drive
-// links. They are safe here because clicks never navigate this renderer: the
-// delegated handler below sends them to the local-path endpoint instead.
-const CHAT_URI_PATTERN = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[a-z]:%5c|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
+// DOMPurify's default URL policy deliberately drops file:, Windows-drive and
+// Windows Settings links. Local paths go through the guarded server endpoint;
+// the Electron navigation guard admits only the named external protocols.
+const CHAT_URI_PATTERN = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file|ms-settings):|[a-z]:%5c|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const fmt = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(Math.round(n ?? 0));
 // amounts below $1 need 4 decimals to stay readable, above it 2 are enough

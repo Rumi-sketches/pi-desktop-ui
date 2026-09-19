@@ -17,16 +17,25 @@ function appFunction(name) {
   return match[0];
 }
 
-test('chat links distinguish local files from web navigation', () => {
+test('chat links distinguish local files from external navigation', () => {
   const context = vm.createContext({});
   vm.runInContext(appFunction('isLocalLink'), context);
   assert.equal(context.isLocalLink('https://example.com/docs'), false);
   assert.equal(context.isLocalLink('mailto:user@example.com'), false);
+  assert.equal(context.isLocalLink('ms-settings:display'), false);
   assert.equal(context.isLocalLink('#section'), false);
   assert.equal(context.isLocalLink('./public/app.js:42'), true);
   assert.equal(context.isLocalLink('/C:/work/project/app.js:42'), true);
   assert.equal(context.isLocalLink('C:%5Cwork%5Cproject%5Capp.js:42'), true);
   assert.equal(context.isLocalLink('file:///C:/work/project/app.js'), true);
+});
+
+test('chat sanitizer admits Windows Settings links but rejects script URLs', () => {
+  const literal = source.match(/^const CHAT_URI_PATTERN = (\/.*\/i);$/m)?.[1];
+  assert.ok(literal, 'CHAT_URI_PATTERN exists');
+  const pattern = vm.runInNewContext(literal);
+  assert.equal(pattern.test('ms-settings:display'), true);
+  assert.equal(pattern.test('javascript:alert(1)'), false);
 });
 
 test('project tabs reorder on either side of the drop target', () => {
