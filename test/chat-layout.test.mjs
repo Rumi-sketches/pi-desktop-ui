@@ -24,6 +24,7 @@ test('messages wrap pasted text and cannot exceed their turn', () => {
 });
 
 test('message timestamps stay compact and user metadata aligns with its bubble', () => {
+  assert.match(rule('.msgMeta'), /gap:\s*\.25em/);
   assert.match(rule('.msgMeta'), /white-space:\s*nowrap/);
   assert.match(rule('.turn.user .msgMeta'), /justify-content:\s*flex-end/);
 });

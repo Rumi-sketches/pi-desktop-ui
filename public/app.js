@@ -614,7 +614,7 @@ function appendMessageMeta(body, { timestamp, durationMs = null, role = 'user' }
   if (role === 'assistant' && Number.isFinite(durationMs) && durationMs >= 60_000) {
     const duration = document.createElement('span');
     duration.className = 'runDuration';
-    duration.textContent = ` (${runDuration(durationMs)})`;
+    duration.textContent = `(${runDuration(durationMs)})`;
     meta.appendChild(duration);
   }
   body.appendChild(meta);

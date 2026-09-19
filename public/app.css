@@ -725,7 +725,7 @@ body.sb-closed #chat { max-width: 1100px; }
 .msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
 .msg.md a { color: var(--teal); }
 .msgMeta {
-  display: flex; align-items: baseline; margin-top: .3rem;
+  display: flex; align-items: baseline; gap: .25em; margin-top: .3rem;
   color: var(--txt-faint); font: var(--w-normal) var(--fs-xs) var(--font-ui);
   line-height: 1.2; white-space: nowrap;
 }

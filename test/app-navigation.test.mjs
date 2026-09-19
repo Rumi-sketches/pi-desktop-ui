@@ -48,7 +48,7 @@ test('message metadata shows run duration only from sixty seconds', () => {
 
   const longBody = element();
   context.appendMessageMeta(longBody, { timestamp: 1, durationMs: 65_000, role: 'assistant' });
-  assert.equal(longBody.children[0].children[1].textContent, ' (1m 05s)');
+  assert.equal(longBody.children[0].children[1].textContent, '(1m 05s)');
 });
 
 test('project tabs reorder on either side of the drop target', () => {
