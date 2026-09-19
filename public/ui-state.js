@@ -296,6 +296,9 @@ function newChatState(key = null) {
     responseActivityLabel: null,
     pendingAssistantMeta: null,
     started: false,
+    sidebarTitle: "",
+    sidebarModified: null,
+    sidebarPending: false,
     tasks: new Map(),
     agentTask: null,
   };
@@ -518,6 +521,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
       const target = chatState(item.path);
       target.cwd = item.cwd;
       target.started ||= item.messageCount > 0;
+      target.sidebarPending = false;
       if (item.provider && item.model) target.model = { provider: item.provider, id: item.model };
       if (item.cwd) registerProject(item.cwd);
     }
