@@ -23,6 +23,11 @@ test('messages wrap pasted text and cannot exceed their turn', () => {
   assert.match(rule('.msg'), /overflow-wrap:\s*anywhere/);
 });
 
+test('message timestamps stay compact and user metadata aligns with its bubble', () => {
+  assert.match(rule('.msgMeta'), /white-space:\s*nowrap/);
+  assert.match(rule('.turn.user .msgMeta'), /justify-content:\s*flex-end/);
+});
+
 test('intrinsically wide markdown scrolls locally', () => {
   for (const selector of ['.msg.md pre', '.msg.md table']) {
     assert.match(rule(selector), /max-width:\s*100%/);

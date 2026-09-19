@@ -583,6 +583,50 @@ function mutateTranscript(mutate) {
   if (stick) scrollDown();
   return result;
 }
+const MESSAGE_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+});
+function timestampMillis(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function runDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(totalSeconds / 60)}m ${String(totalSeconds % 60).padStart(2, '0')}s`;
+}
+/**
+ * @param {any} body
+ * @param {{timestamp?: string|number|null, durationMs?: number|null, role?: string}} [metadata]
+ */
+function appendMessageMeta(body, { timestamp, durationMs = null, role = 'user' } = {}) {
+  const sentAt = timestampMillis(timestamp);
+  if (sentAt === null) return null;
+  const meta = document.createElement('div');
+  meta.className = 'msgMeta';
+  const time = document.createElement('time');
+  const date = new Date(sentAt);
+  time.dateTime = date.toISOString();
+  time.title = date.toLocaleString();
+  time.textContent = MESSAGE_TIME_FORMAT.format(date);
+  meta.appendChild(time);
+  if (role === 'assistant' && Number.isFinite(durationMs) && durationMs >= 60_000) {
+    const duration = document.createElement('span');
+    duration.className = 'runDuration';
+    duration.textContent = ` (${runDuration(durationMs)})`;
+    meta.appendChild(duration);
+  }
+  body.appendChild(meta);
+  return meta;
+}
+function flushAssistantMeta(chatState = activeChatState()) {
+  const metadata = chatState.pendingAssistantMeta;
+  if (!metadata || !currentTurn) return;
+  appendMessageMeta(currentTurn, metadata);
+  chatState.pendingAssistantMeta = null;
+  currentAssistant = currentThinking = null;
+}
 function bubble(cls, text = '', body = null) {
   return mutateTranscript(() => {
     const div = document.createElement('div');
@@ -1064,6 +1108,7 @@ function deliveredPromptElement(item) {
     message.textContent = item.text || queueAttachmentLabel(item);
   }
   body.append(type, message);
+  appendMessageMeta(body, { timestamp: Date.now() });
   turn.appendChild(body);
   return turn;
 }
@@ -1088,6 +1133,7 @@ function handleQueueEvent(ev, key) {
       });
       // The next assistant block belongs below the delivered instruction,
       // even when steering continues inside the same SDK agent run.
+      flushAssistantMeta(owner);
       currentTurn = currentAssistant = currentThinking = null;
     }
   }
@@ -1396,6 +1442,9 @@ function handleEvent(ev, ownerKey) {
       handleQueueEvent(ev, ownerKey);
       break;
     case 'text':
+      // A completed provider message can be followed by tools and another model
+      // call in the same run. Close its metadata before rendering that next call.
+      flushAssistantMeta();
       // a new text segment after thinking/tool must be appended AFTER them, in order: drop the
       // stale thinking reference so the next 'thinking' event (if any) starts a fresh bubble below
       currentThinking = null;
@@ -1403,6 +1452,7 @@ function handleEvent(ev, ownerKey) {
       if (!currentAssistant) { if (!currentTurn) currentTurn = newTurn('pi'); currentAssistant = bubble('assistant', '', currentTurn); }
       appendMd(currentAssistant, ev.delta); break;
     case 'thinking':
+      flushAssistantMeta();
       // a new thinking segment after text/tool must create a fresh bubble in DOM order, not
       // reuse (and jump back to) an earlier one
       currentAssistant = null;
@@ -1414,6 +1464,9 @@ function handleEvent(ev, ownerKey) {
       // must render as a new element after the tool card, never append into a stale one
       currentThinking = null; currentAssistant = null;
       renderTool(ev); taskFromTool(ev, ownerKey); break;
+    case 'message-meta':
+      activeChatState().pendingAssistantMeta = ev;
+      break;
     case 'usage':
       uiState.applyMetricsPayload(ownerKey, ev.metrics);
       renderStats();
@@ -1424,7 +1477,12 @@ function handleEvent(ev, ownerKey) {
         if (ev.model) activeChatState().turnModel = ev.model;  // model answering right now (it can change mid-chat)
         setAgentTask(true, ev.model, ownerKey);
       } else {
-        activeChatState().turnModel = null;
+        const state = activeChatState();
+        if (state.pendingAssistantMeta && state.responseStartedAt) {
+          state.pendingAssistantMeta.durationMs = Date.now() - state.responseStartedAt;
+        }
+        flushAssistantMeta(state);
+        state.turnModel = null;
         setAgentTask(false, null, ownerKey);
         refreshGit();  // the agent may have touched files / branches
       }
@@ -1449,7 +1507,8 @@ function handleEvent(ev, ownerKey) {
     case 'file': loadFiles(); break;
     case 'error':
       closeResponseSpinner();
-      bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message);
+      if (!currentTurn) currentTurn = newTurn('pi');
+      bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message, currentTurn);
       toast(ev.message);
       break;
   }
@@ -2541,6 +2600,7 @@ async function loadHistory({
   const savedScrollTop = preserveScroll ? chatWrap.scrollTop : null;
   if (replace) {
     resetTasks(key);
+    uiState.chatState(key).pendingAssistantMeta = null;
     chatCache.clearView(key);
     chat.replaceChildren();
     toolCards.clear();
@@ -2580,6 +2640,7 @@ async function loadHistory({
     // turn that ended badly (provider error / abort): without this the history
     // would show an empty turn with no explanation
     if (m.errorMessage) bubble('sys err', (m.stopReason === 'aborted' ? '⏹ ' : '⚠ ') + m.errorMessage, body);
+    appendMessageMeta(body, { timestamp: m.timestamp, durationMs: m.durationMs, role: m.role });
     currentTurn = prevTurn;
     if (lastText) addMsgActions(body, lastText, { entryId: m.entryId });
   }
@@ -4772,6 +4833,7 @@ function acceptedUserTurn(text, attachments) {
       body.appendChild(message);
     }
   }
+  appendMessageMeta(body, { timestamp: Date.now() });
   turn.appendChild(body);
   return turn;
 }
