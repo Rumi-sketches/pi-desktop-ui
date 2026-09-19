@@ -622,10 +622,14 @@ function messageContentText(message, separator = "") {
 }
 
 function timestampMillis(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
 }
 
 export async function handleGetHistory({ res, sessionKey }) {

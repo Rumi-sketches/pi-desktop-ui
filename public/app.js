@@ -682,10 +682,14 @@ const MESSAGE_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
   day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 function timestampMillis(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
   if (typeof value !== 'string') return null;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
 }
 function runDuration(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -2231,10 +2235,11 @@ async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   // A restored local row may outlive its server context. Resolve it before a
   // committed transition opens SSE, otherwise the stale key can attach to the
   // default context while the resume request is still in flight.
-  const ticket = s.local
-    ? navigation.begin()
-    : navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
-  const route = s.local ? '/api/sessions' : sessionPath(s.path, 'activate');
+  let ticket;
+  if (s.local) ticket = navigation.begin();
+  else ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
+  let route = '/api/sessions';
+  if (!s.local) route = sessionPath(s.path, 'activate');
   const r = await post(
     route,
     { cwd: s.cwd || undefined },
