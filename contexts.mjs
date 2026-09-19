@@ -421,6 +421,15 @@ export function assistantDeltaEvent(event) {
   return null;
 }
 
+export function assistantMessageMeta(completedAt = Date.now()) {
+  return {
+    kind: "message-meta",
+    role: "assistant",
+    timestamp: new Date(completedAt).toISOString(),
+    durationMs: null,
+  };
+}
+
 function wireSession(ctx) {
   ctx.session.subscribe((event) => {
     // The cancellable app queue owns prompts until a public turn boundary.
@@ -467,6 +476,9 @@ function wireSession(ctx) {
         output,
       });
     } else if (event.type === "message_end" && event.message?.role === "assistant") {
+      // The browser keeps streamed content in place, so it needs the same end
+      // metadata that a later /api/history reload derives from the session.
+      broadcast(ctx, assistantMessageMeta());
       // the message is now persisted in the session file: /api/history will
       // return it, so drop the text/thinking we buffered for it (tool cards of
       // the *current* turn are kept: they run after the message ends)
