@@ -66,14 +66,36 @@ function savePersistedComposerDraftMeta() {
 }
 function restoreComposerDraftChats(state, drafts, metadata) {
   for (const [key, meta] of Object.entries(metadata)) {
-    if (!drafts[key]?.trim() || !meta || typeof meta !== 'object') continue;
+    if (!meta || typeof meta !== 'object') continue;
+    const pending = meta.pending === true;
+    if (!drafts[key]?.trim() && !pending) continue;
     if (typeof meta.cwd !== 'string' || typeof meta.title !== 'string' || typeof meta.modified !== 'string') continue;
     Object.assign(state.chatState(key), {
       cwd: meta.cwd,
       sidebarTitle: meta.title,
       sidebarModified: meta.modified,
+      sidebarPending: pending,
+      started: pending,
     });
   }
+}
+function persistComposerDraftMeta(key, state) {
+  persistedComposerDraftMeta[key] = {
+    cwd: state.cwd,
+    title: state.sidebarTitle,
+    modified: state.sidebarModified,
+    pending: state.sidebarPending,
+  };
+  savePersistedComposerDraftMeta();
+}
+function clearConfirmedComposerDraftMeta(sessions) {
+  let changed = false;
+  for (const session of sessions) {
+    if (!(session.path in persistedComposerDraftMeta)) continue;
+    delete persistedComposerDraftMeta[session.path];
+    changed = true;
+  }
+  if (changed) savePersistedComposerDraftMeta();
 }
 const chatCache = createChatCache({
   loadDraft: (key) => persistedComposerDrafts[key] ?? '',
@@ -159,8 +181,15 @@ function showChatResource(key, { reconnect = true, park = true } = {}) {
   if (reconnect) connect(key);
 }
 
+function storeComposerDraft(key, value) {
+  const entry = chatCache.setDraft(key, value);
+  const state = uiState.chatState(key);
+  if (value.trim() || state.sidebarPending) persistComposerDraftMeta(key, state);
+  return entry;
+}
+
 function stashComposerDraft(key) {
-  if (key) chatCache.setDraft(key, $('input').value);
+  if (key) storeComposerDraft(key, $('input').value);
 }
 
 function composerDraft(key) {
@@ -185,19 +214,13 @@ function rekeyChat(oldKey, newKey) {
 function updateComposerDraft(key, value) {
   if (!key) return;
   const hadDraft = Boolean(composerDraft(key).trim());
-  const entry = chatCache.setDraft(key, value);
   const hasDraft = Boolean(value.trim());
   const state = uiState.chatState(key);
   if (hasDraft) {
     state.sidebarTitle = draftTitle(value);
     state.sidebarModified ??= new Date().toISOString();
-    persistedComposerDraftMeta[key] = {
-      cwd: state.cwd,
-      title: state.sidebarTitle,
-      modified: state.sidebarModified,
-    };
-    savePersistedComposerDraftMeta();
   }
+  const entry = storeComposerDraft(key, value);
   if (hadDraft !== hasDraft) {
     renderSessions();
     return;
@@ -1927,6 +1950,7 @@ async function loadSessions() {
     if (raw.error) return;
     const res = uiState.applySessionsPayload(raw);
     allSessions = res.sessions;
+    clearConfirmedComposerDraftMeta(allSessions);
     if (!uiState.selection) selectCurrentChatState(renderedChatKey ?? res.current);
     runningKeys.clear();
     for (const k of res.running ?? []) runningKeys.add(k);
@@ -2203,13 +2227,9 @@ function groupOf(s, mode) {
 async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   const previous = uiState.selection;
   const ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
-  if (s.local) {
-    showChatResource(s.path);
-    await loadOpenChat(ticket);
-    return;
-  }
+  const route = s.local ? '/api/sessions' : sessionPath(s.path, 'activate');
   const r = await post(
-    sessionPath(s.path, 'activate'),
+    route,
     { cwd: s.cwd || undefined },
     { followKey: false, key: s.path, ticket },
   );
@@ -4969,7 +4989,7 @@ function acceptedUserTurn(text, attachments) {
   return turn;
 }
 function clearAcceptedComposer(entry, draft, attachments) {
-  if (entry.composer.draft === draft) chatCache.setDraft(entry.key, '');
+  if (entry.composer.draft === draft) storeComposerDraft(entry.key, '');
   const sent = new Set(attachments);
   entry.composer.attachments = entry.composer.attachments.filter((attachment) => !sent.has(attachment));
   if (entry.key !== activeChatKey()) return;
@@ -4988,7 +5008,7 @@ async function submitPrompt(queueType = null) {
   const text = draft.trim();
   const attachments = [...pending];
   if (!text && !attachments.length) return;
-  chatCache.setDraft(key, draft);
+  storeComposerDraft(key, draft);
   entry.composer.attachments = pending;
 
   const images = attachments

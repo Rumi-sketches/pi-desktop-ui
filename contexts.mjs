@@ -654,17 +654,28 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
   return ctx;
 }
 
+function liveContext(key) {
+  if (!key) return null;
+  const known = contexts.get(key) ?? contexts.get(adoptedDrafts.get(key));
+  if (known) known.lastActive = Date.now();
+  return known ?? null;
+}
+
+// A restored local sidebar row still knows its original folder even when its
+// in-memory context expired or the server restarted. Reuse the exact live or
+// adopted context when possible; otherwise recreate an empty draft there.
+export async function resumeDraftContext(key, cwd) {
+  return liveContext(key) ?? await createContext({ cwd, mode: "new" });
+}
+
 // Resolve the context a request belongs to. `key` is the session file path sent
 // by the tab (query `?s=` or header `x-pi-session`); unknown keys are loaded
 // lazily (server restart, chat opened in another tab), missing ones fall back to
 // the most recent chat of the default folder.
 export async function useContext(key) {
   if (key) {
-    const known = contexts.get(key) ?? contexts.get(adoptedDrafts.get(key));
-    if (known) {
-      known.lastActive = Date.now();
-      return known;
-    }
+    const known = liveContext(key);
+    if (known) return known;
     try {
       const file = await resolveFile(key);
       return await createContext({

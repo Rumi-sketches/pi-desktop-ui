@@ -58,6 +58,7 @@ import {
   contextAwaitingInput,
   openContextKeys,
   runningContextKeys,
+  resumeDraftContext,
   tabCwd,
   totals,
   useContext,
@@ -511,8 +512,18 @@ function sendContext(res, ctx) {
   return send(res, 200, { ok: true, key: ctx.key, cwd: ctx.cwd, running: contextIsBusy(ctx) });
 }
 
-export async function handleCreateSession({ res, sessionKey }) {
-  return sendContext(res, await createContext({ cwd: tabCwd(sessionKey), mode: "new" }));
+export async function handleCreateSession({ req, res, sessionKey }) {
+  const { cwd: restoredCwd } = await jsonBody(req);
+  if (restoredCwd === undefined) {
+    return sendContext(res, await createContext({ cwd: tabCwd(sessionKey), mode: "new" }));
+  }
+  let cwd;
+  try {
+    cwd = await resolveDir(restoredCwd);
+  } catch (e) {
+    return sendError(res, 400, "invalid_folder", String(e.message ?? e));
+  }
+  return sendContext(res, await resumeDraftContext(sessionKey, cwd));
 }
 
 // No id in the path: "the most recent chat of this folder", whichever it is.

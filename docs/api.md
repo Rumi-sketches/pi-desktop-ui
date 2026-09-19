@@ -59,7 +59,7 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | --- | --- | --- | --- |
 | `GET /api/sessions` *[s]* | `?scope=cwd` (default) or `?scope=all` | `{ current, cwd, scope, running[], open[], sessions[] }`; each session includes `pullRequests: [{ number, url }]` for PRs created by successful `gh pr create` tool calls in that chat | – |
 | `GET /api/search` *[s]* | `?q=<words>` · `?scope=cwd` (default) or `?scope=all` | `{ query, scope, cwd, scanned, capped, truncated, sessions[] }` — chats whose *messages* contain every word of `q`, entries shaped like `/api/sessions`, 50 most recent at most; the scan itself stops at the 300 most recent chats unless `/api/full-search` is on, and `truncated` reports either cap | `400` `missing_query` |
-| `POST /api/sessions` *[s]* | – | `{ ok, key, cwd, running }` for a new chat in the tab's folder | – |
+| `POST /api/sessions` *[s]* | `{ cwd? }`; `cwd` resumes a restored local draft in that folder | `{ ok, key, cwd, running }` for the existing draft context or a new chat in the requested/tab folder | `400` `invalid_folder` |
 | `POST /api/sessions/activate` *[s]* | – | `{ ok, key, cwd, running }` for the most recent chat of that folder | – |
 | `POST /api/sessions/:id/activate` *[s]* | `:id` = session file, url-encoded; `{ cwd? }` | `{ ok, key, cwd, running }` | `400` id unresolvable or outside the sessions directory |
 | `POST /api/sessions/:id/fork` | `:id` as above; `{ entryId }` | `{ ok, key, cwd, running }` for the branched chat | `400` missing `entryId`, draft chat with no session file, id outside the sessions directory, or the branch could not be created |

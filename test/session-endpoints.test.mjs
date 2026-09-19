@@ -373,6 +373,28 @@ describe("the session routes", () => {
     assertContextPayload(body);
   });
 
+  test("POST /api/sessions recreates a stale local draft in its persisted folder", async () => {
+    const cwd = path.join(agentDir, "restored-draft-project");
+    await mkdir(cwd, { recursive: true });
+    const staleKey = encodeURIComponent("draft:stale-project");
+    const first = await postJson(`/api/sessions?s=${staleKey}`, { cwd });
+    assert.equal(first.status, 200);
+    assertContextPayload(first.body);
+    assert.equal(path.resolve(first.body.cwd), path.resolve(cwd));
+
+    const resumed = await postJson(`/api/sessions?s=${encodeURIComponent(first.body.key)}`, { cwd });
+    assert.equal(resumed.status, 200);
+    assert.equal(resumed.body.key, first.body.key);
+  });
+
+  test("POST /api/sessions rejects an unknown restored-draft folder", async () => {
+    const { status, body } = await postJson("/api/sessions?s=draft%3Astale", {
+      cwd: path.join(agentDir, "missing-restored-draft-project"),
+    });
+    assert.equal(status, 400);
+    assert.equal(body.error.code, "invalid_folder");
+  });
+
   test("POST /api/sessions/:id/activate loads that chat and answers with its path as key", async () => {
     const { status, body } = await postJson(sessionUrl(sessionFile, "activate"));
     assert.equal(status, 200);
