@@ -96,34 +96,39 @@ test('accepted first prompt keeps its pending sidebar projection when its text i
   assert.deepEqual(persisted, { key: 'draft-key', pending: true });
 });
 
-test('opening a restored local draft resumes it in its persisted folder', async () => {
+test('opening a restored local draft resolves its server context before committing navigation', async () => {
   const calls = [];
-  const transitions = [];
+  const order = [];
   let rekeyed = null;
   let shown = null;
   let loaded = null;
+  const pendingTicket = { revision: 1, selection: null };
   const context = vm.createContext({
     VIEW_CHAT,
     uiState: { activeTabId: 'all', selection: null },
     navigation: {
-      transition(selection) {
-        transitions.push(selection);
-        return { revision: transitions.length, selection };
+      begin() { order.push('begin'); return pendingTicket; },
+      transition() { throw new Error('a local draft must not transition before it is resolved'); },
+      commit(selection, ticket) {
+        assert.equal(ticket, pendingTicket);
+        order.push('commit');
+        return { revision: 1, selection };
       },
       isCurrent: () => true,
     },
     async post(route, body, options) {
+      order.push('post');
       calls.push({ route, body, options });
       return { key: 'saved-key', cwd: body.cwd };
     },
     sessionPath: () => { throw new Error('a local draft must not use the persisted-session route'); },
-    rekeyChat(oldKey, newKey) { rekeyed = { oldKey, newKey }; },
-    showChatResource(key) { shown = key; },
-    async loadOpenChat(ticket) { loaded = ticket; },
+    rekeyChat(oldKey, newKey) { order.push('rekey'); rekeyed = { oldKey, newKey }; },
+    showChatResource(key) { order.push('show'); shown = key; },
+    async loadOpenChat(ticket) { order.push('load'); loaded = ticket; },
   });
   vm.runInContext(appFunction('openSession'), context);
 
-  await context.openSession({ path: 'draft-key', cwd: 'project', local: true });
+  assert.equal(await context.openSession({ path: 'draft-key', cwd: 'project', local: true }), true);
 
   assert.equal(calls[0].route, '/api/sessions');
   assert.equal(calls[0].body.cwd, 'project');
@@ -132,6 +137,24 @@ test('opening a restored local draft resumes it in its persisted folder', async 
   assert.deepEqual(rekeyed, { oldKey: 'draft-key', newKey: 'saved-key' });
   assert.equal(shown, 'saved-key');
   assert.equal(loaded.selection.resourceId, 'saved-key');
+  assert.deepEqual(order, ['begin', 'post', 'rekey', 'commit', 'show', 'load']);
+});
+
+test('bootstrap resolves a restored local draft before opening any stream', async () => {
+  const order = [];
+  const local = { path: 'draft-key', cwd: 'project', local: true };
+  const context = vm.createContext({
+    renderedChatKey: 'draft-key',
+    restoreChatView(key) { order.push(`restore:${key}`); },
+    sessionForKey: () => local,
+    async openSession(session) { order.push(`resume:${session.path}`); return true; },
+    connect() { throw new Error('must not connect before the local draft is resumed'); },
+    loadState() { throw new Error('must not load state through the stale key'); },
+  });
+  vm.runInContext(appFunction('loadInitialChat'), context);
+
+  assert.equal(await context.loadInitialChat(), true);
+  assert.deepEqual(order, ['restore:draft-key', 'resume:draft-key']);
 });
 
 test('draft sidebar metadata follows an opaque chat rekey', () => {

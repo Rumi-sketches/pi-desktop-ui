@@ -2228,30 +2228,41 @@ function groupOf(s, mode) {
 // server and you find it again (result included) when you come back.
 async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   const previous = uiState.selection;
-  const ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
+  // A restored local row may outlive its server context. Resolve it before a
+  // committed transition opens SSE, otherwise the stale key can attach to the
+  // default context while the resume request is still in flight.
+  const ticket = s.local
+    ? navigation.begin()
+    : navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
   const route = s.local ? '/api/sessions' : sessionPath(s.path, 'activate');
   const r = await post(
     route,
     { cwd: s.cwd || undefined },
     { followKey: false, key: s.path, ticket },
   );
-  if (!navigation.isCurrent(ticket)) return;
+  if (!navigation.isCurrent(ticket)) return false;
   if (r.error) {
-    if (previous && isNavigationSelectionAvailable(previous) && uiState.canSelect(previous)) {
-      navigation.transition(previous);
-    } else {
-      navigation.restoreActive(fallbackSelectionForTab);
+    if (!s.local) {
+      if (previous && isNavigationSelectionAvailable(previous) && uiState.canSelect(previous)) {
+        navigation.transition(previous);
+      } else {
+        navigation.restoreActive(fallbackSelectionForTab);
+      }
     }
-    return;
+    return false;
   }
   const key = r.key ?? s.path;
+  if (key !== s.path) rekeyChat(s.path, key);
   let activeTicket = ticket;
-  if (key !== s.path) {
-    rekeyChat(s.path, key);
+  if (s.local) {
+    activeTicket = navigation.commit({ tabId, view: VIEW_CHAT, resourceId: key }, ticket);
+  } else if (key !== s.path) {
     activeTicket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: key });
   }
+  if (!activeTicket) return false;
   showChatResource(key);            // the cached view was already shown by the transition
   await loadOpenChat(activeTicket); // synchronize independently; never rely on SSE alone
+  return true;
 }
 
 async function openChatNotification(key) {
@@ -5371,10 +5382,18 @@ async function loadState({ key = activeChatKey() ?? renderedChatKey, ticket = nu
   renderCachedChatState();
   renderProjectScope(projectScopeForChat(s.key));
 }
-(async () => {
-  if (renderedChatKey) restoreChatView(renderedChatKey);
+async function loadInitialChat() {
+  if (renderedChatKey) {
+    restoreChatView(renderedChatKey);
+    const restored = sessionForKey(renderedChatKey);
+    if (restored?.local) return await openSession(restored);
+  }
   connect();
   await loadState();
+  return true;
+}
+(async () => {
+  await loadInitialChat();
   // Global catalogs load once at bootstrap. Ordinary chat/tab switches only
   // synchronize the selected chat, its project and the global session list.
   await Promise.all([loadModels(), loadCommands(), loadRecentCwds()]);
