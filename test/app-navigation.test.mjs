@@ -91,11 +91,12 @@ test('chat rows expose a yellow marker for unsent drafts', () => {
   assert.match(cssSource, /\.sessionItem \.draftDot \{[^}]*background:\s*var\(--warn\)/s);
 });
 
-test('chat links distinguish local files from web navigation', () => {
+test('chat links distinguish local files from external navigation', () => {
   const context = vm.createContext({});
   vm.runInContext(appFunction('isLocalLink'), context);
   assert.equal(context.isLocalLink('https://example.com/docs'), false);
   assert.equal(context.isLocalLink('mailto:user@example.com'), false);
+  assert.equal(context.isLocalLink('ms-settings:display'), false);
   assert.equal(context.isLocalLink('#section'), false);
   assert.equal(context.isLocalLink('./public/app.js:42'), true);
   assert.equal(context.isLocalLink('/C:/work/project/app.js:42'), true);
@@ -123,6 +124,14 @@ test('message metadata shows run duration only from sixty seconds', () => {
   const longBody = element();
   context.appendMessageMeta(longBody, { timestamp: 1, durationMs: 65_000, role: 'assistant' });
   assert.equal(longBody.children[0].children[1].textContent, '(1m 05s)');
+});
+
+test('chat sanitizer admits Windows Settings links but rejects script URLs', () => {
+  const literal = source.match(/^const CHAT_URI_PATTERN = (\/.*\/i);$/m)?.[1];
+  assert.ok(literal, 'CHAT_URI_PATTERN exists');
+  const pattern = vm.runInNewContext(literal);
+  assert.equal(pattern.test('ms-settings:display'), true);
+  assert.equal(pattern.test('javascript:alert(1)'), false);
 });
 
 test('project tabs reorder on either side of the drop target', () => {
