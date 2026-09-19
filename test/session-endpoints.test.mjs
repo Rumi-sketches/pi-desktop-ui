@@ -387,6 +387,23 @@ describe("the session routes", () => {
     assert.equal(resumed.body.key, first.body.key);
   });
 
+  test("POST /api/sessions reopens a saved chat whose composer draft survived a restart", async () => {
+    const savedDraft = path.join(path.dirname(sessionFile), "saved-composer-draft.jsonl");
+    await writeFile(savedDraft, `${JSON.stringify({
+      ...SESSION_HEADER,
+      id: "saved-composer-draft-fixture",
+      timestamp: new Date().toISOString(),
+    })}\n`);
+
+    const { status, body } = await postJson(`/api/sessions?s=${encodeURIComponent(savedDraft)}`, {
+      cwd: process.cwd(),
+    });
+
+    assert.equal(status, 200);
+    assert.equal(body.key, savedDraft);
+    assert.equal(path.resolve(body.cwd), path.resolve(process.cwd()));
+  });
+
   test("POST /api/sessions rejects an unknown restored-draft folder", async () => {
     const { status, body } = await postJson("/api/sessions?s=draft%3Astale", {
       cwd: path.join(agentDir, "missing-restored-draft-project"),

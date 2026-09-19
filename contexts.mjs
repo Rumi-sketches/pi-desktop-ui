@@ -661,11 +661,26 @@ function liveContext(key) {
   return known ?? null;
 }
 
-// A restored local sidebar row still knows its original folder even when its
-// in-memory context expired or the server restarted. Reuse the exact live or
-// adopted context when possible; otherwise recreate an empty draft there.
+// A restored sidebar row may be either an unsaved draft key or a persisted
+// session whose composer has unsent text. Reuse a live/adopted context first,
+// then reopen a real session file, and create an empty draft only when the key
+// has never become persistent.
 export async function resumeDraftContext(key, cwd) {
-  return liveContext(key) ?? await createContext({ cwd, mode: "new" });
+  const known = liveContext(key);
+  if (known) return known;
+  if (key) {
+    try {
+      const file = await resolveFile(key);
+      return await createContext({
+        cwd: (await sessionCwd(file)) ?? cwd,
+        mode: "open",
+        openPath: file,
+      });
+    } catch {
+      /* unsaved or stale draft key: recreate it in the persisted folder */
+    }
+  }
+  return await createContext({ cwd, mode: "new" });
 }
 
 // Resolve the context a request belongs to. `key` is the session file path sent
