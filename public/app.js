@@ -53,9 +53,27 @@ let currentAssistant = null, currentThinking = null, currentTurn = null;
    live composer and view state; its persistence adapter deliberately receives
    only text, never attachment payloads. */
 let persistedComposerDrafts = {};
+let persistedComposerDraftMeta = {};
 try { persistedComposerDrafts = JSON.parse(sessionStorage.getItem('piComposerDrafts') || '{}'); } catch {}
+try { persistedComposerDraftMeta = JSON.parse(sessionStorage.getItem('piComposerDraftMeta') || '{}'); } catch {}
+if (!persistedComposerDrafts || typeof persistedComposerDrafts !== 'object' || Array.isArray(persistedComposerDrafts)) persistedComposerDrafts = {};
+if (!persistedComposerDraftMeta || typeof persistedComposerDraftMeta !== 'object' || Array.isArray(persistedComposerDraftMeta)) persistedComposerDraftMeta = {};
 function savePersistedComposerDrafts() {
   try { sessionStorage.setItem('piComposerDrafts', JSON.stringify(persistedComposerDrafts)); } catch {}
+}
+function savePersistedComposerDraftMeta() {
+  try { sessionStorage.setItem('piComposerDraftMeta', JSON.stringify(persistedComposerDraftMeta)); } catch {}
+}
+function restoreComposerDraftChats(state, drafts, metadata) {
+  for (const [key, meta] of Object.entries(metadata)) {
+    if (!drafts[key]?.trim() || !meta || typeof meta !== 'object') continue;
+    if (typeof meta.cwd !== 'string' || typeof meta.title !== 'string' || typeof meta.modified !== 'string') continue;
+    Object.assign(state.chatState(key), {
+      cwd: meta.cwd,
+      sidebarTitle: meta.title,
+      sidebarModified: meta.modified,
+    });
+  }
 }
 const chatCache = createChatCache({
   loadDraft: (key) => persistedComposerDrafts[key] ?? '',
@@ -65,7 +83,9 @@ const chatCache = createChatCache({
   },
   removeDraft: (key) => {
     delete persistedComposerDrafts[key];
+    delete persistedComposerDraftMeta[key];
     savePersistedComposerDrafts();
+    savePersistedComposerDraftMeta();
   },
 });
 let persistedFormDrafts = {};
@@ -74,6 +94,7 @@ function savePersistedFormDrafts() {
   try { sessionStorage.setItem('piFormDrafts', JSON.stringify(persistedFormDrafts)); } catch {}
 }
 const uiState = createUiState({ chatCache });
+restoreComposerDraftChats(uiState, persistedComposerDrafts, persistedComposerDraftMeta);
 const navigation = createNavigationController({
   state: uiState,
   isAvailable: isNavigationSelectionAvailable,
@@ -140,6 +161,56 @@ function showChatResource(key, { reconnect = true, park = true } = {}) {
 
 function stashComposerDraft(key) {
   if (key) chatCache.setDraft(key, $('input').value);
+}
+
+function composerDraft(key) {
+  return chatCache.peek(key)?.composer.draft ?? persistedComposerDrafts[key] ?? '';
+}
+
+function draftTitle(value) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function rekeyChat(oldKey, newKey) {
+  const meta = persistedComposerDraftMeta[oldKey];
+  const state = uiState.rekeyChat(oldKey, newKey);
+  if (meta) {
+    persistedComposerDraftMeta[newKey] = meta;
+    delete persistedComposerDraftMeta[oldKey];
+    savePersistedComposerDraftMeta();
+  }
+  return state;
+}
+
+function updateComposerDraft(key, value) {
+  if (!key) return;
+  const hadDraft = Boolean(composerDraft(key).trim());
+  const entry = chatCache.setDraft(key, value);
+  const hasDraft = Boolean(value.trim());
+  const state = uiState.chatState(key);
+  if (hasDraft) {
+    state.sidebarTitle = draftTitle(value);
+    state.sidebarModified ??= new Date().toISOString();
+    persistedComposerDraftMeta[key] = {
+      cwd: state.cwd,
+      title: state.sidebarTitle,
+      modified: state.sidebarModified,
+    };
+    savePersistedComposerDraftMeta();
+  }
+  if (hadDraft !== hasDraft) {
+    renderSessions();
+    return;
+  }
+  if (!hasDraft) return;
+  // Existing rows keep their server title. A local draft has no server title
+  // yet, so update its visible label without rebuilding a long chat list for
+  // every keystroke.
+  for (const row of $$('.sessionItem')) {
+    if (row.dataset.sessionKey !== entry.key || row.dataset.local !== 'true') continue;
+    row.querySelector('.lbl').textContent = state.sidebarTitle;
+    row.title = state.sidebarTitle;
+  }
 }
 
 if (win.marked) win.marked.setOptions({ breaks: true, gfm: true });
@@ -246,7 +317,7 @@ async function api(url, opts, {
       const oldKey = key ?? activeChatKey() ?? renderedChatKey;
       if (oldKey && oldKey !== d.key && uiState.chats.has(oldKey)) {
         parkChatView(oldKey);
-        uiState.rekeyChat(oldKey, d.key);
+        rekeyChat(oldKey, d.key);
         renderedChatKey = null;
       }
       showChatResource(d.key, { reconnect: d.key !== oldKey, park: false });
@@ -1380,7 +1451,7 @@ function handleEvent(ev, ownerKey) {
     case 'attached':
       if (ev.key !== ownerKey) {
         parkChatView(ownerKey);
-        uiState.rekeyChat(ownerKey, ev.key);
+        rekeyChat(ownerKey, ev.key);
         if (runningKeys.delete(ownerKey)) runningKeys.add(ev.key);
         transport.rekeyDetailed(ownerKey, ev.key);
         showChatResource(ev.key, { reconnect: false, park: false });
@@ -1434,7 +1505,7 @@ function handleEvent(ev, ownerKey) {
       // its live DOM/composer first, then move the whole cache entry atomically.
       const old = ownerKey;
       parkChatView(old);
-      uiState.rekeyChat(old, ev.key);
+      rekeyChat(old, ev.key);
       if (runningKeys.delete(old)) runningKeys.add(ev.key);
       transport.rekeyDetailed(old, ev.key);
       showChatResource(ev.key, { reconnect: false, park: false });
@@ -1778,7 +1849,7 @@ const modifiedAt = (s) => new Date(s.modified).getTime();
 const sessionLabel = (s) => s?.title || s?.name || s?.firstMessage || '';
 // The same name, cut to notification size: one line, never a transcript.
 function chatLabel(key, max = 70) {
-  const raw = sessionLabel(allSessions.find((s) => s.path === key)).replace(/\s+/g, ' ').trim();
+  const raw = sessionLabel(sessionForKey(key)).replace(/\s+/g, ' ').trim();
   if (!raw) return '(background chat)';
   return raw.length > max ? raw.slice(0, max - 1).trimEnd() + '\u2026' : raw;
 }
@@ -1861,6 +1932,45 @@ function matchesSessionSearch(s, words) {
 }
 // Filtered and ordered chats, shared by the sidebar and by the collapsed-sidebar
 // flyout: the two must never disagree on what "the most recent chats" are.
+function localSessionEntry(chatState) {
+  const draft = composerDraft(chatState.key).trim();
+  if (!draft && !chatState.sidebarPending && !chatState.streaming) return null;
+  const title = chatState.sidebarTitle || draftTitle(draft) || 'New chat';
+  return {
+    path: chatState.key,
+    id: chatState.key,
+    cwd: chatState.cwd,
+    name: '',
+    firstMessage: title,
+    title,
+    messageCount: chatState.started ? 1 : 0,
+    modified: chatState.sidebarModified ?? new Date().toISOString(),
+    favorite: false,
+    status: 'active',
+    provider: chatState.model?.provider ?? '',
+    model: chatState.model?.id ?? '',
+    local: true,
+  };
+}
+
+function sidebarSessions() {
+  const sessions = [...allSessions];
+  const persisted = new Set(sessions.map((session) => session.path));
+  for (const chatState of uiState.chats.values()) {
+    if (persisted.has(chatState.key)) continue;
+    const local = localSessionEntry(chatState);
+    if (local) sessions.push(local);
+  }
+  return sessions;
+}
+
+function sessionForKey(key) {
+  const persisted = allSessions.find((session) => session.path === key);
+  if (persisted) return persisted;
+  const chatState = uiState.chats.get(key);
+  return chatState ? localSessionEntry(chatState) : null;
+}
+
 function sessionsInOrder(projectCwd = activeProjectCwd()) {
   const words = $('sessionSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
   // deep search results take the place of the list: the server has already
@@ -1869,7 +1979,7 @@ function sessionsInOrder(projectCwd = activeProjectCwd()) {
   // explicitly asked for.
   const list = deepResults
     ? deepResults.filter((s) => !projectCwd || (s.cwd || '').toLowerCase() === projectCwd.toLowerCase())
-    : allSessions.filter((s) => passesSessionFilter(s, projectCwd) && matchesSessionSearch(s, words));
+    : sidebarSessions().filter((s) => passesSessionFilter(s, projectCwd) && matchesSessionSearch(s, words));
   const sort = sessionSort;
   // favorites always sit on top and among themselves are sorted by date (newest
   // first), whatever view/sort is selected; the rest follows the sort.
@@ -1906,22 +2016,26 @@ function sessionItemEl(s) {
   const done = isChatDone(s);
   const div = document.createElement('div');
   div.className = 'sessionItem' + (s.path === activeChatKey() ? ' active' : '') + (done ? ' done' : '');
+  div.dataset.sessionKey = s.path;
+  div.dataset.local = String(Boolean(s.local));
   // `title` is the server's summary of the chat, already falling back to the
   // truncated first message; the other two cover a payload without it.
   const label = sessionLabel(s) || '(empty)';
   const running = runningKeys.has(s.path);
+  const hasDraft = Boolean(composerDraft(s.path).trim());
   // one line only: title and date. Model, project, message count and status
   // badges stay in the payload but out of sight; the per-row actions (favorite,
   // done) live in the hover panel as before.
-  div.innerHTML = `<div class="acts">
+  const actions = s.local ? '' : `<div class="acts">
     ${chatArchiving ? `<button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Move back to active' : 'Mark as done'}">${done ? '↺' : '✓'}</button>` : ''}
     <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
-    </div><div class="title">${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
+    </div>`;
+  div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
     <span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
   div.title = label;
   // favorite: clicking the heart must not open the chat
-  div.querySelector('.fav').addEventListener('click', async (e) => {
+  div.querySelector('.fav')?.addEventListener('click', async (e) => {
     e.stopPropagation();
     const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
     if (r.error) return;
@@ -2018,6 +2132,11 @@ function groupOf(s, mode) {
 async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   const previous = uiState.selection;
   const ticket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: s.path });
+  if (s.local) {
+    showChatResource(s.path);
+    await loadOpenChat(ticket);
+    return;
+  }
   const r = await post(
     sessionPath(s.path, 'activate'),
     { cwd: s.cwd || undefined },
@@ -2035,7 +2154,7 @@ async function openSession(s, { tabId = uiState.activeTabId } = {}) {
   const key = r.key ?? s.path;
   let activeTicket = ticket;
   if (key !== s.path) {
-    uiState.rekeyChat(s.path, key);
+    rekeyChat(s.path, key);
     activeTicket = navigation.transition({ tabId, view: VIEW_CHAT, resourceId: key });
   }
   showChatResource(key);            // the cached view was already shown by the transition
@@ -2248,7 +2367,7 @@ const projName = (cwd) => (cwd || '').split(/[\\/]/).filter(Boolean).pop() || cw
 function isNavigationSelectionAvailable(selection) {
   if (selection.view === VIEW_SETTINGS) return true;
   if (selection.view === VIEW_CHAT) {
-    return selection.resourceId === renderedChatKey || allSessions.some((s) => s.path === selection.resourceId);
+    return selection.resourceId === renderedChatKey || sidebarSessions().some((s) => s.path === selection.resourceId);
   }
   return terminals.some((terminal) => terminal.id === selection.resourceId);
 }
@@ -3031,7 +3150,7 @@ function showTerminal(id) {
 function renderContextHeader(selection = uiState.selection) {
   const selectedChat = selection?.view === VIEW_CHAT ? uiState.chats.get(selection.resourceId) : null;
   const chatSession = selection?.view === VIEW_CHAT
-    ? allSessions.find((item) => item.path === selection.resourceId)
+    ? sessionForKey(selection.resourceId)
     : null;
   const chatHeader = chatHeaderState(selection, selectedChat, chatSession, {
     canOpenFolder: platformCaps?.openFolder,
@@ -4691,6 +4810,7 @@ function pickCmd(i) {
   const insert = '/' + c.name + (end === v.length ? ' ' : '');
   input.value = v.slice(0, start) + insert + v.slice(end);
   input.selectionStart = input.selectionEnd = start + insert.length;
+  updateComposerDraft(activeChatKey(), input.value);
   closeCmdMenu();
   autoGrow();
   input.focus();
@@ -4709,8 +4829,7 @@ function autoGrow() {
 }
 window.addEventListener('resize', autoGrow);
 input.addEventListener('input', () => {
-  const key = activeChatKey();
-  if (key) chatCache.setDraft(key, input.value);
+  updateComposerDraft(activeChatKey(), input.value);
   autoGrow();
   updateCmdMenu();
 });
@@ -4813,12 +4932,18 @@ async function submitPrompt(queueType = null) {
     const result = await post('/api/prompt', body, { key, guardChat: true });
     if (result.error) return;
 
-    clearAcceptedComposer(entry, draft, attachments);
+    const chatState = uiState.chatState(entry.key);
     // HTTP confirms acceptance, not current queue membership. A newer SSE
     // dispatch/cancel may already have removed this item before HTTP arrives.
+    if (!result.queued) {
+      chatState.started = true;
+      chatState.sidebarTitle ||= draftTitle(text);
+      chatState.sidebarModified ??= new Date().toISOString();
+      chatState.sidebarPending = !allSessions.some((session) => session.path === entry.key);
+    }
+    clearAcceptedComposer(entry, draft, attachments);
+    renderSessions();
     if (result.queued) return;
-
-    uiState.chatState(entry.key).started = true;
     if (entry.key === activeChatKey() && entry.key === renderedChatKey) {
       const hero = $('hero');
       const insertionAnchor = anchor === hero ? null : anchor;
@@ -4862,6 +4987,7 @@ input.addEventListener('keydown', (e) => {
         const rep = line.slice(0, -1) + '• ';
         input.value = value.slice(0, lineStart) + rep + value.slice(selectionStart);
         input.selectionStart = input.selectionEnd = lineStart + rep.length;
+        updateComposerDraft(activeChatKey(), input.value);
         autoGrow();
       }
     }
@@ -4885,6 +5011,7 @@ function continueList() {
     // empty item: drop the marker and stay on a clean line
     input.value = value.slice(0, lineStart) + rest;
     input.selectionStart = input.selectionEnd = lineStart;
+    updateComposerDraft(activeChatKey(), input.value);
     autoGrow();
     return true;
   }
@@ -4892,6 +5019,7 @@ function continueList() {
   const insert = '\n' + indent + next + ws;
   input.value = before + insert + rest;
   input.selectionStart = input.selectionEnd = before.length + insert.length;
+  updateComposerDraft(activeChatKey(), input.value);
   autoGrow();
   return true;
 }

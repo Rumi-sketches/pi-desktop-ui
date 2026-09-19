@@ -17,6 +17,80 @@ function appFunction(name) {
   return match[0];
 }
 
+test('sidebar keeps local drafts and accepted first prompts visible before server persistence', () => {
+  const uiState = createUiState();
+  const saved = uiState.chatState('saved');
+  saved.cwd = 'project';
+  const local = uiState.chatState('local');
+  Object.assign(local, {
+    cwd: 'project',
+    sidebarTitle: 'Draft a release note',
+    sidebarModified: '2026-09-19T10:00:00.000Z',
+  });
+  const persisted = {
+    saved: 'unsent addition',
+    local: 'Draft a release note',
+  };
+  const allSessions = [{ path: 'saved', title: 'Saved chat' }];
+  const context = vm.createContext({
+    uiState,
+    chatCache: uiState.chatCache,
+    persistedComposerDrafts: persisted,
+    allSessions,
+  });
+  for (const name of ['restoreComposerDraftChats', 'composerDraft', 'draftTitle', 'localSessionEntry', 'sidebarSessions']) {
+    vm.runInContext(appFunction(name), context);
+  }
+
+  const restored = createUiState();
+  context.restoreComposerDraftChats(restored, { hidden: 'keep me' }, {
+    hidden: { cwd: 'other-project', title: 'Keep me', modified: '2026-09-19T09:00:00.000Z' },
+  });
+  assert.equal(restored.chatState('hidden').cwd, 'other-project', 'a local draft remains reachable after reload');
+  assert.equal(restored.chatState('hidden').sidebarTitle, 'Keep me');
+
+  let sessions = context.sidebarSessions();
+  assert.deepEqual([...sessions.map((session) => session.path)], ['saved', 'local']);
+  assert.equal(sessions[1].local, true);
+  assert.equal(sessions[1].title, 'Draft a release note');
+
+  persisted.local = '';
+  local.started = true;
+  local.sidebarPending = true;
+  sessions = context.sidebarSessions();
+  assert.equal(sessions.some((session) => session.path === 'local'), true, 'accepted prompt remains optimistic');
+
+  allSessions.push({ path: 'local', title: 'Persisted chat' });
+  sessions = context.sidebarSessions();
+  assert.equal(sessions.filter((session) => session.path === 'local').length, 1, 'server entry replaces local projection');
+});
+
+test('draft sidebar metadata follows an opaque chat rekey', () => {
+  const uiState = createUiState();
+  uiState.chatState('draft-key').cwd = 'project';
+  const persistedComposerDraftMeta = {
+    'draft-key': { cwd: 'project', title: 'Local draft', modified: '2026-09-19T10:00:00.000Z' },
+  };
+  const context = vm.createContext({
+    uiState,
+    persistedComposerDraftMeta,
+    savePersistedComposerDraftMeta() {},
+  });
+  vm.runInContext(appFunction('rekeyChat'), context);
+
+  context.rekeyChat('draft-key', 'saved-key');
+
+  assert.equal(uiState.chats.has('draft-key'), false);
+  assert.equal(uiState.chats.has('saved-key'), true);
+  assert.equal(persistedComposerDraftMeta['draft-key'], undefined);
+  assert.equal(persistedComposerDraftMeta['saved-key'].title, 'Local draft');
+});
+
+test('chat rows expose a yellow marker for unsent drafts', () => {
+  assert.match(source, /class="draftDot" title="Unsent draft"/);
+  assert.match(cssSource, /\.sessionItem \.draftDot \{[^}]*background:\s*var\(--warn\)/s);
+});
+
 test('chat links distinguish local files from web navigation', () => {
   const context = vm.createContext({});
   vm.runInContext(appFunction('isLocalLink'), context);
@@ -356,6 +430,8 @@ test('slash palette targets a command word after whitespace and replaces only th
     cmdMenuItems: [{ name: 'skill:release-check' }],
     cmdMenuRange: null,
     closeCmdMenu() {},
+    updateComposerDraft() {},
+    activeChatKey: () => 'chat',
     autoGrow() {},
   });
   vm.runInContext(appFunction('slashToken'), context);
@@ -534,7 +610,7 @@ test('a delayed enqueue acknowledgement cannot resurrect a delivered ghost', asy
     uiState, chatCache: uiState.chatCache, composerSubmitting: false,
     closeCmdMenu() {}, activeChatKey: () => 'a', input: { value: 'redirect' }, pending: [],
     chat: { lastElementChild: null }, setComposerSubmitting() {}, clearAcceptedComposer() {},
-    post: () => response,
+    post: () => response, renderSessions() {},
     applyQueueChange: (items, key) => uiState.applyQueuedPrompts(key, items),
   });
   vm.runInContext(appFunction('submitPrompt'), context);
@@ -556,7 +632,8 @@ test('a delayed prompt acknowledgement cannot restart an already completed respo
     uiState, chatCache: uiState.chatCache, composerSubmitting: false,
     closeCmdMenu() {}, activeChatKey: () => 'a', renderedChatKey: 'a', input: { value: 'request' }, pending: [],
     chat: { lastElementChild: null, prepend: (turn) => turns.push(turn) },
-    setComposerSubmitting() {}, clearAcceptedComposer() {},
+    setComposerSubmitting() {}, clearAcceptedComposer() {}, renderSessions() {},
+    draftTitle: (value) => value.trim(), allSessions: [],
     post: () => response, $: () => null, setHeroMode() {}, scrollDown() {},
     acceptedUserTurn: (text) => text,
     setRunning: () => uiState.startResponse('a'),
