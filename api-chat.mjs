@@ -666,9 +666,10 @@ export async function handleGetHistory({ res, sessionKey }) {
     }
     const nextRole = chatMsgs[i + 1]?.role ?? null;
     const closesRun = m.role === "assistant" && (nextRole === "user" || (nextRole === null && !historyBusy));
-    const durationMs = closesRun && runStartedAt !== null && persistedAt !== null
-      ? Math.max(0, persistedAt - runStartedAt)
-      : null;
+    let durationMs = null;
+    if (closesRun && runStartedAt !== null && persistedAt !== null) {
+      durationMs = Math.max(0, persistedAt - runStartedAt);
+    }
     const rawText = messageContentText(m);
     const skill = m.role === "user" ? compactSkillBlock(rawText) : null;
     const blocks = skill

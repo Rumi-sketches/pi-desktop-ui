@@ -2051,7 +2051,8 @@ function sessionForKey(key) {
   const persisted = allSessions.find((session) => session.path === key);
   if (persisted) return persisted;
   const chatState = uiState.chats.get(key);
-  return chatState ? localSessionEntry(chatState) : null;
+  if (!chatState) return null;
+  return localSessionEntry(chatState);
 }
 
 function sessionsInOrder(projectCwd = activeProjectCwd()) {
