@@ -390,6 +390,9 @@ async function sessionEntry(s) {
     status: sessionStatusOf(s.path),
     provider: last?.provider ?? "",
     model: last?.model ?? "",
+    // A narrow projection of successful `gh pr create` results. Tool output
+    // stays private; the sidebar receives only the GitHub URL and number.
+    pullRequests: scan?.pullRequests ?? [],
   };
 }
 
