@@ -294,6 +294,7 @@ function newChatState(key = null) {
     responsePhase: RESPONSE_IDLE,
     responseStartedAt: null,
     responseActivityLabel: null,
+    pendingAssistantMeta: null,
     started: false,
     tasks: new Map(),
     agentTask: null,
@@ -478,6 +479,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     const target = chatState(key);
     target.responseStartedAt = Date.now();
     target.responseActivityLabel = null;
+    target.pendingAssistantMeta = null;
     target.streaming = true;
     target.awaitingInput = false;
     target.responsePhase = RESPONSE_WAITING;

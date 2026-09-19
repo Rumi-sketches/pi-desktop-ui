@@ -607,19 +607,25 @@ function messageContentText(message, separator = "") {
     .join(separator);
 }
 
+function timestampMillis(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function handleGetHistory({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const { session } = ctx;
-  // entry ids (for the "fork from here" button): the session's tree path from
-  // root to the current leaf, filtered to message entries, lines up 1:1 with
-  // the user/assistant messages below (both walk the same active branch).
-  let entryIds = [];
+  // Branch entries line up 1:1 with the user/assistant messages below. Besides
+  // the id used for forking, their timestamps mark persisted completion and
+  // let history reconstruct the same run duration shown during streaming.
+  let messageEntries = [];
   try {
-    entryIds = (session.sessionManager?.getBranch?.() ?? [])
-      .filter((e) => e.type === "message" && (e.message?.role === "user" || e.message?.role === "assistant"))
-      .map((e) => e.id);
+    messageEntries = (session.sessionManager?.getBranch?.() ?? [])
+      .filter((e) => e.type === "message" && (e.message?.role === "user" || e.message?.role === "assistant"));
   } catch {
-    /* ids are a nice-to-have for forking: history still renders without them */
+    /* entry metadata is best-effort: history still renders without it */
   }
   const chatMsgs = session.messages.filter((m) => m.role === "user" || m.role === "assistant");
   // tool results live in their own messages: index them by tool call id so the
@@ -633,8 +639,22 @@ export async function handleGetHistory({ res, sessionKey }) {
       });
     }
   }
-  const idsAligned = entryIds.length === chatMsgs.length;
+  const entriesAligned = messageEntries.length === chatMsgs.length;
+  const historyBusy = contextIsBusy(ctx);
+  let runStartedAt = null;
   const msgs = chatMsgs.map((m, i) => {
+    const entry = entriesAligned ? messageEntries[i] : null;
+    const timestamp = entry?.timestamp ?? m.timestamp ?? null;
+    const persistedAt = timestampMillis(entry?.timestamp);
+    const previousRole = chatMsgs[i - 1]?.role ?? null;
+    if (m.role === "user" && (runStartedAt === null || previousRole === "assistant")) {
+      runStartedAt = timestampMillis(timestamp);
+    }
+    const nextRole = chatMsgs[i + 1]?.role ?? null;
+    const closesRun = m.role === "assistant" && (nextRole === "user" || (nextRole === null && !historyBusy));
+    const durationMs = closesRun && runStartedAt !== null && persistedAt !== null
+      ? Math.max(0, persistedAt - runStartedAt)
+      : null;
     const rawText = messageContentText(m);
     const skill = m.role === "user" ? compactSkillBlock(rawText) : null;
     const blocks = skill
@@ -670,13 +690,15 @@ export async function handleGetHistory({ res, sessionKey }) {
       // Full ordered content of ordinary turns; skill invocations are reduced
       // to one semantic block before crossing the server/browser boundary.
       blocks,
-      entryId: idsAligned ? (entryIds[i] ?? null) : null,
+      entryId: entry?.id ?? null,
+      timestamp,
       // which model produced this message (assistant only): the UI labels
       // each turn with it, so a mid-chat model switch stays visible
       ...(m.role === "assistant"
         ? {
             provider: m.provider ?? null,
             model: m.model ?? null,
+            durationMs,
             // why the turn ended: an error/abort has no content blocks, so
             // this is all the UI has to explain the empty answer
             stopReason: m.stopReason ?? null,
