@@ -8,6 +8,7 @@ import {
   VIEW_SETTINGS,
   VIEW_TERMINAL,
   createUiState,
+  normalizeSearchPayload,
   projectTabId,
 } from './ui-state.js';
 import { createChatCache } from './chat-cache.js';
@@ -2030,6 +2031,7 @@ function localSessionEntry(chatState) {
     status: 'active',
     provider: chatState.model?.provider ?? '',
     model: chatState.model?.id ?? '',
+    pullRequests: [],
     local: true,
   };
 }
@@ -2115,8 +2117,7 @@ function sessionItemEl(s) {
     <span class="prLinks"></span><span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
   const prLinks = div.querySelector('.prLinks');
-  for (const pr of s.pullRequests ?? []) {
-    if (!Number.isInteger(pr?.number) || typeof pr?.url !== 'string') continue;
+  for (const pr of s.pullRequests) {
     const link = document.createElement('a');
     link.className = 'prLink';
     link.href = pr.url;
@@ -2353,7 +2354,7 @@ async function runDeepSearch() {
   updateDeepBtn();
   // scope=all like the chat list itself: the project tab, if any, filters the
   // results client-side, exactly as it does for the normal list
-  const res = await api('/api/search?scope=all&q=' + encodeURIComponent(query), { signal: ctrl.signal });
+  const raw = await api('/api/search?scope=all&q=' + encodeURIComponent(query), { signal: ctrl.signal });
   // aborted, or overtaken by a newer search: the one running now owns the state
   if (seq !== deepSearchSeq) return;
   deepSearching = false;
@@ -2361,8 +2362,9 @@ async function runDeepSearch() {
   // typing during the request has already put the sidebar back on the titles:
   // these results answer a question the user has moved on from.
   const stale = $('sessionSearch').value.trim() !== query;
-  if (!stale && !res.error) {
-    deepResults = res.sessions ?? [];
+  if (!stale && !raw.error) {
+    const res = normalizeSearchPayload(raw);
+    deepResults = res.sessions;
     // Two ways a search can come back short: 50 matches found, or the scan
     // stopped before the end of the list (the file budget, off with the
     // "full search" option in Settings).
