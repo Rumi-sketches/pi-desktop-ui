@@ -153,7 +153,7 @@ describe("GET /api/search", () => {
     const { body } = await search("kumquat");
     assert.deepEqual(
       Object.keys(body.sessions[0]).sort(),
-      ["cwd", "favorite", "firstMessage", "id", "messageCount", "model", "modified", "name", "path", "provider", "status", "title"],
+      ["cwd", "favorite", "firstMessage", "id", "messageCount", "model", "modified", "name", "path", "provider", "pullRequests", "status", "title"],
     );
   });
 
