@@ -10,7 +10,7 @@
 import path from "node:path";
 import { stat } from "node:fs/promises";
 import { listSessionFiles, readSessionRecords } from "./session-store.mjs";
-import { createPullRequestTracker } from "./pull-requests.mjs";
+import { createIssueTracker, createPullRequestTracker } from "./pull-requests.mjs";
 
 
 // file path -> { mtimeMs, size, project, sessionId, file, buckets, lastModel, first, last }
@@ -66,13 +66,16 @@ export async function scanSessionFile(file) {
   let model = "";
   let provider = "";
   let lastModel = null;
+  let thinkingLevel = "";
   let first = null;
   let last = null;
   const buckets = new Map();
   const pullRequestTracker = createPullRequestTracker();
+  const issueTracker = createIssueTracker();
   try {
     for await (const rec of readSessionRecords(file)) {
       pullRequestTracker.accept(rec);
+      issueTracker.accept(rec);
       if (rec.type === "session") {
         project = rec.cwd ?? project;
         sessionId = rec.id ?? sessionId;
@@ -81,6 +84,10 @@ export async function scanSessionFile(file) {
       if (rec.type === "model_change") {
         model = rec.modelId ?? model;
         provider = rec.provider ?? provider;
+        continue;
+      }
+      if (rec.type === "thinking_level_change") {
+        thinkingLevel = rec.thinkingLevel ?? thinkingLevel;
         continue;
       }
       if (rec.type !== "message" || rec.message?.role !== "assistant") continue;
@@ -127,7 +134,9 @@ export async function scanSessionFile(file) {
     file,
     buckets: [...buckets.values()],
     lastModel,
+    thinkingLevel,
     pullRequests: pullRequestTracker.values(),
+    issues: issueTracker.values(),
     first,
     last,
   };

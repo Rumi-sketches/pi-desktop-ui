@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPullRequestTracker } from "../pull-requests.mjs";
+import { createIssueTracker, createPullRequestTracker } from "../pull-requests.mjs";
 
 const record = (message) => ({ type: "message", message });
 const call = (id, command) => record({
@@ -28,6 +28,16 @@ test("tracks every distinct PR created by a chat in chronological order", () => 
   assert.deepEqual(tracker.values(), [
     { number: 41, url: "https://github.com/acme/widgets/pull/41" },
     { number: 42, url: "https://github.com/acme/widgets/pull/42" },
+  ]);
+});
+
+test("tracks issues separately from pull requests", () => {
+  const tracker = createIssueTracker();
+  tracker.accept(call("issue", "gh issue create --title bug"));
+  tracker.accept(result("issue", "https://github.com/acme/widgets/issues/73"));
+
+  assert.deepEqual(tracker.values(), [
+    { number: 73, url: "https://github.com/acme/widgets/issues/73" },
   ]);
 });
 
