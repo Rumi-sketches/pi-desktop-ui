@@ -2100,6 +2100,10 @@ function orderForGrouping(list, groupBy) {
   }
   return list;
 }
+// Only one hover card may be visible. Switching directly between adjacent rows
+// replaces it synchronously instead of waiting for the previous row's leave timer.
+let visibleSessionDetails = null;
+
 // One chat row. Built once and reused by the sidebar and by the hover switcher,
 // so active state, favourite/done buttons and running dots cannot drift apart
 // between the two.
@@ -2180,6 +2184,10 @@ function sessionItemEl(s) {
   let detailsTimer = null;
   const showDetails = () => {
     clearTimeout(detailsTimer);
+    if (visibleSessionDetails && visibleSessionDetails !== details) {
+      visibleSessionDetails.classList.remove('show');
+    }
+    visibleSessionDetails = details;
     details.classList.add('show');
     const row = div.getBoundingClientRect();
     const panel = details.getBoundingClientRect();
@@ -2193,7 +2201,10 @@ function sessionItemEl(s) {
   };
   const hideDetails = () => {
     clearTimeout(detailsTimer);
-    detailsTimer = setTimeout(() => details.classList.remove('show'), 120);
+    detailsTimer = setTimeout(() => {
+      details.classList.remove('show');
+      if (visibleSessionDetails === details) visibleSessionDetails = null;
+    }, 120);
   };
   div.addEventListener('mouseenter', showDetails);
   div.addEventListener('mouseleave', hideDetails);
