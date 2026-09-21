@@ -390,11 +390,13 @@ body.sb-resizing #sidebar { transition: none; }
   box-shadow: 0 0 6px var(--fav-glow); animation: pulse 1.4s ease-in-out infinite; }
 .sessionItem .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sessionDetails {
-  display: none; grid-template-columns: max-content minmax(0, 1fr); gap: .22rem .55rem;
-  margin-top: .45rem; padding-top: .4rem; border-top: 1px solid var(--line);
-  font-size: .7rem; line-height: 1.35;
+  position: fixed; z-index: 100; display: none; width: min(280px, calc(100vw - 16px));
+  grid-template-columns: max-content minmax(0, 1fr); gap: .3rem .65rem;
+  padding: .65rem .75rem; border: 1px solid var(--line-2); border-radius: var(--r-3);
+  background: var(--panel); box-shadow: 0 10px 30px rgb(0 0 0 / .28);
+  font-size: .72rem; line-height: 1.4; cursor: default;
 }
-.sessionItem:hover .sessionDetails, .sessionItem:focus-within .sessionDetails { display: grid; }
+.sessionDetails.show { display: grid; }
 .sessionItem:hover .title, .sessionItem:focus-within .title { padding-right: 4.2rem; }
 .sessionDetails .metaKey { color: var(--faint); }
 .sessionDetails .metaValue { color: var(--txt-dim); min-width: 0; overflow-wrap: anywhere; }

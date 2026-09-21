@@ -2124,6 +2124,7 @@ function sessionItemEl(s) {
   div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
     <span class="date">${fmtDate(s.modified)}</span></div><div class="sessionDetails"></div>`;
   div.querySelector('.lbl').textContent = label;
+  /** @type {HTMLElement} */
   const details = div.querySelector('.sessionDetails');
   const addDetail = (name, value) => {
     if (!value) return;
@@ -2176,6 +2177,28 @@ function sessionItemEl(s) {
     });
     details.append(key, code);
   }
+  let detailsTimer = null;
+  const showDetails = () => {
+    clearTimeout(detailsTimer);
+    details.classList.add('show');
+    const row = div.getBoundingClientRect();
+    const panel = details.getBoundingClientRect();
+    const gap = 8;
+    const left = row.right + gap + panel.width <= window.innerWidth
+      ? row.right + gap
+      : Math.max(gap, row.left - panel.width - gap);
+    const top = Math.min(Math.max(gap, row.top), window.innerHeight - panel.height - gap);
+    details.style.left = `${left}px`;
+    details.style.top = `${Math.max(gap, top)}px`;
+  };
+  const hideDetails = () => {
+    clearTimeout(detailsTimer);
+    detailsTimer = setTimeout(() => details.classList.remove('show'), 120);
+  };
+  div.addEventListener('mouseenter', showDetails);
+  div.addEventListener('mouseleave', hideDetails);
+  details.addEventListener('mouseenter', () => clearTimeout(detailsTimer));
+  details.addEventListener('mouseleave', hideDetails);
   div.title = label;
   // favorite: clicking the heart must not open the chat
   div.querySelector('.fav')?.addEventListener('click', async (e) => {
