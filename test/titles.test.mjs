@@ -71,8 +71,8 @@ beforeEach(async () => {
   await store.setTitleGenerationEnabled(true);
 });
 
-test("fallbackTitle collapses whitespace and cuts long first messages", () => {
-  assert.equal(titles.fallbackTitle("  fix the\n  docker build  "), "fix the docker build");
+test("fallbackTitle collapses whitespace and limits titles to four words", () => {
+  assert.equal(titles.fallbackTitle("  fix the\n  docker build now please  "), "fix the docker build");
   assert.equal(titles.fallbackTitle(undefined), "");
   const long = titles.fallbackTitle("x".repeat(500));
   assert.equal(long.length, 101);
@@ -88,12 +88,12 @@ test("Haiku uses completeSimple once and the generated title is permanent", asyn
     "ciao, mi si rompe il container docker",
     justCreated(),
   );
-  assert.equal(first, "ciao, mi si rompe il container docker");
+  assert.equal(first, "ciao, mi si rompe");
   await titles.flushTitleQueue();
 
   assert.equal(calls.length, 1);
   assert.equal(`${calls[0].model.provider}/${calls[0].model.id}`, HAIKU);
-  assert.match(calls[0].context.systemPrompt, /at most seven words/);
+  assert.match(calls[0].context.systemPrompt, /at most four words/);
   assert.equal(calls[0].options.maxTokens, 32);
   assert.equal(calls[0].options.cacheRetention, "none");
   assert.equal(
@@ -157,7 +157,7 @@ test("a valid but imperfect Haiku answer never triggers Luna", async () => {
   assert.equal(`${calls[0].model.provider}/${calls[0].model.id}`, HAIKU);
   assert.equal(
     await titles.titleFor("/sessions/imperfect.jsonl", "style does not trigger fallback"),
-    "one two three four five six seven",
+    "one two three four",
   );
 });
 

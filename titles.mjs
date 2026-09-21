@@ -45,7 +45,7 @@ export function configureTitleModelRuntime(runtime) {
   modelRuntime = runtime;
 }
 
-// Small and cheap: this is a seven-word summary, not a conversation.
+// Small and cheap: this is a four-word summary, not a conversation.
 const HAIKU_MODEL = { provider: "anthropic", id: "claude-haiku-4-5" };
 const LUNA_MODEL = { provider: "openai-codex", id: "gpt-5.6-luna" };
 const MAX_OUTPUT_TOKENS = 32;
@@ -53,7 +53,7 @@ const MAX_OUTPUT_TOKENS = 32;
 // usually a pasted stack trace or file, and it would be paid for on every chat.
 const MAX_INPUT_CHARS = 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
-const MAX_TITLE_WORDS = 7;
+const MAX_TITLE_WORDS = 4;
 const MAX_TITLE_CHARS = 100;
 // The sidebar row is one line: past this the text is ellipsized anyway.
 const FALLBACK_CHARS = 100;
@@ -68,7 +68,7 @@ const MAX_ATTEMPTS = 3;
 const RETRY_AFTER_MS = 10 * 60 * 1000;
 
 const INSTRUCTION =
-  "Summarize the request below in a title of at most seven words, in the same language as the text."
+  "Summarize the request below in a title of at most four words, in the same language as the text."
   + " Answer with the title alone: no quotes, no trailing period, no explanation.";
 
 // ---- fallback --------------------------------------------------------------
@@ -76,7 +76,8 @@ const INSTRUCTION =
 // whenever a title is missing: the first line of the first message, cut short.
 export function fallbackTitle(firstMessage) {
   const text = String(firstMessage ?? "").replace(/\s+/g, " ").trim();
-  return text.length > FALLBACK_CHARS ? `${text.slice(0, FALLBACK_CHARS).trimEnd()}…` : text;
+  const clipped = text.split(" ").slice(0, MAX_TITLE_WORDS).join(" ");
+  return clipped.length > FALLBACK_CHARS ? `${clipped.slice(0, FALLBACK_CHARS).trimEnd()}…` : clipped;
 }
 
 // ---- cache -----------------------------------------------------------------
@@ -311,7 +312,7 @@ export async function titleFor(sessionPath, firstMessage, createdAt, now = Date.
   const fallback = fallbackTitle(firstMessage);
   if (!sessionPath) return fallback;
   const cached = (await loadTitles()).get(sessionPath);
-  if (cached) return cached;
+  if (cached) return cleanTitle(cached) ?? fallback;
   if (fallback && isCoveredByTheSwitch(createdAt)) {
     enqueue(sessionPath, String(firstMessage), now, isCoveredByLunaSwitch(createdAt));
   }
