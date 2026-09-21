@@ -229,9 +229,9 @@ export function normalizeCommandsPayload(value) {
   };
 }
 
-function pullRequest(value, label) {
+function githubResource(value, label, kind) {
   const source = record(value, label);
-  const prNumber = positiveInteger(source.number, `${label}.number`);
+  const resourceNumber = positiveInteger(source.number, `${label}.number`);
   const url = string(source.url, `${label}.url`);
   let parsed;
   try {
@@ -239,12 +239,13 @@ function pullRequest(value, label) {
   } catch {
     invalid(`${label}.url`, "must be a valid URL");
   }
-  const match = /^\/[^/]+\/[^/]+\/pull\/(\d+)\/?$/.exec(parsed.pathname);
+  const match = new RegExp(`^/[^/]+/[^/]+/${kind}/(\\d+)/?$`).exec(parsed.pathname);
   if (parsed.protocol !== "https:" || parsed.hostname !== "github.com" || parsed.search || parsed.hash
-      || !match || Number(match[1]) !== prNumber) {
-    invalid(`${label}.url`, "must identify the matching GitHub pull request");
+      || !match || Number(match[1]) !== resourceNumber) {
+    const resourceName = kind === "pull" ? "pull request" : "issue";
+    invalid(`${label}.url`, `must identify the matching GitHub ${resourceName}`);
   }
-  return { number: prNumber, url };
+  return { number: resourceNumber, url };
 }
 
 function session(value, index, collectionLabel) {
@@ -253,7 +254,9 @@ function session(value, index, collectionLabel) {
   const status = string(source.status, `${label}.status`);
   if (!SESSION_STATUSES.has(status)) invalid(`${label}.status`, "must be active, done or reopened");
   const pullRequests = source.pullRequests ?? [];
+  const issues = source.issues ?? [];
   if (!Array.isArray(pullRequests)) invalid(`${label}.pullRequests`, "must be an array");
+  if (!Array.isArray(issues)) invalid(`${label}.issues`, "must be an array");
   return {
     ...source,
     path: string(source.path, `${label}.path`),
@@ -268,8 +271,12 @@ function session(value, index, collectionLabel) {
     status,
     provider: string(source.provider, `${label}.provider`, { empty: true }),
     model: string(source.model, `${label}.model`, { empty: true }),
+    thinkingLevel: string(source.thinkingLevel ?? "", `${label}.thinkingLevel`, { empty: true }),
+    branch: string(source.branch ?? "", `${label}.branch`, { empty: true }),
     pullRequests: pullRequests.map((item, pullRequestIndex) =>
-      pullRequest(item, `${label}.pullRequests[${pullRequestIndex}]`)),
+      githubResource(item, `${label}.pullRequests[${pullRequestIndex}]`, "pull")),
+    issues: issues.map((item, issueIndex) =>
+      githubResource(item, `${label}.issues[${issueIndex}]`, "issues")),
   };
 }
 

@@ -57,7 +57,7 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 
 | Route | Request | Response | Errors |
 | --- | --- | --- | --- |
-| `GET /api/sessions` *[s]* | `?scope=cwd` (default) or `?scope=all` | `{ current, cwd, scope, running[], open[], sessions[] }`; each session includes `pullRequests: [{ number, url }]` for PRs created by successful `gh pr create` tool calls in that chat | – |
+| `GET /api/sessions` *[s]* | `?scope=cwd` (default) or `?scope=all` | `{ current, cwd, scope, running[], open[], sessions[] }`; each session includes the last model and thinking level, current project branch, `pullRequests: [{ number, url }]`, and `issues: [{ number, url }]` for resources created by successful `gh pr create` / `gh issue create` tool calls in that chat | – |
 | `GET /api/search` *[s]* | `?q=<words>` · `?scope=cwd` (default) or `?scope=all` | `{ query, scope, cwd, scanned, capped, truncated, sessions[] }` — chats whose *messages* contain every word of `q`, entries shaped like `/api/sessions`, 50 most recent at most; the scan itself stops at the 300 most recent chats unless `/api/full-search` is on, and `truncated` reports either cap | `400` `missing_query` |
 | `POST /api/sessions` *[s]* | `{ cwd? }`; `cwd` resumes a restored local draft in that folder | `{ ok, key, cwd, running }` for the existing draft context or a new chat in the requested/tab folder | `400` `invalid_folder` |
 | `POST /api/sessions/activate` *[s]* | – | `{ ok, key, cwd, running }` for the most recent chat of that folder | – |

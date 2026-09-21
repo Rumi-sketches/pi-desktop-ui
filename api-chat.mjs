@@ -374,6 +374,7 @@ async function sessionEntry(s) {
   const scan = await scanSessionFile(s.path).catch(() => null);
   const last = scan?.lastModel ?? null;
   const firstMessage = skillPresentationText(s.firstMessage ?? "");
+  const git = s.cwd ? await gitStatus(s.cwd) : { repo: false };
   return {
     path: s.path,
     id: s.id,
@@ -391,9 +392,12 @@ async function sessionEntry(s) {
     status: sessionStatusOf(s.path),
     provider: last?.provider ?? "",
     model: last?.model ?? "",
-    // A narrow projection of successful `gh pr create` results. Tool output
-    // stays private; the sidebar receives only the GitHub URL and number.
+    thinkingLevel: scan?.thinkingLevel ?? "",
+    branch: git.repo ? git.branch : "",
+    // Narrow projections of successful GitHub create commands. Tool output
+    // stays private; the sidebar receives only public URLs and numeric ids.
     pullRequests: scan?.pullRequests ?? [],
+    issues: scan?.issues ?? [],
   };
 }
 
