@@ -2035,7 +2035,10 @@ function localSessionEntry(chatState) {
     status: 'active',
     provider: chatState.model?.provider ?? '',
     model: chatState.model?.id ?? '',
+    thinkingLevel: chatState.thinking ?? '',
+    branch: '',
     pullRequests: [],
+    issues: [],
     local: true,
   };
 }
@@ -2119,20 +2122,59 @@ function sessionItemEl(s) {
     <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
     </div>`;
   div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
-    <span class="prLinks"></span><span class="date">${fmtDate(s.modified)}</span></div>`;
+    <span class="date">${fmtDate(s.modified)}</span></div><div class="sessionDetails"></div>`;
   div.querySelector('.lbl').textContent = label;
-  const prLinks = div.querySelector('.prLinks');
-  for (const pr of s.pullRequests) {
-    const link = document.createElement('a');
-    link.className = 'prLink';
-    link.href = pr.url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = `#${pr.number}`;
-    link.title = `Open pull request #${pr.number}`;
-    link.setAttribute('aria-label', `Open pull request #${pr.number} in a new tab`);
-    link.addEventListener('click', (e) => e.stopPropagation());
-    prLinks.appendChild(link);
+  const details = div.querySelector('.sessionDetails');
+  const addDetail = (name, value) => {
+    if (!value) return;
+    const key = document.createElement('span');
+    key.className = 'metaKey';
+    key.textContent = name;
+    const content = document.createElement('span');
+    content.className = 'metaValue';
+    content.textContent = value;
+    details.append(key, content);
+  };
+  const project = (s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  addDetail('Project', project);
+  addDetail('Model', [s.provider, s.model].filter(Boolean).join('/'));
+  addDetail('Thinking', s.thinkingLevel || 'off');
+  addDetail('Branch', s.branch);
+  const addResources = (name, resources, kind) => {
+    if (!resources.length) return;
+    const key = document.createElement('span');
+    key.className = 'metaKey';
+    key.textContent = name;
+    const links = document.createElement('span');
+    links.className = 'metaValue resourceLinks';
+    for (const resource of resources) {
+      const link = document.createElement('a');
+      link.href = resource.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `#${resource.number}`;
+      link.title = `Open ${kind} #${resource.number}`;
+      link.addEventListener('click', (e) => e.stopPropagation());
+      links.appendChild(link);
+    }
+    details.append(key, links);
+  };
+  addResources('PR', s.pullRequests, 'pull request');
+  addResources('Issues', s.issues, 'issue');
+  if (!s.local) {
+    const key = document.createElement('span');
+    key.className = 'metaKey';
+    key.textContent = 'Chat code';
+    const code = document.createElement('button');
+    code.className = 'chatCode';
+    code.type = 'button';
+    code.textContent = s.id;
+    code.title = 'Copy chat code';
+    code.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyToClipboard(s.id);
+    });
+    details.append(key, code);
   }
   div.title = label;
   // favorite: clicking the heart must not open the chat
