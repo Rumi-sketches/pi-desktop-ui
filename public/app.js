@@ -249,7 +249,23 @@ function updateComposerDraft(key, value) {
   }
 }
 
-if (win.marked) win.marked.setOptions({ breaks: true, gfm: true });
+if (win.marked) {
+  win.marked.setOptions({ breaks: true, gfm: true });
+  // A small semantic extension: the model can emphasize text with ==...==,
+  // while the theme—not model-authored inline CSS—owns the actual colour.
+  win.marked.use({
+    extensions: [{
+      name: 'themeMark',
+      level: 'inline',
+      start(src) { return src.indexOf('=='); },
+      tokenizer(src) {
+        const match = /^==(?=\S)([\s\S]*?\S)==/.exec(src);
+        if (match) return { type: 'themeMark', raw: match[0], text: match[1], tokens: this.lexer.inlineTokens(match[1]) };
+      },
+      renderer(token) { return `<mark>${this.parser.parseInline(token.tokens)}</mark>`; },
+    }],
+  });
+}
 // DOMPurify's default URL policy deliberately drops file:, Windows-drive and
 // Windows Settings links. Local paths go through the guarded server endpoint;
 // the Electron navigation guard admits only the named external protocols.
@@ -499,6 +515,7 @@ function renderMarkdown(div, { decorate = true } = {}) {
   div.innerHTML = win.marked && win.DOMPurify
     ? win.DOMPurify.sanitize(win.marked.parse(div.dataset.raw ?? ''), { ALLOWED_URI_REGEXP: CHAT_URI_PATTERN })
     : esc(div.dataset.raw ?? '');
+  enhanceMarkdownStructure(div);
   // Highlighting and button discovery walk every code block. During streaming
   // they would repeat that work for each token, so decorate only at a segment
   // boundary; the lightweight markdown projection remains live in between.
@@ -516,6 +533,26 @@ function renderMarkdown(div, { decorate = true } = {}) {
     }
   }
   addCopyButtons(div);
+}
+
+function enhanceMarkdownStructure(div) {
+  // GitHub-style alerts are ordinary blockquotes in the source, so incomplete
+  // streaming input remains valid Markdown and safe to re-render.
+  const alertPattern = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i;
+  for (const quote of $$('blockquote', div)) {
+    const first = quote.firstElementChild;
+    if (!first) continue;
+    const match = alertPattern.exec(first.textContent ?? '');
+    if (!match) continue;
+    const kind = match[1].toLowerCase();
+    quote.classList.add('mdAlert', `mdAlert-${kind}`);
+    first.textContent = (first.textContent ?? '').slice(match[0].length);
+    const label = document.createElement('strong');
+    label.className = 'mdAlertLabel';
+    label.textContent = match[1][0] + match[1].slice(1).toLowerCase();
+    quote.prepend(label);
+    if (!first.textContent) first.remove();
+  }
 }
 
 function isLocalLink(href) {
@@ -766,7 +803,7 @@ function bubble(cls, text = '', body = null) {
 const MARKDOWN_FLUSH_MS = 50;
 let pendingMarkdown = null;
 let markdownFlushTimer = null;
-let undecoratedMarkdown = null;
+let streamingMarkdown = null;
 function flushPendingMarkdown({ decorate = false } = {}) {
   clearTimeout(markdownFlushTimer);
   markdownFlushTimer = null;
@@ -775,25 +812,17 @@ function flushPendingMarkdown({ decorate = false } = {}) {
   if (pending) {
     mutateTranscript(() => {
       pending.div.dataset.raw = (pending.div.dataset.raw ?? '') + pending.delta;
-      if (decorate) {
-        pending.div.classList.remove('streaming');
-        renderMarkdown(pending.div);
-      } else if (undecoratedMarkdown === pending.div) {
-        pending.div.appendChild(document.createTextNode(pending.delta));
-      } else {
-        // Parsing and sanitizing the whole accumulated answer is the expensive
-        // operation. Stream plain text incrementally, then render Markdown once
-        // when text gives way to a tool, metadata or the final status event.
-        pending.div.classList.add('streaming');
-        pending.div.textContent = pending.div.dataset.raw;
-      }
+      pending.div.classList.toggle('streaming', !decorate);
+      // Parsing is intentionally batched, but never postponed until completion:
+      // headings, lists, tables and fences take shape while the model writes.
+      renderMarkdown(pending.div, { decorate });
     });
-    undecoratedMarkdown = decorate ? null : pending.div;
+    streamingMarkdown = decorate ? null : pending.div;
     return;
   }
-  if (decorate && undecoratedMarkdown) {
-    const div = undecoratedMarkdown;
-    undecoratedMarkdown = null;
+  if (decorate && streamingMarkdown) {
+    const div = streamingMarkdown;
+    streamingMarkdown = null;
     mutateTranscript(() => {
       div.classList.remove('streaming');
       renderMarkdown(div);

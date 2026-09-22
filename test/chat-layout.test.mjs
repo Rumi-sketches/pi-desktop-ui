@@ -37,8 +37,10 @@ test('intrinsically wide markdown scrolls locally', () => {
   assert.match(rule('.msg.md pre'), /white-space:\s*pre/);
 });
 
-test('streaming markdown preserves plain-text line breaks before final rendering', () => {
-  assert.match(rule('.msg.md.streaming'), /white-space:\s*pre-wrap/);
+test('semantic markdown accents inherit the active theme', () => {
+  assert.match(rule('.msg.md mark'), /var\(--teal\)/);
+  assert.match(rule('.msg.md .mdAlert'), /var\(--accent-line\)/);
+  assert.match(rule('.msg.md details'), /border:/);
 });
 
 test('tool calls render as an expandable work timeline', () => {

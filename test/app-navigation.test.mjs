@@ -608,10 +608,12 @@ test('transcript stickiness is measured before every live mutation', () => {
   assert.match(appFunction('handleEvent'), /case 'error':[\s\S]*bubble\('sys err'/);
 });
 
-test('streaming markdown defers expensive decoration until a segment boundary', () => {
-  assert.match(appFunction('renderMarkdown'), /if \(!decorate\) return;[\s\S]*highlightElement/);
-  assert.match(appFunction('flushPendingMarkdown'), /createTextNode\(pending\.delta\)/,
-    'streaming appends text instead of reparsing the accumulated answer');
+test('streaming markdown renders structure live and defers expensive decoration', () => {
+  assert.match(appFunction('renderMarkdown'), /enhanceMarkdownStructure\(div\)[\s\S]*if \(!decorate\) return;[\s\S]*highlightElement/);
+  assert.match(appFunction('flushPendingMarkdown'), /renderMarkdown\(pending\.div, \{ decorate \}\)/,
+    'batched deltas are projected as Markdown before the answer completes');
+  assert.doesNotMatch(appFunction('flushPendingMarkdown'), /textContent = pending\.div\.dataset\.raw|createTextNode/,
+    'streaming never falls back to an unformatted plain-text projection');
   assert.match(appFunction('renderMarkdown'), /highlightLimit = 100_000/,
     'very large code output cannot monopolize the renderer during highlighting');
   const handler = appFunction('handleEvent');
