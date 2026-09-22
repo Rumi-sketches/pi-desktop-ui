@@ -36,3 +36,7 @@ test('intrinsically wide markdown scrolls locally', () => {
   }
   assert.match(rule('.msg.md pre'), /white-space:\s*pre/);
 });
+
+test('streaming markdown preserves plain-text line breaks before final rendering', () => {
+  assert.match(rule('.msg.md.streaming'), /white-space:\s*pre-wrap/);
+});

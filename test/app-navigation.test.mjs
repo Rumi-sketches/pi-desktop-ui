@@ -588,10 +588,58 @@ test('transcript stickiness is measured before every live mutation', () => {
   context.mutateTranscript(() => { atBottom = true; });
   assert.equal(scrolls, 1, 'a reader above the bottom is not dragged down');
 
-  for (const name of ['bubble', 'appendMd', 'appendText', 'renderTool']) {
+  for (const name of ['bubble', 'appendText', 'renderTool', 'flushPendingMarkdown']) {
     assert.match(appFunction(name), /mutateTranscript\(/, `${name} uses the shared rule`);
   }
+  assert.match(appFunction('appendMd'), /setTimeout\(\(\) => flushPendingMarkdown\(\), MARKDOWN_FLUSH_MS\)/,
+    'markdown deltas are batched instead of rebuilding the transcript per token');
   assert.match(appFunction('handleEvent'), /case 'error':[\s\S]*bubble\('sys err'/);
+});
+
+test('streaming markdown defers expensive decoration until a segment boundary', () => {
+  assert.match(appFunction('renderMarkdown'), /if \(!decorate\) return;[\s\S]*highlightElement/);
+  assert.match(appFunction('flushPendingMarkdown'), /createTextNode\(pending\.delta\)/,
+    'streaming appends text instead of reparsing the accumulated answer');
+  assert.match(appFunction('renderMarkdown'), /highlightLimit = 100_000/,
+    'very large code output cannot monopolize the renderer during highlighting');
+  const handler = appFunction('handleEvent');
+  for (const kind of ['thinking', 'tool', 'message-meta', 'error']) {
+    assert.match(handler, new RegExp(`case '${kind}':[\\s\\S]{0,400}finalizeStreamingMarkdown\\(\\)`),
+      `${kind} finalizes markdown`);
+  }
+});
+
+test('chat hover details stay available without building a panel for every row', () => {
+  const row = appFunction('sessionItemEl');
+  const details = appFunction('sessionDetailsEl');
+  assert.doesNotMatch(row, /class="sessionDetails"/);
+  assert.match(row, /setTimeout\(openDetails, 180\)/);
+  assert.match(row, /details = sessionDetailsEl\(s\)/);
+  assert.match(details, /addDetail\('Project'/);
+  assert.match(details, /addResources\('PR'/);
+  assert.match(details, /addResources\('Issues'/);
+  assert.match(details, /Chat code/);
+});
+
+test('session lists enter the live DOM in one replacement', () => {
+  const fill = appFunction('fillSessionList');
+  assert.match(fill, /createDocumentFragment\(\)/);
+  assert.match(fill, /replaceChildren\(fragment\)/);
+  assert.doesNotMatch(fill, /el\.appendChild/);
+});
+
+test('background completion updates its running dot without rebuilding the sidebar', () => {
+  const handler = appFunction('handleEvent');
+  const globalBranch = handler.slice(handler.indexOf("if (ev.scope === 'global')"), handler.indexOf("  // A closing EventSource"));
+  assert.match(globalBranch, /updateSessionRunningState\(ev\.key, ev\.running\)/);
+  assert.doesNotMatch(globalBranch, /renderSessions\(\)/);
+});
+
+test('composer persistence and layout work are coalesced while typing', () => {
+  assert.match(appFunction('savePersistedComposerDrafts'), /scheduleComposerPersistence\(\)/);
+  assert.match(appFunction('savePersistedComposerDraftMeta'), /scheduleComposerPersistence\(\)/);
+  assert.match(appFunction('scheduleComposerLayout'), /requestAnimationFrame/);
+  assert.match(source, /input\.addEventListener\('input',[\s\S]{0,180}scheduleComposerLayout\(\)/);
 });
 
 test('live and refreshed skill invocations use the same compact mention', () => {

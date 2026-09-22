@@ -59,12 +59,24 @@ try { persistedComposerDrafts = JSON.parse(sessionStorage.getItem('piComposerDra
 try { persistedComposerDraftMeta = JSON.parse(sessionStorage.getItem('piComposerDraftMeta') || '{}'); } catch {}
 if (!persistedComposerDrafts || typeof persistedComposerDrafts !== 'object' || Array.isArray(persistedComposerDrafts)) persistedComposerDrafts = {};
 if (!persistedComposerDraftMeta || typeof persistedComposerDraftMeta !== 'object' || Array.isArray(persistedComposerDraftMeta)) persistedComposerDraftMeta = {};
-function savePersistedComposerDrafts() {
+let composerPersistenceTimer = null;
+function flushComposerPersistence() {
+  clearTimeout(composerPersistenceTimer);
+  composerPersistenceTimer = null;
   try { sessionStorage.setItem('piComposerDrafts', JSON.stringify(persistedComposerDrafts)); } catch {}
-}
-function savePersistedComposerDraftMeta() {
   try { sessionStorage.setItem('piComposerDraftMeta', JSON.stringify(persistedComposerDraftMeta)); } catch {}
 }
+function scheduleComposerPersistence() {
+  if (composerPersistenceTimer) return;
+  composerPersistenceTimer = setTimeout(flushComposerPersistence, 250);
+}
+function savePersistedComposerDrafts() {
+  scheduleComposerPersistence();
+}
+function savePersistedComposerDraftMeta() {
+  scheduleComposerPersistence();
+}
+window.addEventListener('pagehide', flushComposerPersistence);
 function restoreComposerDraftChats(state, drafts, metadata) {
   for (const [key, meta] of Object.entries(metadata)) {
     if (!meta || typeof meta !== 'object') continue;
@@ -481,13 +493,28 @@ document.addEventListener('click', () => {
 });
 
 /* ---------------- chat rendering (everything left-aligned, no bubbles) ---------------- */
-function renderMarkdown(div) {
+function renderMarkdown(div, { decorate = true } = {}) {
   // The model's markdown can carry attacker-influenced content (files, tool
   // output, fetched pages): sanitize before it ever touches innerHTML.
   div.innerHTML = win.marked && win.DOMPurify
     ? win.DOMPurify.sanitize(win.marked.parse(div.dataset.raw ?? ''), { ALLOWED_URI_REGEXP: CHAT_URI_PATTERN })
     : esc(div.dataset.raw ?? '');
-  if (win.hljs) $$('pre code', div).forEach((el) => win.hljs.highlightElement(el));
+  // Highlighting and button discovery walk every code block. During streaming
+  // they would repeat that work for each token, so decorate only at a segment
+  // boundary; the lightweight markdown projection remains live in between.
+  if (!decorate) return;
+  // A provider or tool can return a very large code fence. Highlighting it is
+  // cosmetic and must not monopolize the renderer after the answer completes.
+  const highlightLimit = 100_000;
+  if (win.hljs) {
+    let highlighted = 0;
+    for (const el of $$('pre code', div)) {
+      const size = el.textContent?.length ?? 0;
+      if (size > 50_000 || highlighted + size > highlightLimit) continue;
+      win.hljs.highlightElement(el);
+      highlighted += size;
+    }
+  }
   addCopyButtons(div);
 }
 
@@ -736,11 +763,53 @@ function bubble(cls, text = '', body = null) {
     return div;
   });
 }
+const MARKDOWN_FLUSH_MS = 50;
+let pendingMarkdown = null;
+let markdownFlushTimer = null;
+let undecoratedMarkdown = null;
+function flushPendingMarkdown({ decorate = false } = {}) {
+  clearTimeout(markdownFlushTimer);
+  markdownFlushTimer = null;
+  const pending = pendingMarkdown;
+  pendingMarkdown = null;
+  if (pending) {
+    mutateTranscript(() => {
+      pending.div.dataset.raw = (pending.div.dataset.raw ?? '') + pending.delta;
+      if (decorate) {
+        pending.div.classList.remove('streaming');
+        renderMarkdown(pending.div);
+      } else if (undecoratedMarkdown === pending.div) {
+        pending.div.appendChild(document.createTextNode(pending.delta));
+      } else {
+        // Parsing and sanitizing the whole accumulated answer is the expensive
+        // operation. Stream plain text incrementally, then render Markdown once
+        // when text gives way to a tool, metadata or the final status event.
+        pending.div.classList.add('streaming');
+        pending.div.textContent = pending.div.dataset.raw;
+      }
+    });
+    undecoratedMarkdown = decorate ? null : pending.div;
+    return;
+  }
+  if (decorate && undecoratedMarkdown) {
+    const div = undecoratedMarkdown;
+    undecoratedMarkdown = null;
+    mutateTranscript(() => {
+      div.classList.remove('streaming');
+      renderMarkdown(div);
+    });
+  }
+}
+function finalizeStreamingMarkdown() {
+  flushPendingMarkdown({ decorate: true });
+}
 function appendMd(div, delta) {
-  mutateTranscript(() => {
-    div.dataset.raw = (div.dataset.raw ?? '') + delta;
-    renderMarkdown(div);
-  });
+  if (pendingMarkdown && pendingMarkdown.div !== div) finalizeStreamingMarkdown();
+  if (pendingMarkdown) pendingMarkdown.delta += delta;
+  else pendingMarkdown = { div, delta };
+  if (!markdownFlushTimer) {
+    markdownFlushTimer = setTimeout(() => flushPendingMarkdown(), MARKDOWN_FLUSH_MS);
+  }
 }
 function appendText(div, delta) {
   mutateTranscript(() => { div.textContent += delta; });
@@ -1501,7 +1570,7 @@ function handleEvent(ev, ownerKey) {
       const wasRunning = runningKeys.has(ev.key);
       if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
       if (ev.key !== activeChatKey()) {
-        renderSessions();
+        updateSessionRunningState(ev.key, ev.running);
         if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true, {
           actionLabel: 'Open chat',
           onAction: () => openChatNotification(ev.key),
@@ -1548,6 +1617,7 @@ function handleEvent(ev, ownerKey) {
       if (!currentAssistant) { if (!currentTurn) currentTurn = newTurn('pi'); currentAssistant = bubble('assistant', '', currentTurn); }
       appendMd(currentAssistant, ev.delta); break;
     case 'thinking':
+      finalizeStreamingMarkdown();
       flushAssistantMeta();
       // a new thinking segment after text/tool must create a fresh bubble in DOM order, not
       // reuse (and jump back to) an earlier one
@@ -1558,9 +1628,11 @@ function handleEvent(ev, ownerKey) {
     case 'tool':
       // tool calls always happen between other segments: whatever comes next (thinking/text)
       // must render as a new element after the tool card, never append into a stale one
+      finalizeStreamingMarkdown();
       currentThinking = null; currentAssistant = null;
       renderTool(ev); taskFromTool(ev, ownerKey); break;
     case 'message-meta':
+      finalizeStreamingMarkdown();
       activeChatState().pendingAssistantMeta = ev;
       break;
     case 'usage':
@@ -1573,6 +1645,7 @@ function handleEvent(ev, ownerKey) {
         if (ev.model) activeChatState().turnModel = ev.model;  // model answering right now (it can change mid-chat)
         setAgentTask(true, ev.model, ownerKey);
       } else {
+        finalizeStreamingMarkdown();
         const state = activeChatState();
         if (state.pendingAssistantMeta && state.responseStartedAt) {
           state.pendingAssistantMeta.durationMs = Date.now() - state.responseStartedAt;
@@ -1604,6 +1677,7 @@ function handleEvent(ev, ownerKey) {
     case 'error':
       // Errors can be recoverable (for example an automatic retry). Keep the
       // timer tied to agent_end instead of making an error event look terminal.
+      finalizeStreamingMarkdown();
       if (!currentTurn) currentTurn = newTurn('pi');
       bubble('sys err', (ev.aborted ? '⏹ ' : '⚠ ') + ev.message, currentTurn);
       toast(ev.message);
@@ -2126,10 +2200,96 @@ function sessionItemEl(s) {
     <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
     </div>`;
   div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
-    <span class="date">${fmtDate(s.modified)}</span></div><div class="sessionDetails"></div>`;
+    <span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
-  /** @type {HTMLElement} */
-  const details = div.querySelector('.sessionDetails');
+  /** @type {HTMLElement|null} */
+  let details = null;
+  let detailsTimer = null;
+  const hideDetails = () => {
+    clearTimeout(detailsTimer);
+    detailsTimer = setTimeout(() => {
+      details?.classList.remove('show');
+      if (visibleSessionDetails === details) visibleSessionDetails = null;
+    }, 120);
+  };
+  const openDetails = () => {
+    if (!div.isConnected) return;
+    if (!details) {
+      details = sessionDetailsEl(s);
+      details.addEventListener('mouseenter', () => clearTimeout(detailsTimer));
+      details.addEventListener('mouseleave', hideDetails);
+      div.appendChild(details);
+    }
+    if (visibleSessionDetails && visibleSessionDetails !== details) {
+      visibleSessionDetails.classList.remove('show');
+    }
+    visibleSessionDetails = details;
+    details.classList.add('show');
+    const row = div.getBoundingClientRect();
+    const panel = details.getBoundingClientRect();
+    const gap = 8;
+    const left = row.right + gap + panel.width <= window.innerWidth
+      ? row.right + gap
+      : Math.max(gap, row.left - panel.width - gap);
+    const top = Math.min(Math.max(gap, row.top), window.innerHeight - panel.height - gap);
+    details.style.left = `${left}px`;
+    details.style.top = `${Math.max(gap, top)}px`;
+  };
+  const showDetails = () => {
+    clearTimeout(detailsTimer);
+    // Crossing the sidebar should not create and measure every row under the
+    // pointer. Build the one requested card only after a deliberate hover.
+    detailsTimer = setTimeout(openDetails, 180);
+  };
+  div.addEventListener('mouseenter', showDetails);
+  div.addEventListener('mouseleave', hideDetails);
+  div.title = label;
+  // favorite: clicking the heart must not open the chat
+  div.querySelector('.fav')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
+    if (r.error) return;
+    s.favorite = !s.favorite;
+    renderSessions();
+  });
+  // done / reopen: here too the click must not open the chat
+  div.querySelector('.doneBtn')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const next = done ? 'active' : 'done';
+    // Marking the chat you are in as done means "I am finished with this one":
+    // the view then has to move on by itself, to the chat right below it in the
+    // sidebar. The list is read BEFORE the change, because after it the chat is
+    // either gone (the Active filter) or parked at the bottom, and in both cases
+    // "the one after" no longer exists to be found.
+    const leaving = next === 'done' && s.path === activeChatKey();
+    const before = leaving ? orderForGrouping(sessionsInOrder(), sessionGroup) : null;
+    const r = await post('/api/status', { path: s.path, status: next });
+    if (r.error) return;
+    s.status = r.status ?? next;
+    renderSessions();
+    if (!leaving) return;
+    const after = orderForGrouping(sessionsInOrder(), sessionGroup);
+    const i = before.findIndex((x) => x.path === s.path);
+    // downwards first, then upwards: whatever the filters left on screen
+    const order = i < 0 ? after : [...before.slice(i + 1), ...before.slice(0, i).reverse()];
+    const target = order.find((c) => c.path !== s.path && after.some((x) => x.path === c.path));
+    // nothing left to land on: the new-chat screen, exactly like emptying the list
+    if (target) await openSession(target); else await newChat();
+  });
+  // middle click or Ctrl+click = open the chat in a new tab (every tab has its own chat)
+  const openInNewTab = () => window.open(
+    location.origin + location.pathname + '#s=' + encodeURIComponent(s.path), '_blank');
+  div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll
+  div.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openInNewTab(); } });
+  div.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); openInNewTab(); return; }
+    openSession(s);
+  });
+  return div;
+}
+function sessionDetailsEl(s) {
+  const details = document.createElement('div');
+  details.className = 'sessionDetails';
   const addDetail = (name, value) => {
     if (!value) return;
     const key = document.createElement('span');
@@ -2181,81 +2341,12 @@ function sessionItemEl(s) {
     });
     details.append(key, code);
   }
-  let detailsTimer = null;
-  const showDetails = () => {
-    clearTimeout(detailsTimer);
-    if (visibleSessionDetails && visibleSessionDetails !== details) {
-      visibleSessionDetails.classList.remove('show');
-    }
-    visibleSessionDetails = details;
-    details.classList.add('show');
-    const row = div.getBoundingClientRect();
-    const panel = details.getBoundingClientRect();
-    const gap = 8;
-    const left = row.right + gap + panel.width <= window.innerWidth
-      ? row.right + gap
-      : Math.max(gap, row.left - panel.width - gap);
-    const top = Math.min(Math.max(gap, row.top), window.innerHeight - panel.height - gap);
-    details.style.left = `${left}px`;
-    details.style.top = `${Math.max(gap, top)}px`;
-  };
-  const hideDetails = () => {
-    clearTimeout(detailsTimer);
-    detailsTimer = setTimeout(() => {
-      details.classList.remove('show');
-      if (visibleSessionDetails === details) visibleSessionDetails = null;
-    }, 120);
-  };
-  div.addEventListener('mouseenter', showDetails);
-  div.addEventListener('mouseleave', hideDetails);
-  details.addEventListener('mouseenter', () => clearTimeout(detailsTimer));
-  details.addEventListener('mouseleave', hideDetails);
-  div.title = label;
-  // favorite: clicking the heart must not open the chat
-  div.querySelector('.fav')?.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const r = await post('/api/favorites', { path: s.path, favorite: !s.favorite });
-    if (r.error) return;
-    s.favorite = !s.favorite;
-    renderSessions();
-  });
-  // done / reopen: here too the click must not open the chat
-  div.querySelector('.doneBtn')?.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const next = done ? 'active' : 'done';
-    // Marking the chat you are in as done means "I am finished with this one":
-    // the view then has to move on by itself, to the chat right below it in the
-    // sidebar. The list is read BEFORE the change, because after it the chat is
-    // either gone (the Active filter) or parked at the bottom, and in both cases
-    // "the one after" no longer exists to be found.
-    const leaving = next === 'done' && s.path === activeChatKey();
-    const before = leaving ? orderForGrouping(sessionsInOrder(), sessionGroup) : null;
-    const r = await post('/api/status', { path: s.path, status: next });
-    if (r.error) return;
-    s.status = r.status ?? next;
-    renderSessions();
-    if (!leaving) return;
-    const after = orderForGrouping(sessionsInOrder(), sessionGroup);
-    const i = before.findIndex((x) => x.path === s.path);
-    // downwards first, then upwards: whatever the filters left on screen
-    const order = i < 0 ? after : [...before.slice(i + 1), ...before.slice(0, i).reverse()];
-    const target = order.find((c) => c.path !== s.path && after.some((x) => x.path === c.path));
-    // nothing left to land on: the new-chat screen, exactly like emptying the list
-    if (target) await openSession(target); else await newChat();
-  });
-  // middle click or Ctrl+click = open the chat in a new tab (every tab has its own chat)
-  const openInNewTab = () => window.open(
-    location.origin + location.pathname + '#s=' + encodeURIComponent(s.path), '_blank');
-  div.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll
-  div.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openInNewTab(); } });
-  div.addEventListener('click', (e) => {
-    if (e.ctrlKey || e.metaKey) { e.preventDefault(); openInNewTab(); return; }
-    openSession(s);
-  });
-  return div;
+  return details;
 }
+
 // Rows plus group headers, in the container of the caller.
 function fillSessionList(el, list, groupBy) {
+  const fragment = document.createDocumentFragment();
   let lastGroup = null;
   for (const s of list) {
     if (groupBy !== 'none') {
@@ -2270,11 +2361,29 @@ function fillSessionList(el, list, groupBy) {
         } else {
           h.textContent = g;
         }
-        el.appendChild(h);
+        fragment.appendChild(h);
       }
     }
-    el.appendChild(sessionItemEl(s));
+    fragment.appendChild(sessionItemEl(s));
   }
+  el.replaceChildren(fragment);
+}
+function updateSessionRunningState(key, running) {
+  let found = false;
+  for (const row of $$('.sessionItem')) {
+    if (row.dataset.sessionKey !== key) continue;
+    found = true;
+    const title = row.querySelector('.title');
+    const dot = row.querySelector('.runDot');
+    if (running && !dot) {
+      const next = document.createElement('span');
+      next.className = 'runDot';
+      title?.insertBefore(next, title.querySelector('.lbl'));
+    } else if (!running) {
+      dot?.remove();
+    }
+  }
+  return found;
 }
 function renderSessions() {
   renderContextHeader();
@@ -2283,7 +2392,6 @@ function renderSessions() {
   $('sessionCount').textContent = list.length;
   if ($('quickChats').classList.contains('show')) renderQuickChats();
   const el = $('sessionList');
-  el.innerHTML = '';
   if (!list.length) { el.innerHTML = '<div class="sys" style="padding:.8rem">No chat</div>'; return; }
   fillSessionList(el, list, groupBy);
 }
@@ -2768,6 +2876,7 @@ function disposeChatSnapshot(snapshot) {
 }
 function parkChatView(key) {
   if (!key || chatCache.peek(key)?.view.snapshot) return;
+  finalizeStreamingMarkdown();
   stashComposerDraft(key);
   const entry = uiState.chatViewState(key);
   entry.composer.attachments = pending;
@@ -5015,11 +5124,19 @@ function autoGrow() {
   input.style.height = h + 'px';
   input.classList.toggle('scroll', input.scrollHeight > cap);
 }
-window.addEventListener('resize', autoGrow);
+let composerLayoutFrame = null;
+function scheduleComposerLayout() {
+  if (composerLayoutFrame !== null) return;
+  composerLayoutFrame = requestAnimationFrame(() => {
+    composerLayoutFrame = null;
+    autoGrow();
+    updateCmdMenu();
+  });
+}
+window.addEventListener('resize', scheduleComposerLayout);
 input.addEventListener('input', () => {
   updateComposerDraft(activeChatKey(), input.value);
-  autoGrow();
-  updateCmdMenu();
+  scheduleComposerLayout();
 });
 input.addEventListener('click', updateCmdMenu);
 input.addEventListener('blur', () => setTimeout(closeCmdMenu, 150));

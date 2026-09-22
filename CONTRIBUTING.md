@@ -83,6 +83,10 @@ No external service is required. **Do not open a pull request with a red verify.
 - **`public/app.js` is a known monolith.** The frontend logic deliberately lives in a single
   file. Do not try to split it up: keep PRs against it **small and focused**, one concern per
   change, so diffs stay reviewable.
+- **Keep frequent renderer work bounded.** Do not parse a growing transcript, rebuild the full
+  sidebar, write browser storage or force layout for every token or keystroke. Batch streaming
+  updates, update the affected row, and defer storage and layout work. Add a regression test for
+  every hot path you change.
 - **The split is by concern, not by endpoint.** A new handler belongs to `api-chat.mjs` if it
   answers about the tab's chat and to `api-settings.mjs` if it answers about the machine; the
   rules it needs go in the module that owns that state (`contexts.mjs`, `session-store.mjs`,
