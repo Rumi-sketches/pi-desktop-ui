@@ -1063,6 +1063,16 @@ function renderInteractiveForm(ev) {
   return card;
 }
 
+function toolResultSummary(output, { running = false, isError = false } = {}) {
+  if (running) return 'Running…';
+  const text = String(output ?? '').trim();
+  if (!text) return isError ? 'Failed without output' : 'Completed without output';
+  const lines = text.split(/\r?\n/);
+  const first = lines.find((line) => line.trim())?.trim().replace(/\s+/g, ' ') ?? '';
+  const preview = first.length > 140 ? `${first.slice(0, 139)}…` : first;
+  return lines.length > 1 ? `${lines.length} lines · ${preview}` : preview;
+}
+
 function renderTool(ev) {
   return mutateTranscript(() => {
     if (!currentTurn) currentTurn = newTurn('pi');
@@ -1070,16 +1080,25 @@ function renderTool(ev) {
     let card = ev.id ? toolCards.get(ev.id) : null;
     if (!card) {
       card = document.createElement('div');
-      card.className = 'toolCard';
-      card.innerHTML = `<button type="button" class="toolHead">
+      card.className = 'toolCard running';
+      card.innerHTML = `<button type="button" class="toolHead" aria-expanded="false">
+          <span class="toolDot" aria-hidden="true"></span>
+          <span class="toolMain">
+            <span class="toolTitle"><span class="nm"></span><span class="sm"></span></span>
+            <span class="toolResult">Running…</span>
+          </span>
+          <span class="st">running</span>
           <svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
-          <span class="nm"></span><span class="sm"></span><span class="st">…</span>
         </button>
         <div class="toolBody">
-          <h6>Request</h6><pre class="args">…</pre>
-          <h6>Output</h6><pre class="out">(running…)</pre>
+          <h6>Input</h6><pre class="args">…</pre>
+          <h6>Raw output</h6><pre class="out">(running…)</pre>
         </div>`;
-      addChatListener(card.querySelector('.toolHead'), 'click', () => card.classList.toggle('open'));
+      const head = card.querySelector('.toolHead');
+      addChatListener(head, 'click', () => {
+        const open = card.classList.toggle('open');
+        head.setAttribute('aria-expanded', String(open));
+      });
       currentTurn.appendChild(card);
       if (ev.id) toolCards.set(ev.id, card);
       addCopyButtons(card);
@@ -1091,12 +1110,21 @@ function renderTool(ev) {
       q('.sm').title = ev.summary || '';
       q('.args').textContent = typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {}, null, 2);
     } else if (ev.status === 'update') {
-      if (ev.output) q('.out').textContent = ev.output;
+      if (ev.output) {
+        q('.out').textContent = ev.output;
+        q('.toolResult').textContent = toolResultSummary(ev.output);
+      }
     } else {
-      q('.st').textContent = ev.isError ? '✗ error' : '✓';
-      q('.st').classList.toggle('err', !!ev.isError);
+      card.classList.remove('running');
+      card.classList.toggle('done', !ev.isError);
+      card.classList.toggle('error', !!ev.isError);
+      q('.st').textContent = ev.isError ? 'error' : 'done';
+      q('.toolResult').textContent = toolResultSummary(ev.output, { isError: !!ev.isError });
       q('.out').textContent = ev.output || '(no output)';
-      if (ev.isError) card.classList.add('open');
+      if (ev.isError) {
+        card.classList.add('open');
+        q('.toolHead').setAttribute('aria-expanded', 'true');
+      }
     }
     return card;
   });

@@ -575,6 +575,18 @@ test('slash palette targets a command word after whitespace and replaces only th
   assert.equal(context.slashToken(), null);
 });
 
+test('tool timeline summaries stay compact while preserving useful result context', () => {
+  const context = vm.createContext({});
+  vm.runInContext(appFunction('toolResultSummary'), context);
+  assert.equal(context.toolResultSummary(null, { running: true }), 'Running…');
+  assert.equal(context.toolResultSummary(''), 'Completed without output');
+  assert.equal(context.toolResultSummary('', { isError: true }), 'Failed without output');
+  assert.equal(context.toolResultSummary('first line\nsecond line'), '2 lines · first line');
+  assert.equal(context.toolResultSummary('  spaced   result  '), 'spaced result');
+  assert.match(appFunction('renderTool'), /aria-expanded="false"/);
+  assert.match(appFunction('renderTool'), /setAttribute\('aria-expanded', String\(open\)\)/);
+});
+
 test('transcript stickiness is measured before every live mutation', () => {
   let atBottom = true;
   let scrolls = 0;

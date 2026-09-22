@@ -40,3 +40,12 @@ test('intrinsically wide markdown scrolls locally', () => {
 test('streaming markdown preserves plain-text line breaks before final rendering', () => {
   assert.match(rule('.msg.md.streaming'), /white-space:\s*pre-wrap/);
 });
+
+test('tool calls render as an expandable work timeline', () => {
+  assert.match(rule('.toolCard'), /padding-left:\s*32px/);
+  assert.match(rule('.toolCard::before'), /background:\s*var\(--line-2\)/);
+  assert.match(rule('.toolHead'), /grid-template-columns:/);
+  assert.match(rule('.toolResult'), /text-overflow:\s*ellipsis/);
+  assert.match(rule('.toolBody'), /display:\s*none/);
+  assert.match(rule('.toolCard.open .toolBody'), /display:\s*block/);
+});
