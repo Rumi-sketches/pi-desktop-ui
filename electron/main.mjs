@@ -15,6 +15,7 @@ import { startServer } from "../server.mjs";
 import { describeWork } from "../lifecycle.mjs";
 import { DEFAULT_PORT } from "../network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
+import { textContextMenuTemplate } from "./context-menu.mjs";
 import { isAllowedExternalUrl } from "./external-links.mjs";
 import { spellCheckerLanguages } from "./spellchecker-languages.mjs";
 
@@ -275,6 +276,19 @@ function installMenu() {
 // keeping — this app *is* a local web page and one bad render is one F5 away
 // from being fixed — so they are bound on the window itself instead. Nothing
 // else is: every other key belongs to the page.
+function installTextContextMenu(contents) {
+  contents.on("context-menu", (_event, params) => {
+    if (!isInternal(contents.getURL())) return;
+    const template = textContextMenuTemplate(params, {
+      replaceMisspelling: (word) => contents.replaceMisspelling(word),
+      addToDictionary: (word) => contents.session.addWordToSpellCheckerDictionary(word),
+    });
+    if (template.length === 0) return;
+    const window = BrowserWindow.fromWebContents(contents);
+    Menu.buildFromTemplate(template).popup({ ...(window ? { window } : {}) });
+  });
+}
+
 function installWindowShortcuts(contents) {
   contents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") return;
@@ -320,6 +334,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("web-contents-created", (_event, contents) => {
     guardNavigation(contents);
+    installTextContextMenu(contents);
     installWindowShortcuts(contents);
   });
 
