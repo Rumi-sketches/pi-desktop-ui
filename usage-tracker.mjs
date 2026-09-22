@@ -43,6 +43,13 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const PROVIDERS = ["anthropic", "kimi"];
 
 let cache = { anthropic: null, kimi: null, openai: null };
+let configMutation = Promise.resolve();
+/** @param {() => Promise<any>} operation */
+function mutateConfig(operation) {
+  const result = configMutation.then(operation);
+  configMutation = result.catch(() => {});
+  return result;
+}
 
 async function readConfig() {
   try {
@@ -197,21 +204,25 @@ export async function saveUsageConfig(provider, values) {
       .filter(([k, v]) => k !== "url" && typeof v === "string" && v.trim() !== "")
       .map(([k, v]) => [k, v.trim()]),
   );
-  const cfg = await readConfig();
-  const next = { ...(cfg[provider] ?? {}), ...clean };
-  validate(provider, next);
-  cfg[provider] = next;
-  await writeConfig(cfg);
-  cache[provider] = null; // force refetch with the new creds
-  return next;
+  return mutateConfig(async () => {
+    const cfg = await readConfig();
+    const next = { ...(cfg[provider] ?? {}), ...clean };
+    validate(provider, next);
+    cfg[provider] = next;
+    await writeConfig(cfg);
+    cache[provider] = null; // force refetch with the new creds
+    return next;
+  });
 }
 
 export async function clearUsageConfig(provider) {
   assertKnownProvider(provider);
-  const cfg = await readConfig();
-  delete cfg[provider];
-  await writeConfig(cfg);
-  cache[provider] = null;
+  return mutateConfig(async () => {
+    const cfg = await readConfig();
+    delete cfg[provider];
+    await writeConfig(cfg);
+    cache[provider] = null;
+  });
 }
 
 /**

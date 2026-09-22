@@ -25,7 +25,7 @@ import {
   getPath,
   readSettingsFile,
   redactSecrets,
-  saveSettingsFile,
+  updateSettingsFile,
   isOpenAIUsageEnabled,
   isTitleGenerationEnabled,
   openAIUsageState,
@@ -34,8 +34,7 @@ import {
   setFullSearchEnabled,
   setOpenAIUsageEnabled,
   setPath,
-  setLunaTitleFallbackEnabled,
-  setTitleGenerationEnabled,
+  setTitleGenerationOptions,
   settingsSchema,
   titleGenerationState,
 } from "./session-store.mjs";
@@ -243,9 +242,7 @@ export async function handleUpdateSetting({ req, res }) {
     if (!Array.isArray(v)) return send(res, 400, { error: `${key} expects an array` });
     v = v.map((entry) => String(entry).trim()).filter(Boolean);
   }
-  const current = await readSettingsFile();
-  setPath(current, key, v);
-  await saveSettingsFile(current);
+  await updateSettingsFile((current) => setPath(current, key, v));
   // apply live where the running sessions support it
   let applied = false;
   try {
@@ -452,8 +449,10 @@ export async function handleSetTitleGeneration({ req, res }) {
   if (hasLuna && typeof body.lunaTitleFallback !== "boolean") {
     return send(res, 400, { error: "lunaTitleFallback must be a boolean" });
   }
-  if (hasPrimary) await setTitleGenerationEnabled(body.enabled);
-  if (hasLuna) await setLunaTitleFallbackEnabled(body.lunaTitleFallback);
+  await setTitleGenerationOptions({
+    ...(hasPrimary ? { enabled: body.enabled } : {}),
+    ...(hasLuna ? { lunaTitleFallback: body.lunaTitleFallback } : {}),
+  });
   return send(res, 200, titleGenerationState());
 }
 

@@ -110,8 +110,19 @@ function loadTitles() {
 }
 
 async function rememberTitle(sessionPath, title) {
-  (await loadTitles()).set(sessionPath, title);
-  await titlesStore.save(Object.fromEntries(titles));
+  const current = await loadTitles();
+  const next = new Map(current);
+  next.set(sessionPath, title);
+  try {
+    await titlesStore.save(Object.fromEntries(next));
+    current.set(sessionPath, title);
+  } catch (error) {
+    // The paid model work already happened. Keep that result for this process
+    // so a disk outage does not spend the retry budget generating it again;
+    // the rejection still prevents callers from treating it as persisted.
+    current.set(sessionPath, title);
+    throw error;
+  }
 }
 
 // ---- generation ------------------------------------------------------------

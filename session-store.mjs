@@ -138,6 +138,20 @@ export const SETTINGS_PATH = path.join(AGENT_DIR, "settings.json");
 const JSON_INDENT = 1;
 
 /**
+ * Keep independent read-modify-write operations in request order while letting
+ * the operation after a failed one run against the last confirmed state.
+ * @returns {(operation: () => Promise<any>) => Promise<any>}
+ */
+function mutationQueue() {
+  let tail = Promise.resolve();
+  return (operation) => {
+    const result = tail.then(operation);
+    tail = result.catch(() => {});
+    return result;
+  };
+}
+
+/**
  * @template T the shape this store holds, inferred from `fallback`/`revive`.
  * @param {string} file absolute path of the store.
  * @param {object} [opts]
@@ -154,16 +168,17 @@ export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, m
   const tmpFile = `${file}.tmp`;
   let queue = Promise.resolve();
 
-  async function writeAtomically(value) {
+  async function writeAtomically(serialized) {
     try {
       await mkdir(path.dirname(file), dirMode ? { recursive: true, mode: dirMode } : { recursive: true });
-      await writeFile(tmpFile, JSON.stringify(value, null, JSON_INDENT), mode ? { mode } : undefined);
+      await writeFile(tmpFile, serialized, mode ? { mode } : undefined);
       // `mode` on writeFile only applies when the file is created: tighten pre-existing ones.
       if (mode) await chmod(tmpFile, mode);
       await rename(tmpFile, file);
     } catch (err) {
       console.error(`${PRODUCT_ID}: saving ${path.basename(file)} failed (${err?.message ?? err})`);
       await rm(tmpFile, { force: true }).catch(() => {});
+      throw err;
     }
   }
 
@@ -177,8 +192,19 @@ export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, m
       }
     },
     save(value) {
-      queue = queue.then(() => writeAtomically(value));
-      return queue;
+      let serialized;
+      try {
+        // Capture the requested value now: callers often pass their mutable
+        // in-memory state, which may change before an earlier queued write runs.
+        serialized = JSON.stringify(value, null, JSON_INDENT);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      const result = queue.then(() => writeAtomically(serialized));
+      // The caller observes this result, including its original error. Only the
+      // private tail recovers so a failed write cannot poison later saves.
+      queue = result.catch(() => {});
+      return result;
     },
   };
 }
@@ -203,16 +229,21 @@ const agentBootstrapStore = jsonFile(AGENT_BOOTSTRAP_PATH, {
   },
 });
 let agentBootstrap = defaultAgentBootstrap();
+const mutateAgentBootstrap = mutationQueue();
 async function loadAgentBootstrap() {
   agentBootstrap = await agentBootstrapStore.load();
 }
 export const agentBootstrapState = () => ({
   tools: agentBootstrap.tools === null ? null : [...agentBootstrap.tools],
 });
-export async function setAgentBootstrapTools(tools) {
-  agentBootstrap.tools = tools === null ? null : [...new Set(tools)];
-  await agentBootstrapStore.save(agentBootstrap);
-  return agentBootstrapState();
+export function setAgentBootstrapTools(tools) {
+  const requested = tools === null ? null : [...new Set(tools)];
+  return mutateAgentBootstrap(async () => {
+    const next = { tools: requested === null ? null : [...requested] };
+    await agentBootstrapStore.save(next);
+    agentBootstrap = next;
+    return agentBootstrapState();
+  });
 }
 
 // ---- favorite chats (pinned on top of the sidebar) -------------------------
@@ -223,20 +254,22 @@ const favoritesStore = jsonFile(FAVORITES_PATH, {
   revive: (raw) => (Array.isArray(raw) ? raw.filter((p) => typeof p === "string") : undefined),
 });
 let favorites = new Set();
+const mutateFavorites = mutationQueue();
 async function loadFavorites() {
   favorites = new Set(await favoritesStore.load());
 }
-async function saveFavorites() {
-  await favoritesStore.save([...favorites]);
-}
 export const listFavorites = () => [...favorites];
 export const isFavorite = (chatPath) => favorites.has(chatPath);
-// Pin/unpin one chat. Persisted before it returns: the caller answers a request
-// with it, and a favorite that survives only in memory is a lost favorite.
-export async function setFavorite(chatPath, favorite) {
-  if (favorite) favorites.add(chatPath);
-  else favorites.delete(chatPath);
-  await saveFavorites();
+// Pin/unpin one chat. Persisted before it becomes visible: the caller answers a
+// request with it, and a favorite that survives only in memory is a lost one.
+export function setFavorite(chatPath, favorite) {
+  return mutateFavorites(async () => {
+    const next = new Set(favorites);
+    if (favorite) next.add(chatPath);
+    else next.delete(chatPath);
+    await favoritesStore.save([...next]);
+    favorites = next;
+  });
 }
 
 // ---- session status: done / reopened ---------------------------------------
@@ -255,19 +288,21 @@ const sessionStatusStore = jsonFile(STATUS_PATH, {
       : undefined,
 });
 let sessionStatus = new Map(); // session file path -> "done" | "reopened"
+const mutateSessionStatus = mutationQueue();
 async function loadSessionStatus() {
   sessionStatus = new Map(await sessionStatusStore.load());
-}
-async function saveSessionStatus() {
-  await sessionStatusStore.save(Object.fromEntries(sessionStatus));
 }
 // A chat nobody ever marked is "active": that is the absence of an entry, not
 // an entry of its own (see SESSION_STATUS_INPUTS).
 export const sessionStatusOf = (chatPath) => sessionStatus.get(chatPath) ?? "active";
-export async function setSessionStatus(chatPath, status) {
-  if (status === "active") sessionStatus.delete(chatPath);
-  else sessionStatus.set(chatPath, status);
-  await saveSessionStatus();
+export function setSessionStatus(chatPath, status) {
+  return mutateSessionStatus(async () => {
+    const next = new Map(sessionStatus);
+    if (status === "active") next.delete(chatPath);
+    else next.set(chatPath, status);
+    await sessionStatusStore.save(Object.fromEntries(next));
+    sessionStatus = next;
+  });
 }
 
 // ---- chat archiving (opt-out feature, on by default) -----------------------
@@ -288,36 +323,43 @@ const archivingStore = jsonFile(ARCHIVING_PATH, {
       : undefined,
 });
 let archiving = defaultArchiving();
+const mutateArchiving = mutationQueue();
 async function loadArchiving() {
   archiving = await archivingStore.load();
-}
-async function saveArchiving() {
-  await archivingStore.save(archiving);
 }
 // A copy, not the state itself: the archiving settings travel to the client as
 // the body of /api/archiving, and a handler must not be able to mutate them.
 export const archivingState = () => ({ ...archiving });
 export const isArchivingEnabled = () => archiving.enabled;
-export async function setArchivingEnabled(enabled) {
-  archiving.enabled = enabled;
-  await saveArchiving();
+export function setArchivingEnabled(enabled) {
+  return mutateArchiving(async () => {
+    const next = { ...archiving, enabled };
+    await archivingStore.save(next);
+    archiving = next;
+  });
 }
 
 // Marks as done every chat idle for more than 24 hours. Age is measured on the
 // session's last activity, not on its creation. Chats already done are left
 // untouched.
-export async function archiveStaleChats(now = Date.now()) {
-  const sessions = await SessionManager.listAll();
-  let archived = 0;
-  for (const s of sessions) {
-    if (!s?.path || sessionStatus.get(s.path) === "done") continue;
-    const lastActivity = new Date(s.modified).getTime();
-    if (!Number.isFinite(lastActivity) || now - lastActivity < ARCHIVE_AFTER_MS) continue;
-    sessionStatus.set(s.path, "done");
-    archived += 1;
-  }
-  if (archived) await saveSessionStatus();
-  return archived;
+export function archiveStaleChats(now = Date.now()) {
+  return mutateSessionStatus(async () => {
+    const sessions = await SessionManager.listAll();
+    const next = new Map(sessionStatus);
+    let archived = 0;
+    for (const s of sessions) {
+      if (!s?.path || next.get(s.path) === "done") continue;
+      const lastActivity = new Date(s.modified).getTime();
+      if (!Number.isFinite(lastActivity) || now - lastActivity < ARCHIVE_AFTER_MS) continue;
+      next.set(s.path, "done");
+      archived += 1;
+    }
+    if (archived) {
+      await sessionStatusStore.save(Object.fromEntries(next));
+      sessionStatus = next;
+    }
+    return archived;
+  });
 }
 
 // First-run sweep: the flag is written only after archiving succeeded, so a
@@ -326,8 +368,12 @@ export async function runFirstRunArchiving() {
   if (!archiving.enabled || archiving.firstRunArchivedAt) return;
   try {
     await archiveStaleChats();
-    archiving.firstRunArchivedAt = new Date().toISOString();
-    await saveArchiving();
+    await mutateArchiving(async () => {
+      if (!archiving.enabled || archiving.firstRunArchivedAt) return;
+      const next = { ...archiving, firstRunArchivedAt: new Date().toISOString() };
+      await archivingStore.save(next);
+      archiving = next;
+    });
   } catch (e) {
     console.error("first-run chat archiving failed:", e?.message ?? e);
   }
@@ -361,6 +407,7 @@ const titleGenerationStore = jsonFile(TITLE_GENERATION_PATH, {
       : undefined,
 });
 let titleGeneration = defaultTitleGeneration();
+const mutateTitleGeneration = mutationQueue();
 async function loadTitleGeneration() {
   titleGeneration = await titleGenerationStore.load();
 }
@@ -379,22 +426,29 @@ export function lunaTitleFallbackEnabledAt() {
   const at = Date.parse(titleGeneration.lunaTitleFallbackEnabledAt);
   return Number.isFinite(at) ? at : null;
 }
-export async function setTitleGenerationEnabled(enabled) {
-  // The instant is stamped on the off -> on transition only: turning the switch
-  // on twice must not push the boundary forward over the chats it already covers.
-  if (enabled && !titleGeneration.enabled) titleGeneration.enabledAt = new Date().toISOString();
-  titleGeneration.enabled = enabled;
-  await titleGenerationStore.save(titleGeneration);
+/** @param {{ enabled?: boolean, lunaTitleFallback?: boolean }} options */
+export function setTitleGenerationOptions({ enabled, lunaTitleFallback }) {
+  return mutateTitleGeneration(async () => {
+    const next = { ...titleGeneration };
+    // The instant is stamped on each off -> on transition only: repeated writes
+    // must not push the boundary over chats the consent already covers.
+    if (enabled !== undefined) {
+      if (enabled && !next.enabled) next.enabledAt = new Date().toISOString();
+      next.enabled = enabled;
+    }
+    if (lunaTitleFallback !== undefined) {
+      if (lunaTitleFallback && !next.lunaTitleFallback) {
+        next.lunaTitleFallbackEnabledAt = new Date().toISOString();
+      }
+      next.lunaTitleFallback = lunaTitleFallback;
+    }
+    await titleGenerationStore.save(next);
+    titleGeneration = next;
+  });
 }
-export async function setLunaTitleFallbackEnabled(enabled) {
-  // Luna has independent consent. Existing Haiku consent cannot turn it on,
-  // and enabling it later covers only chats created from this point onward.
-  if (enabled && !titleGeneration.lunaTitleFallback) {
-    titleGeneration.lunaTitleFallbackEnabledAt = new Date().toISOString();
-  }
-  titleGeneration.lunaTitleFallback = enabled;
-  await titleGenerationStore.save(titleGeneration);
-}
+export const setTitleGenerationEnabled = (enabled) => setTitleGenerationOptions({ enabled });
+export const setLunaTitleFallbackEnabled = (lunaTitleFallback) =>
+  setTitleGenerationOptions({ lunaTitleFallback });
 
 // ---- OpenAI account usage (opt-in, off by default) -------------------------
 // Reading subscription limits sends the pi-managed OAuth token to OpenAI's
@@ -407,14 +461,18 @@ const openAIUsageStore = jsonFile(OPENAI_USAGE_PATH, {
   revive: (raw) => (raw && typeof raw === "object" ? { enabled: raw.enabled === true } : undefined),
 });
 let openAIUsage = defaultOpenAIUsage();
+const mutateOpenAIUsage = mutationQueue();
 async function loadOpenAIUsage() {
   openAIUsage = await openAIUsageStore.load();
 }
 export const openAIUsageState = () => ({ ...openAIUsage });
 export const isOpenAIUsageEnabled = () => openAIUsage.enabled;
-export async function setOpenAIUsageEnabled(enabled) {
-  openAIUsage.enabled = enabled;
-  await openAIUsageStore.save(openAIUsage);
+export function setOpenAIUsageEnabled(enabled) {
+  return mutateOpenAIUsage(async () => {
+    const next = { enabled };
+    await openAIUsageStore.save(next);
+    openAIUsage = next;
+  });
 }
 
 // ---- deep search budget (opt-out cap, capped by default) -------------------
@@ -430,15 +488,19 @@ const fullSearchStore = jsonFile(FULL_SEARCH_PATH, {
   revive: (raw) => (raw && typeof raw === "object" ? { enabled: raw.enabled === true } : undefined),
 });
 let fullSearch = defaultFullSearch();
+const mutateFullSearch = mutationQueue();
 async function loadFullSearch() {
   fullSearch = await fullSearchStore.load();
 }
 // A copy, like archivingState: this is the body of /api/full-search.
 export const fullSearchState = () => ({ ...fullSearch });
 export const isFullSearchEnabled = () => fullSearch.enabled;
-export async function setFullSearchEnabled(enabled) {
-  fullSearch.enabled = enabled;
-  await fullSearchStore.save(fullSearch);
+export function setFullSearchEnabled(enabled) {
+  return mutateFullSearch(async () => {
+    const next = { enabled };
+    await fullSearchStore.save(next);
+    fullSearch = next;
+  });
 }
 
 // ---- recent working directories (quick picker in the cwd dropdown) ---------
@@ -452,21 +514,25 @@ const recentCwdsStore = jsonFile(RECENT_CWDS_PATH, {
     Array.isArray(raw) ? raw.filter((p) => typeof p === "string").slice(0, RECENT_CWDS_MAX) : undefined,
 });
 let recentCwds = [];
+const mutateRecentCwds = mutationQueue();
 async function loadRecentCwds() {
   recentCwds = await recentCwdsStore.load();
 }
-async function saveRecentCwds() {
-  await recentCwdsStore.save(recentCwds);
-}
-export async function rememberCwd(dir) {
-  if (!dir) return;
-  recentCwds = [dir, ...recentCwds.filter((p) => p !== dir)].slice(0, RECENT_CWDS_MAX);
-  await saveRecentCwds();
+export function rememberCwd(dir) {
+  if (!dir) return Promise.resolve();
+  return mutateRecentCwds(async () => {
+    const next = [dir, ...recentCwds.filter((p) => p !== dir)].slice(0, RECENT_CWDS_MAX);
+    await recentCwdsStore.save(next);
+    recentCwds = next;
+  });
 }
 export const recentCwdList = () => [...recentCwds];
-export async function forgetCwd(dir) {
-  recentCwds = recentCwds.filter((p) => p !== dir);
-  await saveRecentCwds();
+export function forgetCwd(dir) {
+  return mutateRecentCwds(async () => {
+    const next = recentCwds.filter((p) => p !== dir);
+    await recentCwdsStore.save(next);
+    recentCwds = next;
+  });
 }
 
 // Every store this module owns, read once at boot. The network store loads
@@ -570,6 +636,22 @@ export async function readSettingsFile() {
 export async function saveSettingsFile(settings) {
   await mkdir(AGENT_DIR, { recursive: true });
   await writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n", "utf8");
+}
+
+const mutateSettings = mutationQueue();
+/**
+ * Serialize the complete settings read-modify-write cycle. Serializing writes
+ * alone is insufficient: two requests could both read the old file and each
+ * report success after overwriting the other's confirmed key.
+ * @param {(settings: Record<string, any>) => void} update
+ */
+export function updateSettingsFile(update) {
+  return mutateSettings(async () => {
+    const settings = await readSettingsFile();
+    update(settings);
+    await saveSettingsFile(settings);
+    return settings;
+  });
 }
 
 // ---- session log files -----------------------------------------------------

@@ -4,7 +4,7 @@ import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 
 let agentDir;
 let titles;
@@ -331,6 +331,23 @@ test("a valid empty Haiku response does not authorize Luna", async () => {
   await titles.titleFor("/sessions/empty-answer.jsonl", "empty model answer", justCreated());
   await titles.flushTitleQueue();
   assert.deepEqual(calls.map((call) => `${call.model.provider}/${call.model.id}`), [HAIKU]);
+});
+
+test("a cache write failure keeps the generated title ephemeral without regenerating it", async (t) => {
+  runtime = fakeRuntime({ complete: async () => assistant("Ephemeral generated title") });
+  titles.configureTitleModelRuntime(runtime);
+  const tmpFile = path.join(agentDir, "web-ui-titles.json.tmp");
+  await mkdir(tmpFile);
+  t.after(() => rm(tmpFile, { recursive: true, force: true }));
+  const sessionPath = "/sessions/cache-write-failure.jsonl";
+
+  await titles.titleFor(sessionPath, "generate this title once", justCreated());
+  await titles.flushTitleQueue();
+  await rm(tmpFile, { recursive: true, force: true });
+
+  assert.equal(await titles.titleFor(sessionPath, "generate this title once", justCreated()), "Ephemeral generated title");
+  await titles.flushTitleQueue();
+  assert.equal(calls.length, 1, "a failed cache write must not spend quota regenerating completed work");
 });
 
 test("one failed job does not stop the single worker from processing the next", async () => {

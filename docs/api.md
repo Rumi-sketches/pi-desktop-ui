@@ -27,6 +27,10 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
   known path, wrong verb (with an `Allow` header); `413` body over the cap;
   `500` unexpected failure (the message is never echoed back, only logged).
   The tables below list the status codes a route raises *on its own*.
+- **Persisted mutations.** A success response containing updated in-memory UI
+  state is sent only after its disk write completes. A write failure follows the
+  sanitized `500` path above; atomic UI state stores keep their prior confirmed
+  file and in-memory value.
 - **Static routes** are not part of this API: `GET /` (the page),
   `GET /app.js`, `GET /app.css` (its two assets, see `PAGE_ROUTES` in
   `http.mjs`) and `GET /vendor/*` (the vendored browser libraries, a prefix

@@ -56,28 +56,36 @@ const networkStore = jsonFile(NETWORK_PATH, {
   dirMode: AGENT_DIR_MODE,
 });
 let network = defaultNetwork();
+let networkMutation = Promise.resolve();
+function mutateNetwork(operation) {
+  const result = networkMutation.then(operation);
+  networkMutation = result.catch(() => {});
+  return result;
+}
 export async function loadNetwork() {
   network = await networkStore.load();
-}
-async function saveNetwork() {
-  await networkStore.save(network);
 }
 export const lanAccessEnabled = () => network.lanAccess;
 
 // Every activation starts from a fresh token: turning access off invalidates
-// the URLs already handed out.
-export async function setLanAccess(enabled) {
-  network.lanAccess = enabled;
-  network.token = enabled ? newAccessToken() : null;
-  await saveNetwork();
+// the URLs already handed out. Publish it only after the secret file is safe.
+export function setLanAccess(enabled) {
+  return mutateNetwork(async () => {
+    const next = { lanAccess: enabled, token: enabled ? newAccessToken() : null };
+    await networkStore.save(next);
+    network = next;
+  });
 }
 
 // False when there is nothing to regenerate: no LAN access, no token.
-export async function regenerateAccessToken() {
-  if (!network.lanAccess) return false;
-  network.token = newAccessToken();
-  await saveNetwork();
-  return true;
+export function regenerateAccessToken() {
+  return mutateNetwork(async () => {
+    if (!network.lanAccess) return false;
+    const next = { ...network, token: newAccessToken() };
+    await networkStore.save(next);
+    network = next;
+    return true;
+  });
 }
 
 function newAccessToken() {

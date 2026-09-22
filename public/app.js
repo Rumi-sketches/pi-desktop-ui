@@ -4934,7 +4934,8 @@ async function renderSettings() {
   $('claudeCfgTest').addEventListener('click', () => testUsage('anthropic', 'claudeCfgMsg'));
   $('kimiCfgTest').addEventListener('click', () => testUsage('kimi', 'kimiCfgMsg'));
   $('claudeCfgClear').addEventListener('click', async () => {
-    await api('/api/usage/credentials/anthropic', { method: 'DELETE' });
+    const result = await api('/api/usage/credentials/anthropic', { method: 'DELETE' });
+    if (result.error) { cfgMsg('claudeCfgMsg', '✗ ' + result.error, 'err'); return; }
     setCfgBadge('claudeCfgBadge', false);
     $('claudeOrgId').value = ''; $('claudeCookie').value = ''; cfgMsg('claudeCfgMsg', '', '');
     refreshUsage();
@@ -4950,7 +4951,8 @@ async function renderSettings() {
     refreshUsage();
   });
   $('kimiCfgClear').addEventListener('click', async () => {
-    await api('/api/usage/credentials/kimi', { method: 'DELETE' });
+    const result = await api('/api/usage/credentials/kimi', { method: 'DELETE' });
+    if (result.error) { cfgMsg('kimiCfgMsg', '✗ ' + result.error, 'err'); return; }
     setCfgBadge('kimiCfgBadge', false);
     $('kimiBearer').value = ''; cfgMsg('kimiCfgMsg', '', '');
     refreshUsage();

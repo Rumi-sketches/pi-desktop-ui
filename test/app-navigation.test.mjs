@@ -343,6 +343,7 @@ function deferredApiSetup() {
     transport: createTransport({ fetchImpl: () => response }),
     toast() {}, showChatResource() {},
   });
+  vm.runInContext(appFunction('errorInfo'), state.context);
   vm.runInContext(appFunction('api'), state.context);
   return { ...state, resolve };
 }
@@ -354,6 +355,19 @@ test('guarded action ignores a response from before an A B A navigation', async 
   navigation.transition({ tabId: 'all', view: VIEW_CHAT, resourceId: 'a' });
   resolve({ ok: true, json: async () => ({ thinkingLevel: 'high' }) });
   assert.equal((await pending).stale, true);
+});
+
+test('a failed persisted mutation surfaces its error instead of a success payload', async () => {
+  const { context, resolve } = deferredApiSetup();
+  const messages = [];
+  context.toast = (message) => messages.push(message);
+  const pending = context.api('/api/network', { method: 'POST' });
+  resolve({ ok: false, status: 500, json: async () => ({ error: 'internal error' }) });
+
+  const result = await pending;
+  assert.equal(result.error, 'internal error');
+  assert.equal(result.code, '');
+  assert.deepEqual(messages, ['internal error']);
 });
 
 test('state refresh without explicit ticket cannot navigate back to an old chat', async () => {
