@@ -499,6 +499,31 @@ describe("the transcript route", () => {
     assert.equal(JSON.stringify(body).includes("C:/skills/release-check/SKILL.md"), false);
   });
 
+  test("history pages preserve order, tool results and run metadata", async () => {
+    const base = `/api/history?s=${encodeURIComponent(transcriptFile)}`;
+    const full = await getJson(base);
+    const latest = await getJson(`${base}&limit=1`);
+    assert.equal(latest.status, 200);
+    assert.equal(latest.body.total, 3);
+    assert.equal(latest.body.start, 2);
+    assert.equal(latest.body.before, 2);
+    assert.deepEqual(latest.body.messages, full.body.messages.slice(2));
+    const middle = await getJson(`${base}&limit=1&before=2`);
+    assert.deepEqual(middle.body.messages, full.body.messages.slice(1, 2));
+    assert.equal(middle.body.messages[0].durationMs, 70_000);
+    assert.equal(middle.body.messages[0].blocks.find((b) => b.type === "tool").output, "fixture output");
+    const first = await getJson(`${base}&limit=1&before=1`);
+    assert.equal(first.body.before, null);
+    assert.deepEqual(first.body.messages, full.body.messages.slice(0, 1));
+    const restored = await getJson(`${base}&start=1`);
+    assert.deepEqual(restored.body.messages, full.body.messages.slice(1));
+    for (const query of ["limit=0", "limit=101", "before=-1", "before=999", "start=4", "start=1.5", "before=nope"]) {
+      assert.equal((await getJson(`${base}&${query}`)).status, 400, query);
+    }
+    assert.equal(JSON.stringify([latest.body, middle.body, first.body]).includes(IMAGE_BYTES.toString("base64")), false);
+    assert.equal(JSON.stringify(first.body).includes("SKILL.md"), false);
+  });
+
   test("OpenAI reasoning keeps the normalized order in history", async () => {
     const { status, body } = await getJson(`/api/history?s=${encodeURIComponent(transcriptFile)}`);
     assert.equal(status, 200);

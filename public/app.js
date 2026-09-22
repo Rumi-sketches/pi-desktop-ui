@@ -49,6 +49,7 @@ const $ = (id) => document.getElementById(id);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const chat = $('chat'), chatWrap = $('chatWrap');
 let currentAssistant = null, currentThinking = null, currentTurn = null;
+let historyRoot = null;
 
 /* Text drafts survive a reload in sessionStorage. The bounded cache owns the
    live composer and view state; its persistence adapter deliberately receives
@@ -526,6 +527,10 @@ function renderMarkdown(div, { decorate = true } = {}) {
   if (win.hljs) {
     let highlighted = 0;
     for (const el of $$('pre code', div)) {
+      // Unlabelled/unknown fences otherwise trigger highlight.js auto-detection
+      // across all bundled grammars, synchronously on the input thread.
+      const language = [...el.classList].find((name) => name.startsWith('language-'))?.slice(9);
+      if (!language || !win.hljs.getLanguage(language)) continue;
       const size = el.textContent?.length ?? 0;
       if (size > 50_000 || highlighted + size > highlightLimit) continue;
       win.hljs.highlightElement(el);
@@ -610,7 +615,7 @@ function addCopyButtons(container) {
 const SHELL_LANGS = ['bash', 'sh', 'shell', 'zsh', 'console', 'powershell', 'ps', 'ps1', 'pwsh', 'cmd', 'bat'];
 function shellCommandOf(pre) {
   const codeEl = pre.querySelector('code');
-  const text = (codeEl ? codeEl.innerText : pre.innerText).trim();
+  const text = (codeEl ? codeEl.textContent : pre.textContent).trim();
   if (!text || text.includes('\n')) return null;
   if (text.length > 2000) return null;
   const lang = [...(codeEl?.classList ?? [])]
@@ -674,13 +679,16 @@ async function forkFrom(entryId) {
   toast('New chat created from this point', true);
 }
 function newTurn(role, model = null) {
-  $('hero')?.remove();
-  setHeroMode(false);
+  const root = historyRoot ?? chat;
+  if (!historyRoot) {
+    $('hero')?.remove();
+    setHeroMode(false);
+  }
   // Consecutive messages from the same speaker (same model, for the assistant)
   // stay in the same turn: avatar and name show up once, until the other side
   // answers.
-  const ghosts = chat.querySelector('.queuedPrompts');
-  const last = ghosts ? ghosts.previousElementSibling : chat.lastElementChild;
+  const ghosts = root.querySelector('.queuedPrompts');
+  const last = ghosts ? ghosts.previousElementSibling : root.lastElementChild;
   if (last?.classList.contains('turn') && last.classList.contains(role)) {
     const m = role === 'user' ? null : (model ?? activeChatState().turnModel ?? activeChatState().model);
     const sig = role === 'user' ? 'user' : `${m?.provider ?? ''}/${m?.id ?? m?.model ?? ''}`;
@@ -703,7 +711,7 @@ function newTurn(role, model = null) {
       ? `<div class="body"><div class="who" title="${esc(pid)}/${esc(mid)}">${esc(pretty)} <span class="mprov">${esc(pid)}</span></div></div>`
       : '<div class="body"><div class="who">pi</div></div>';
   }
-  chat.insertBefore(t, ghosts);
+  root.insertBefore(t, ghosts);
   return t.querySelector('.body');
 }
 function skillInvocationFromCommand(text, knownCommands = null) {
@@ -737,6 +745,7 @@ function skillInvocationElement(skill) {
 // Every live transcript mutation shares one rule: measure before changing the
 // DOM, then follow the new bottom only when the reader was already there.
 function mutateTranscript(mutate) {
+  if (historyRoot) return mutate();
   const stick = atBottom();
   const result = mutate();
   if (stick) scrollDown();
@@ -1710,7 +1719,7 @@ function handleEvent(ev, ownerKey) {
         flushAssistantMeta(state);
         state.turnModel = null;
         setAgentTask(false, null, ownerKey);
-        refreshGit();  // the agent may have touched files / branches
+        refreshGit({ force: true }); // the visible agent may have changed Git
       }
       setRunning(ev.status === 'running', { newResponse: ev.status === 'running' }); break;
     case 'rekey': {
@@ -2390,7 +2399,7 @@ function sessionDetailsEl(s) {
   addDetail('Project', project);
   addDetail('Model', [s.provider, s.model].filter(Boolean).join('/'));
   addDetail('Thinking', s.thinkingLevel || 'off');
-  addDetail('Branch', s.branch);
+  addDetail('Branch', s.cwd ? uiState.projectState(s.cwd).git?.branch : s.branch);
   const addResources = (name, resources, kind) => {
     if (!resources.length) return;
     const key = document.createElement('span');
@@ -3028,16 +3037,93 @@ async function refreshAll({ key = activeChatKey() ?? renderedChatKey, ticket = n
 }
 
 /* ---------------- history ---------------- */
+function renderHistoryMessages(messages, key) {
+  const fragment = document.createDocumentFragment();
+  const previousRoot = historyRoot;
+  const previousTurn = currentTurn;
+  historyRoot = fragment;
+  try {
+    for (const m of messages) {
+      const blocks = Array.isArray(m.blocks) && m.blocks.length
+        ? m.blocks
+        : (m.text ? [{ type: 'text', text: m.text }] : []);
+      if (!blocks.length && !m.errorMessage) continue;
+      const body = newTurn(m.role === 'user' ? 'user' : 'pi',
+        m.role === 'assistant' && (m.provider || m.model) ? { provider: m.provider, id: m.model } : null);
+      // Tool cards belong to the turn being rebuilt, not to the live one.
+      currentTurn = body;
+      let lastText = null;
+      for (const b of blocks) {
+        if (b.type === 'text') {
+          lastText = bubble(m.role === 'user' ? 'user' : 'assistant', b.text ?? '', body);
+        } else if (b.type === 'image' && m.entryId && Number.isInteger(b.contentIndex)) {
+          appendMessageImage(body, {
+            src: withSessionKey(
+              `/api/attachment?entry=${encodeURIComponent(m.entryId)}&block=${b.contentIndex}`,
+              key,
+            ),
+          });
+        } else if (b.type === 'skill' && m.role === 'user') {
+          lastText = skillInvocationElement(b);
+          body.appendChild(lastText);
+        } else if (b.type === 'thinking') {
+          bubble('thinking', b.text ?? '', body);
+        } else if (b.type === 'tool') {
+          renderTool({ ...b, status: 'start' });
+          if (b.status === 'end') renderTool({ ...b, status: 'end' });
+        }
+      }
+      // Failed turns may have no content blocks to explain the empty answer.
+      if (m.errorMessage) bubble('sys err', (m.stopReason === 'aborted' ? '⏹ ' : '⚠ ') + m.errorMessage, body);
+      appendMessageMeta(body, { timestamp: m.timestamp, durationMs: m.durationMs, role: m.role });
+      if (lastText) addMsgActions(body, lastText, { entryId: m.entryId });
+    }
+    return fragment;
+  } finally {
+    historyRoot = previousRoot;
+    currentTurn = previousTurn;
+  }
+}
+
+function historyPageButton(before, key) {
+  if (before === null || before === undefined) return null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'historyMore';
+  button.textContent = 'Load earlier messages';
+  addChatListener(button, 'click', async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const res = await api(`/api/history?limit=40&before=${before}`, undefined, { key, guardChat: true });
+      if (res.error || key !== activeChatKey() || !button.isConnected) return;
+      const fragment = renderHistoryMessages(res.messages ?? [], key);
+      const next = historyPageButton(res.before, key);
+      if (next) fragment.prepend(next);
+      // Anchor the first existing turn, not the bottom: streaming may have
+      // appended content while this request was in flight.
+      const anchor = button.nextElementSibling;
+      const top = anchor?.getBoundingClientRect().top;
+      button.replaceWith(fragment);
+      if (anchor && top !== undefined) chatWrap.scrollTop += anchor.getBoundingClientRect().top - top;
+      uiState.chatViewState(key).view.historyStart = res.start;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
 async function loadHistory({
   key = activeChatKey() ?? renderedChatKey,
   ticket = null,
   replace = false,
   preserveScroll = false,
 } = {}) {
-  const res = await api('/api/history', undefined, { key, ticket, guardChat: Boolean(key) });
+  const view = uiState.chatViewState(key).view;
+  const query = preserveScroll && view.historyStart !== null ? `start=${view.historyStart}` : 'limit=40';
+  const res = await api(`/api/history?${query}`, undefined, { key, ticket, guardChat: Boolean(key) });
   if (res.error || key !== activeChatKey()) return;
-  // Read this after HTTP completes: restoring the value captured when the
-  // request started would undo scrolling the user did while syncing.
   const savedScrollTop = preserveScroll ? chatWrap.scrollTop : null;
   if (replace) {
     resetTasks(key);
@@ -3047,66 +3133,38 @@ async function loadHistory({
     toolCards.clear();
     currentAssistant = currentThinking = currentTurn = null;
   }
-  for (const m of res.messages ?? []) {
-    const blocks = Array.isArray(m.blocks) && m.blocks.length
-      ? m.blocks
-      : (m.text ? [{ type: 'text', text: m.text }] : []);
-    if (!blocks.length && !m.errorMessage) continue;
-    const body = newTurn(m.role === 'user' ? 'user' : 'pi',
-      m.role === 'assistant' && (m.provider || m.model) ? { provider: m.provider, id: m.model } : null);
-    // tool cards belong to the turn being rebuilt, not to the live one
-    const prevTurn = currentTurn;
-    currentTurn = body;
-    let lastText = null;
-    for (const b of blocks) {
-      if (b.type === 'text') {
-        lastText = bubble(m.role === 'user' ? 'user' : 'assistant', b.text ?? '', body);
-      } else if (b.type === 'image' && m.entryId && Number.isInteger(b.contentIndex)) {
-        appendMessageImage(body, {
-          src: withSessionKey(
-            `/api/attachment?entry=${encodeURIComponent(m.entryId)}&block=${b.contentIndex}`,
-            key,
-          ),
-        });
-      } else if (b.type === 'skill' && m.role === 'user') {
-        lastText = skillInvocationElement(b);
-        body.appendChild(lastText);
-      } else if (b.type === 'thinking') {
-        bubble('thinking', b.text ?? '', body);
-      } else if (b.type === 'tool') {
-        renderTool({ ...b, status: 'start' });
-        if (b.status === 'end') renderTool({ ...b, status: 'end' });
-      }
-    }
-    // turn that ended badly (provider error / abort): without this the history
-    // would show an empty turn with no explanation
-    if (m.errorMessage) bubble('sys err', (m.stopReason === 'aborted' ? '⏹ ' : '⚠ ') + m.errorMessage, body);
-    appendMessageMeta(body, { timestamp: m.timestamp, durationMs: m.durationMs, role: m.role });
-    currentTurn = prevTurn;
-    if (lastText) addMsgActions(body, lastText, { entryId: m.entryId });
-  }
+  const fragment = renderHistoryMessages(res.messages ?? [], key);
+  const more = historyPageButton(res.before, key);
+  if (more) fragment.prepend(more);
+  view.historyStart = res.start;
   // turn still in progress (the chat kept working while you were elsewhere):
   // it is rebuilt from the server buffer and streaming continues live
   if (res.turnModel) activeChatState().turnModel = res.turnModel;
   currentTurn = currentAssistant = currentThinking = null;
-  for (const seg of res.live ?? []) {
-    if (!currentTurn) currentTurn = newTurn('pi');
-    if (seg.type === 'text') {
-      currentThinking = null;
-      currentAssistant = bubble('assistant', seg.text ?? '', currentTurn);
-    } else if (seg.type === 'thinking') {
-      currentAssistant = null;
-      currentThinking = bubble('thinking', seg.text ?? '', currentTurn);
-    } else if (seg.type === 'tool' && seg.tool) {
-      currentAssistant = currentThinking = null;
-      renderTool({ ...seg.tool, status: 'start' });
-      taskFromTool({ ...seg.tool, status: 'start' }, key);
-      if (seg.tool.status === 'end') { renderTool({ ...seg.tool, status: 'end' }); taskFromTool({ ...seg.tool, status: 'end' }, key); }
-      else if (seg.tool.output) renderTool({ ...seg.tool, status: 'update' });
+  historyRoot = fragment;
+  try {
+    for (const seg of res.live ?? []) {
+      if (!currentTurn) currentTurn = newTurn('pi');
+      if (seg.type === 'text') {
+        currentThinking = null;
+        currentAssistant = bubble('assistant', seg.text ?? '', currentTurn);
+      } else if (seg.type === 'thinking') {
+        currentAssistant = null;
+        currentThinking = bubble('thinking', seg.text ?? '', currentTurn);
+      } else if (seg.type === 'tool' && seg.tool) {
+        currentAssistant = currentThinking = null;
+        renderTool({ ...seg.tool, status: 'start' });
+        taskFromTool({ ...seg.tool, status: 'start' }, key);
+        if (seg.tool.status === 'end') { renderTool({ ...seg.tool, status: 'end' }); taskFromTool({ ...seg.tool, status: 'end' }, key); }
+        else if (seg.tool.output) renderTool({ ...seg.tool, status: 'update' });
+      }
     }
+  } finally {
+    historyRoot = null;
   }
+  chat.appendChild(fragment);
   // the folder can still be chosen only if the chat never started
-  setChatStarted((res.messages ?? []).length > 0 || (res.live ?? []).length > 0, key);
+  setChatStarted(res.total > 0 || (res.live ?? []).length > 0, key);
   const owner = uiState.chatState(key);
   if (res.streaming) {
     owner.streaming = true;
@@ -5592,16 +5650,34 @@ $('restartBtn').addEventListener('click', async () => {
 });
 
 /* ---------------- git status (branch + pending changes) ---------------- */
-async function refreshGit({ key = activeChatKey() ?? renderedChatKey, projectCwd = projectScopeForChat(key)?.cwd } = {}) {
-  if (!key || !projectCwd) return;
+const gitRefreshes = new Map();
+async function refreshGit({ key = activeChatKey() ?? renderedChatKey, projectCwd = projectScopeForChat(key)?.cwd, force = false } = {}) {
+  if (!key || !projectCwd || !isProjectScopeActive(projectCwd)) return;
   const owner = uiState.projectState(projectCwd);
-  const g = await api('/api/git', undefined, {
-    key,
-    guard: () => isProjectScopeActive(owner.cwd),
-  });
-  if (g.error) return;
-  owner.git = g;
-  if (isProjectScopeActive(owner.cwd)) renderGit(owner);
+  const cached = gitRefreshes.get(owner.cwd);
+  if (force && cached) cached.at = 0;
+  if (document.hidden) return;
+  if (cached?.pending) {
+    await cached.pending;
+    if (force && !cached.forced) return refreshGit({ key, projectCwd, force: true });
+    return;
+  }
+  if (!force && cached && Date.now() - cached.at < 30_000) return;
+  const entry = { at: cached?.at ?? 0, pending: null, forced: force };
+  const pending = (async () => {
+    const g = await api(force ? '/api/git?force=1' : '/api/git', undefined, {
+      key,
+      guard: () => isProjectScopeActive(owner.cwd),
+    });
+    if (g.error) return;
+    owner.git = g;
+    entry.at = Date.now();
+    if (isProjectScopeActive(owner.cwd)) renderGit(owner);
+  })();
+  entry.pending = pending;
+  gitRefreshes.set(owner.cwd, entry);
+  try { await pending; }
+  finally { entry.pending = null; }
 }
 function renderGit(scope = activeProjectScope()) {
   const git = scope?.git;
@@ -5629,6 +5705,15 @@ function renderGitMenu() {
   const git = activeProjectScope()?.git;
   const menu = $('gitMenu');
   menu.innerHTML = '<div class="dd-group">Switch branch</div>';
+  const refresh = document.createElement('button');
+  refresh.type = 'button';
+  refresh.className = 'dd-item';
+  refresh.textContent = 'Refresh Git status';
+  refresh.addEventListener('click', async () => {
+    await refreshGit({ force: true });
+    if (gitDd.classList.contains('open')) renderGitMenu();
+  });
+  menu.appendChild(refresh);
   for (const branch of git?.branches ?? []) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -5642,7 +5727,7 @@ function renderGitMenu() {
       gitDd.classList.remove('open');
       const result = await post('/api/git/branch', { branch }, { guardChat: true });
       if (result.error) return;
-      await Promise.all([refreshGit(), loadFiles()]);
+      await Promise.all([refreshGit({ force: true }), loadFiles()]);
       toast(`Switched to ${branch}`, true);
     });
     menu.appendChild(button);
@@ -5699,5 +5784,6 @@ setInterval(() => {
 }, 5000);
 // real account usage limits (claude.ai / kimi.com) — poll, don't hammer
 setInterval(() => { if (!document.hidden) refreshUsage(); }, 30000);
-// git branch / pending changes — light poll (the server caches for 5s)
-setInterval(() => { if (!document.hidden) refreshGit(); }, 20000);
+// External edits are checked on return to the app, never on an idle timer.
+window.addEventListener('focus', () => refreshGit());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshGit(); });

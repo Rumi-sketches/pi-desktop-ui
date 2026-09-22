@@ -591,6 +591,7 @@ test('transcript stickiness is measured before every live mutation', () => {
   let atBottom = true;
   let scrolls = 0;
   const context = vm.createContext({
+    historyRoot: null,
     atBottom: () => atBottom,
     scrollDown: () => { scrolls += 1; },
   });
@@ -608,6 +609,118 @@ test('transcript stickiness is measured before every live mutation', () => {
   assert.match(appFunction('handleEvent'), /case 'error':[\s\S]*bubble\('sys err'/);
 });
 
+test('history builds off-screen without per-message layout and restores live state', () => {
+  const fragment = {};
+  const liveTurn = {};
+  let rendered = 0;
+  const context = vm.createContext({
+    historyRoot: null, currentTurn: liveTurn,
+    document: { createDocumentFragment: () => fragment },
+    atBottom() { throw new Error('history must not measure layout'); },
+    scrollDown() { throw new Error('history must not scroll per message'); },
+    newTurn() { assert.equal(context.historyRoot, fragment); return {}; },
+    bubble() { return context.mutateTranscript(() => { rendered += 1; return {}; }); },
+    appendMessageMeta() {}, addMsgActions() {},
+  });
+  vm.runInContext(appFunction('mutateTranscript') + '\n' + appFunction('renderHistoryMessages'), context);
+  const messages = Array.from({ length: 400 }, () => ({ role: 'assistant', text: 'hello' }));
+  assert.equal(context.renderHistoryMessages(messages, 'a'), fragment);
+  assert.equal(rendered, 400);
+  assert.equal(context.currentTurn, liveTurn);
+  assert.equal(context.historyRoot, null);
+  context.bubble = () => { throw new Error('render failure'); };
+  assert.throws(() => context.renderHistoryMessages(messages, 'a'), /render failure/);
+  assert.equal(context.currentTurn, liveTurn);
+  assert.equal(context.historyRoot, null);
+});
+
+test('older history pages preserve the visible anchor and discard detached responses', async () => {
+  let active = 'a';
+  let top = 200;
+  let rendered = 0;
+  const requests = [];
+  const view = { historyStart: 80 };
+  const fragment = { prepend() {} };
+  const context = vm.createContext({
+    activeChatKey: () => active,
+    chatWrap: { scrollTop: 100 },
+    uiState: { chatViewState: () => ({ view }) },
+    api: () => new Promise((resolve) => requests.push(resolve)),
+    renderHistoryMessages: () => { rendered += 1; return fragment; },
+    addChatListener: (button, _event, listener) => { button.click = listener; },
+    document: { createElement: () => ({
+      isConnected: true,
+      nextElementSibling: { getBoundingClientRect: () => ({ top }) },
+      replaceWith(value) { assert.equal(value, fragment); top += 350; this.isConnected = false; },
+    }) },
+  });
+  vm.runInContext(appFunction('historyPageButton'), context);
+  assert.equal(context.historyPageButton(null, 'a'), null);
+  const button = context.historyPageButton(80, 'a');
+  const loading = button.click();
+  await button.click();
+  assert.equal(requests.length, 1, 'double click shares the pending page');
+  requests.shift()({ messages: [], start: 40, before: 40 });
+  await loading;
+  assert.equal(context.chatWrap.scrollTop, 450);
+  assert.equal(view.historyStart, 40);
+  assert.equal(rendered, 1);
+  const detached = context.historyPageButton(40, 'a');
+  const stale = detached.click();
+  detached.isConnected = false; // a history refresh replaced this view
+  requests.shift()({ messages: [], start: 0, before: null });
+  await stale;
+  assert.equal(rendered, 1);
+  const oldChat = context.historyPageButton(40, 'a');
+  const switching = oldChat.click();
+  active = 'b';
+  requests.shift()({ messages: [], start: 0, before: null });
+  await switching;
+  assert.equal(rendered, 1);
+});
+
+test('Git refresh is visible-project only, deduplicated and event-driven', async () => {
+  let now = 100_000;
+  let active = 'a';
+  const owners = new Map([['a', { cwd: 'a' }], ['b', { cwd: 'b' }]]);
+  const calls = [];
+  const context = vm.createContext({
+    gitRefreshes: new Map(), document: { hidden: false },
+    Date: { now: () => now },
+    uiState: { projectState: (cwd) => owners.get(cwd) },
+    isProjectScopeActive: (cwd) => cwd === active,
+    api: (url) => new Promise((resolve) => calls.push({ url, resolve })),
+    renderGit() {},
+  });
+  vm.runInContext(appFunction('refreshGit'), context);
+  const options = { key: 'chat-a', projectCwd: 'a' };
+  await context.refreshGit({ key: 'chat-b', projectCwd: 'b' });
+  assert.equal(calls.length, 0);
+  const first = context.refreshGit(options);
+  const duplicate = context.refreshGit(options);
+  assert.equal(calls.length, 1);
+  calls[0].resolve({ repo: true, branch: 'main' });
+  await Promise.all([first, duplicate]);
+  await context.refreshGit(options);
+  assert.equal(calls.length, 1);
+  const forced = context.refreshGit({ ...options, force: true });
+  assert.equal(calls[1].url, '/api/git?force=1');
+  calls[1].resolve({ repo: true, branch: 'main' });
+  await forced;
+  now += 30_001;
+  context.document.hidden = true;
+  await context.refreshGit(options);
+  assert.equal(calls.length, 2);
+  context.document.hidden = false;
+  const focused = context.refreshGit(options);
+  calls[2].resolve({ repo: true, branch: 'changed' });
+  await focused;
+  active = 'b';
+  await context.refreshGit(options);
+  assert.equal(calls.length, 3);
+  assert.doesNotMatch(source, /setInterval\([^\n]*refreshGit/);
+});
+
 test('streaming markdown renders structure live and defers expensive decoration', () => {
   assert.match(appFunction('renderMarkdown'), /enhanceMarkdownStructure\(div\)[\s\S]*if \(!decorate\) return;[\s\S]*highlightElement/);
   assert.match(appFunction('flushPendingMarkdown'), /renderMarkdown\(pending\.div, \{ decorate \}\)/,
@@ -621,6 +734,38 @@ test('streaming markdown renders structure live and defers expensive decoration'
     assert.match(handler, new RegExp(`case '${kind}':[\\s\\S]{0,400}finalizeStreamingMarkdown\\(\\)`),
       `${kind} finalizes markdown`);
   }
+});
+
+test('markdown highlights only explicit supported languages within its budget', () => {
+  const block = (language, size) => ({ classList: language ? [`language-${language}`] : [], textContent: 'x'.repeat(size) });
+  const blocks = [block(null, 100), block('unknown', 100), block('js', 50_001),
+    block('js', 40_000), block('js', 40_000), block('js', 30_000)];
+  const highlighted = [];
+  let copies = 0;
+  const context = vm.createContext({
+    win: { hljs: { getLanguage: (name) => name === 'js', highlightElement: (el) => highlighted.push(el) } },
+    esc: (text) => text,
+    $$: () => blocks,
+    enhanceMarkdownStructure() {},
+    addCopyButtons: () => { copies += 1; },
+  });
+  vm.runInContext(appFunction('renderMarkdown'), context);
+  const div = { dataset: { raw: 'code' }, innerHTML: '' };
+  context.renderMarkdown(div);
+  assert.deepEqual(highlighted, [blocks[3], blocks[4]]);
+  assert.equal(copies, 1, 'plain fences still receive copy buttons');
+  context.renderMarkdown(div, { decorate: false });
+  assert.equal(highlighted.length, 2);
+});
+
+test('shell command discovery does not force layout while decorating fences', () => {
+  const code = { textContent: 'npm test', classList: ['language-bash'],
+    get innerText() { throw new Error('layout-dependent read'); } };
+  const context = vm.createContext({ SHELL_LANGS: ['bash'] });
+  vm.runInContext(appFunction('shellCommandOf'), context);
+  assert.equal(context.shellCommandOf({ querySelector: () => code }), 'npm test');
+  code.textContent = 'npm test\nnode app.js';
+  assert.equal(context.shellCommandOf({ querySelector: () => code }), null);
 });
 
 test('chat hover details stay available without building a panel for every row', () => {
@@ -668,7 +813,7 @@ test('live and refreshed skill invocations use the same compact mention', () => 
   assert.equal(context.skillInvocationText(live), context.skillInvocationText(history));
   assert.equal(context.skillInvocationText(history), '/skill:release-check --strict package-a');
   assert.match(appFunction('acceptedUserTurn'), /skillInvocationElement\(skill\)/);
-  assert.match(appFunction('loadHistory'), /b\.type === 'skill'[\s\S]*skillInvocationElement\(b\)/);
+  assert.match(appFunction('renderHistoryMessages'), /b\.type === 'skill'[\s\S]*skillInvocationElement\(b\)/);
   assert.match(cssSource, /\.skillInvocation\s*\{/);
 });
 
@@ -766,6 +911,7 @@ test('steering splits the live answer and pending follow-ups stay below its cont
   const after = { id: 'after', type: 'followUp', text: 'later', attachments: [], bytes: 5 };
   const chat = node();
   const context = vm.createContext({
+    historyRoot: null,
     uiState, chat, activeChatKey: () => 'a', renderedChatKey: 'a',
     activeChatState: () => uiState.chatState('a'),
     $: () => null, $$: () => [], setHeroMode() {}, modelsCache: () => [],

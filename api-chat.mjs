@@ -309,9 +309,9 @@ export async function handlePickFolder({ res, sessionKey }) {
   return send(res, 200, { path: dir });
 }
 
-export async function handleGetGitStatus({ res, sessionKey }) {
+export async function handleGetGitStatus({ res, sessionKey, url }) {
   const ctx = await useContext(sessionKey);
-  const status = await gitStatus(ctx.cwd);
+  const status = await gitStatus(ctx.cwd, { force: url?.searchParams.get("force") === "1" });
   if (!status.repo) return send(res, 200, status);
   return send(res, 200, { ...status, branches: await gitBranches(ctx.cwd).catch(() => []) });
 }
@@ -374,7 +374,6 @@ async function sessionEntry(s) {
   const scan = await scanSessionFile(s.path).catch(() => null);
   const last = scan?.lastModel ?? null;
   const firstMessage = skillPresentationText(s.firstMessage ?? "");
-  const git = s.cwd ? await gitStatus(s.cwd) : { repo: false };
   return {
     path: s.path,
     id: s.id,
@@ -393,7 +392,7 @@ async function sessionEntry(s) {
     provider: last?.provider ?? "",
     model: last?.model ?? "",
     thinkingLevel: scan?.thinkingLevel ?? "",
-    branch: git.repo ? git.branch : "",
+    branch: "", // Sidebar listing never starts Git processes.
     // Narrow projections of successful GitHub create commands. Tool output
     // stays private; the sidebar receives only public URLs and numeric ids.
     pullRequests: scan?.pullRequests ?? [],
@@ -636,7 +635,7 @@ function timestampMillis(value) {
   return parsed;
 }
 
-export async function handleGetHistory({ res, sessionKey }) {
+export async function handleGetHistory({ res, sessionKey, url }) {
   const ctx = await useContext(sessionKey);
   const { session } = ctx;
   // Branch entries line up 1:1 with the user/assistant messages below. Besides
@@ -650,11 +649,23 @@ export async function handleGetHistory({ res, sessionKey }) {
     /* entry metadata is best-effort: history still renders without it */
   }
   const chatMsgs = session.messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const params = url?.searchParams;
+  const paged = params?.has("limit") || params?.has("before") || params?.has("start");
+  const limit = Number(params?.get("limit") ?? 40);
+  const end = Number(params?.get("before") ?? chatMsgs.length);
+  const start = Number(params?.get("start") ?? (paged ? Math.max(0, end - limit) : 0));
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100
+      || !Number.isInteger(end) || end < 0 || end > chatMsgs.length
+      || !Number.isInteger(start) || start < 0 || start > end) {
+    return sendError(res, 400, "invalid_history_page", "Invalid history page");
+  }
+  const toolIds = new Set(chatMsgs.slice(start, end).flatMap((m) =>
+    Array.isArray(m.content) ? m.content.filter((c) => c.type === "toolCall").map((c) => c.id) : []));
   // tool results live in their own messages: index them by tool call id so the
   // reconstructed history can show the output inside the matching tool card
   const toolResults = new Map();
   for (const m of session.messages) {
-    if (m.role === "toolResult" && m.toolCallId) {
+    if (m.role === "toolResult" && toolIds.has(m.toolCallId)) {
       toolResults.set(m.toolCallId, {
         output: extractToolText({ content: m.content }),
         isError: !!m.isError,
@@ -678,6 +689,7 @@ export async function handleGetHistory({ res, sessionKey }) {
     if (closesRun && runStartedAt !== null && persistedAt !== null) {
       durationMs = Math.max(0, persistedAt - runStartedAt);
     }
+    if (i < start || i >= end) return null;
     const rawText = messageContentText(m);
     const skill = m.role === "user" ? compactSkillBlock(rawText) : null;
     const blocks = skill
@@ -732,7 +744,10 @@ export async function handleGetHistory({ res, sessionKey }) {
   });
   return send(res, 200, {
     key: ctx.key,
-    messages: msgs,
+    messages: msgs.filter(Boolean),
+    start,
+    total: chatMsgs.length,
+    before: start > 0 ? start : null,
     // which model is answering right now (labels the reconstructed live turn)
     turnModel: ctx.turnModel,
     // whatever is streaming right now, so re-entering a busy chat shows it

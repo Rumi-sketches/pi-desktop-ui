@@ -52,6 +52,7 @@ export function createChatCache({
         attachments: [],
       },
       view: {
+        historyStart: null,
         scrollTop: null,
         snapshot: null,
       },

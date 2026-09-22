@@ -870,23 +870,30 @@ export async function pickerModels(session) {
 }
 
 // ---- git status (branch + pending changes) --------------------------------
-// Read-only git commands in the chat's working directory. Cached briefly: the
-// UI polls it on a timer and refreshes it after every agent run.
+// Read-only Git commands for the selected project. Cache completed results
+// briefly and share in-flight status checks across callers.
 const gitCache = new Map(); // cwd -> { at, data }
+const gitPending = new Map();
 function runGit(cwd, args) {
   return new Promise((resolve, reject) => {
-    // windowsHide is mandatory here: this runs on a 20s poll (plus after every
-    // agent run), and without it every single call pops a console window on
-    // screen for a few milliseconds.
+    // Without windowsHide, each Git refresh briefly opens a console window.
     execFile("git", args, { cwd, timeout: 8000, windowsHide: true }, (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout.trim());
     });
   });
 }
-export async function gitStatus(cwd) {
+export async function gitStatus(cwd, { force = false } = {}) {
+  if (gitPending.has(cwd)) return gitPending.get(cwd);
+  const pending = readGitStatus(cwd, force);
+  gitPending.set(cwd, pending);
+  try { return await pending; }
+  finally { if (gitPending.get(cwd) === pending) gitPending.delete(cwd); }
+}
+
+async function readGitStatus(cwd, force) {
   const hit = gitCache.get(cwd);
-  if (hit && Date.now() - hit.at < 5000) return hit.data;
+  if (!force && hit && Date.now() - hit.at < 5000) return hit.data;
   let data;
   try {
     // porcelain v1 + branch: first line is "## branch...upstream [ahead N, behind M]"
@@ -941,6 +948,7 @@ export async function gitBranches(cwd) {
 export async function switchGitBranch(cwd, branch) {
   const branches = await gitBranches(cwd);
   if (!branches.includes(branch)) throw new Error("branch does not exist in this repository");
+  await gitPending.get(cwd);
   await runGit(cwd, ["switch", branch]);
   gitCache.delete(cwd);
   return gitStatus(cwd);

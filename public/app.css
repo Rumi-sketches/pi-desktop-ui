@@ -719,6 +719,7 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 /* with the sidebar closed the text gets even more room */
 body.sb-closed #chat { max-width: 1100px; }
 /* assistant: flat and full width, no avatar tile — only the model name above */
+.historyMore { display: block; margin: 0 auto 1.5rem; padding: .5rem .85rem; color: var(--txt-dim); }
 .turn { min-width: 0; max-width: 100%; }
 .turn.pi { display: block; }
 .turn .body { min-width: 0; }
