@@ -832,6 +832,12 @@ export async function handlePrompt({ req, res, sessionKey }) {
   ctx.promptStarting = true;
   try {
     await prepareFirstPrompt(ctx);
+    // Writing in a done chat brings it back to life as "reopened". Confirm the
+    // state before starting paid work or answering 202 to the browser.
+    if (ctx.sessionFile && sessionStatusOf(ctx.sessionFile) === "done") {
+      await setSessionStatus(ctx.sessionFile, "reopened");
+      broadcastGlobal({ kind: "sessions" });
+    }
   } catch (error) {
     ctx.promptStarting = false;
     throw error;
@@ -839,10 +845,6 @@ export async function handlePrompt({ req, res, sessionKey }) {
 
   const images = input.images.map(({ data, mimeType }) => ({ type: "image", data, mimeType }));
   const opts = images.length ? { images } : undefined;
-  // writing in a done chat brings it back to life as "reopened"
-  if (ctx.sessionFile && sessionStatusOf(ctx.sessionFile) === "done") {
-    setSessionStatus(ctx.sessionFile, "reopened").then(() => broadcastGlobal({ kind: "sessions" }));
-  }
   // Cover the pre-agent_start window too: another POST received while model,
   // auth and extension preflight run belongs to this run's cancellable queue.
   session

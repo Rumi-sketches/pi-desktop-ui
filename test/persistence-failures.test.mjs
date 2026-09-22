@@ -28,10 +28,10 @@ after(async () => {
   await rm(agentDir, { recursive: true, force: true });
 });
 
-async function request(method, pathname, body) {
+async function request(method, pathname, body, headers = {}) {
   const response = await fetch(`${origin}${pathname}`, {
     method,
-    headers: { Origin: origin, "Content-Type": "application/json" },
+    headers: { Origin: origin, "Content-Type": "application/json", ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: response.status, body: await response.json() };
@@ -75,6 +75,36 @@ test("a failed preference save keeps the confirmed opt-in and later recovers", a
   const recovered = await post("/api/usage/config", { provider: "openai-codex", enabled: true });
   assert.equal(recovered.status, 200);
   assert.equal(recovered.body.status.openai.enabled, true);
+});
+
+test("a failed reopened-status save rejects the prompt and releases its starting claim", async (t) => {
+  const [{ getBootContext }, { sessionStatusOf, setSessionStatus }] = await Promise.all([
+    import("../src/chat/contexts.mjs"),
+    import("../src/storage/session-store.mjs"),
+  ]);
+  const ctx = getBootContext();
+  const previousSessionFile = ctx.sessionFile;
+  const sessionFile = path.join(agentDir, "sessions", "reopen-fixture.jsonl");
+  const statusFile = path.join(agentDir, "web-ui-status.json");
+  const tmpFile = `${statusFile}.tmp`;
+  ctx.sessionFile = sessionFile;
+  await setSessionStatus(sessionFile, "done");
+  await mkdir(tmpFile);
+  t.after(async () => {
+    await rm(tmpFile, { recursive: true, force: true });
+    await setSessionStatus(sessionFile, "active").catch(() => {});
+    ctx.sessionFile = previousSessionFile;
+  });
+
+  const failed = await request("POST", "/api/prompt", { text: "must not reach the provider" }, {
+    "x-pi-session": ctx.key,
+  });
+
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { error: "internal error" });
+  assert.equal(sessionStatusOf(sessionFile), "done");
+  assert.equal(ctx.promptStarting, false);
+  assert.equal(JSON.parse(await readFile(statusFile, "utf8"))[sessionFile], "done");
 });
 
 test("concurrent settings mutations preserve both confirmed updates", async () => {
