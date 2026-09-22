@@ -12,25 +12,24 @@
  * trust: scripts/verify.mjs fails when it and the route table below disagree.
  *
  * The code is split by concern, not by endpoint: this file is boot, route table
- * and wiring, and everything it wires lives next to it —
- *   `http.mjs`          request/response helpers, static assets, the router
- *   `session-store.mjs` what is persisted under ~/.pi/agent
- *   `contexts.mjs`      one agent context per open chat, and its event stream
- *   `analytics.mjs`     cost/token history built from the session log
- *   `network.mjs`       the listening address and the LAN access token
- *   `api-chat.mjs`      the endpoints of a chat
- *   `api-settings.mjs`  the endpoints of the settings and analytics screens
- *   `api-terminals.mjs` the endpoints of the integrated PTY terminals (loopback only)
- *   `lifecycle.mjs`     stopping: signals, /api/shutdown, /api/restart
+ * and wiring, and everything it wires is grouped by responsibility under `src/`:
+ *   `src/http/`      request plumbing, access control and network state
+ *   `src/chat/`      chat contexts, handlers and related policies
+ *   `src/settings/`  machine settings, analytics and agent inputs
+ *   `src/terminals/` loopback-only PTY handlers and process registry
+ *   `src/storage/`   paths, JSON persistence, preferences and session logs
+ *   `src/platform/`  native helpers and their PowerShell support script
+ *   `src/lifecycle.mjs` stopping: signals, /api/shutdown, /api/restart
  */
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCT_ID } from "./product.mjs";
-import { classifyRequest, isLoopbackPeer } from "./access-control.mjs";
-import { createRouter, PAGE_ROUTES, send, sendMethodNotAllowed, VENDOR_ROUTE } from "./http.mjs";
-import { loadPersistedState, runFirstRunArchiving } from "./session-store.mjs";
-import { openBootContext, getBootContext, startAgentRuntime, startIdleSweep } from "./contexts.mjs";
+import { classifyRequest, isLoopbackPeer } from "./src/http/access-control.mjs";
+import { createRouter, PAGE_ROUTES, send, sendMethodNotAllowed, VENDOR_ROUTE } from "./src/http/http.mjs";
+import { loadSessionState, runFirstRunArchiving } from "./src/storage/session-store.mjs";
+import { loadPreferences } from "./src/storage/preferences.mjs";
+import { openBootContext, getBootContext, startAgentRuntime, startIdleSweep } from "./src/chat/contexts.mjs";
 import {
   DEFAULT_PORT,
   completeAccessHandshake,
@@ -43,7 +42,7 @@ import {
   serverPort,
   setServerAddress,
   warnRemoteDeny,
-} from "./network.mjs";
+} from "./src/http/network.mjs";
 import {
   handleRestart,
   handleShutdown,
@@ -53,7 +52,7 @@ import {
   setRestartHandler,
   stopServer,
   workInProgress,
-} from "./lifecycle.mjs";
+} from "./src/lifecycle.mjs";
 import {
   handleAbort,
   handleActivateRecentSession,
@@ -87,7 +86,7 @@ import {
   handleSetThinkingLevel,
   handleSubmitForm,
   handleTypeCommand,
-} from "./api-chat.mjs";
+} from "./src/chat/api-chat.mjs";
 import {
   handleCreateTerminal,
   handleDeleteTerminal,
@@ -97,7 +96,7 @@ import {
   handleTerminalInput,
   handleTerminalResize,
   handleTerminalStream,
-} from "./api-terminals.mjs";
+} from "./src/terminals/api-terminals.mjs";
 import {
   handleBackfillTitles,
   handleDeleteAgentBootstrapFile,
@@ -125,14 +124,14 @@ import {
   handleTestUsageCredentials,
   handleUpdateNetwork,
   handleUpdateSetting,
-} from "./api-settings.mjs";
+} from "./src/settings/api-settings.mjs";
 
 // ---- route table -----------------------------------------------------------
 // The single source of truth for what this server answers: [method, path,
 // handler] triples. Adding a route here is the only way to add one, so no
 // endpoint can silently accept every verb the way the old `if` cascade did.
 const ROUTES = [
-  // the page and its two assets (see PAGE_ROUTES in http.mjs)
+  // the page and its assets (see PAGE_ROUTES in src/http/http.mjs)
   ...PAGE_ROUTES,
   ["GET", "/api/events", handleEvents],
   ["GET", "/api/state", handleGetState],
@@ -188,7 +187,7 @@ const ROUTES = [
   ["POST", "/api/prompt", handlePrompt],
   ["POST", "/api/abort", handleAbort],
   // The terminals answer the local machine only, whatever LAN access says:
-  // the guard lives in every handler of api-terminals.mjs.
+  // the guard lives in every handler of src/terminals/api-terminals.mjs.
   ["GET", "/api/terminals", handleListTerminals],
   ["POST", "/api/terminals", handleCreateTerminal],
   ["POST", "/api/shutdown", handleShutdown],
@@ -292,13 +291,13 @@ function listen(httpServer, port, host) {
  * @param {() => void} [options.onRestart] takes over POST /api/restart, so a host (Electron)
  *   can restart the server in place; without it the CLI path just shuts down
  * @returns {Promise<{url: string, port: number, host: string, stop: () => Promise<void>,
- *   activity: () => import("./lifecycle.mjs").WorkInProgress}>}
+ *   activity: () => import("./src/lifecycle.mjs").WorkInProgress}>}
  */
 export async function startServer(options = {}) {
   if (isServerRunning()) throw new Error("the server is already running in this process");
   setRestartHandler(options.onRestart);
 
-  await Promise.all([loadPersistedState(), loadNetwork()]);
+  await Promise.all([loadSessionState(), loadPreferences(), loadNetwork()]);
   await runFirstRunArchiving();
 
   const requestedPort = Number(options.port ?? DEFAULT_PORT);

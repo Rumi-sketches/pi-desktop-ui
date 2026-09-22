@@ -10,16 +10,15 @@
  */
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { PRODUCT_ID } from "./product.mjs";
-import { openTextFile, platformCapabilities } from "./platform.mjs";
-import { provesSameOrigin } from "./access-control.mjs";
-import { jsonBody, send, sendError } from "./http.mjs";
+import { PRODUCT_ID } from "../../product.mjs";
+import { openTextFile, platformCapabilities } from "../platform/platform.mjs";
+import { provesSameOrigin } from "../http/access-control.mjs";
+import { jsonBody, send, sendError } from "../http/http.mjs";
+import { AGENT_DIR, SETTINGS_PATH } from "../storage/agent-paths.mjs";
+import { archiveStaleChats } from "../storage/session-store.mjs";
 import {
-  AGENT_DIR,
-  SETTINGS_PATH,
   agentBootstrapState,
   agentJsonFile,
-  archiveStaleChats,
   archivingState,
   fullSearchState,
   getPath,
@@ -37,8 +36,8 @@ import {
   setTitleGenerationOptions,
   settingsSchema,
   titleGenerationState,
-} from "./session-store.mjs";
-import { queueMissingTitles } from "./titles.mjs";
+} from "../storage/preferences.mjs";
+import { queueMissingTitles } from "../chat/titles.mjs";
 import {
   availableModels,
   broadcastGlobal,
@@ -49,7 +48,7 @@ import {
   sessionCommands,
   supportedThinkingLevels,
   useContext,
-} from "./contexts.mjs";
+} from "../chat/contexts.mjs";
 import { buildAnalytics } from "./analytics.mjs";
 import {
   accessUrl,
@@ -57,7 +56,7 @@ import {
   networkStatus,
   regenerateAccessToken,
   setLanAccess,
-} from "./network.mjs";
+} from "../http/network.mjs";
 import {
   fetchAllUsage,
   usageConfigStatus,

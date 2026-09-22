@@ -7,7 +7,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
-import { AGENT_DIR } from "./session-store.mjs";
+import { AGENT_DIR } from "../storage/agent-paths.mjs";
 
 const MAX_EDIT_BYTES = 512 * 1024;
 const ORIGINALS_DIR = path.join(AGENT_DIR, "web-ui-agent-bootstrap-originals");

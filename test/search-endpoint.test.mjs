@@ -225,7 +225,7 @@ describe("GET /api/search", () => {
   }
 
   test("a request the client dropped mid-scan stops the scan and writes nothing", async () => {
-    const { handleSearchMessages } = await import("../api-chat.mjs");
+    const { handleSearchMessages } = await import("../src/chat/api-chat.mjs");
     const x = fakeExchange({ deadAfter: 5 });
     await handleSearchMessages({ req: x.req, res: x.res, url: x.url, sessionKey: null });
     assert.deepEqual(x.writes, [], "nothing may be written on a dead response");
@@ -234,7 +234,7 @@ describe("GET /api/search", () => {
   });
 
   test("a request already closed is not scanned at all", async () => {
-    const { handleSearchMessages } = await import("../api-chat.mjs");
+    const { handleSearchMessages } = await import("../src/chat/api-chat.mjs");
     const x = fakeExchange();
     const done = handleSearchMessages({ req: x.req, res: x.res, url: x.url, sessionKey: null });
     // the close listener is registered before the first await, so this lands

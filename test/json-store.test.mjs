@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
-import { jsonFile } from "../session-store.mjs";
+import { jsonFile } from "../src/storage/json-store.mjs";
 
 // Each test gets its own directory: the store creates it on demand, exactly as
 // it does with ~/.pi/agent on a fresh install.

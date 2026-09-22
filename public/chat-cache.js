@@ -1,5 +1,15 @@
 export const CHAT_CACHE_LIMIT = 8;
 
+/** @typedef {{ cwd: string, title: string, modified: string, pending: boolean }} DraftMetadata */
+/** @typedef {{
+ *   get: (key: string) => { draft: string, metadata: DraftMetadata|null },
+ *   entries: () => Array<{ key: string, draft: string, metadata: DraftMetadata|null }>,
+ *   set: (key: string, value: { draft: string, metadata: DraftMetadata|null }) => any,
+ *   removeMetadata: (key: string) => boolean,
+ *   rekey: (oldKey: string, newKey: string) => any,
+ *   flush: () => void,
+ * }} DraftStorage */
+
 function requireKey(key, label = "chat key") {
   if (typeof key !== "string" || key.length === 0) {
     throw new TypeError(`${label} must be a non-empty string`);
@@ -19,36 +29,57 @@ function requireLimit(value) {
   return value;
 }
 
+/** @type {DraftStorage} */
+const EMPTY_DRAFT_STORAGE = Object.freeze({
+  get: (..._args) => ({ draft: "", metadata: null }),
+  entries: (..._args) => [],
+  set: (..._args) => {},
+  removeMetadata: (..._args) => false,
+  rekey: (..._args) => ({ draft: "", metadata: null }),
+  flush: (..._args) => {},
+});
+
+/** @param {any} value @returns {DraftStorage} */
+function requireDraftStorage(value) {
+  if (!value || typeof value !== "object") throw new TypeError("draftStorage must be an object");
+  for (const method of ["get", "entries", "set", "removeMetadata", "rekey", "flush"]) {
+    requireFunction(value[method], `draftStorage.${method}`);
+  }
+  return value;
+}
+
+/** @param {any} value @returns {DraftMetadata} */
+function draftMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || typeof value.cwd !== "string" || typeof value.title !== "string"
+      || typeof value.modified !== "string" || typeof value.pending !== "boolean") {
+    throw new TypeError("chat draft metadata is invalid");
+  }
+  return { cwd: value.cwd, title: value.title, modified: value.modified, pending: value.pending };
+}
+
 /**
- * Bounded owner for the transient state of visited chats. Text drafts are
- * mirrored through the supplied persistence adapter; attachments and view
+ * Bounded owner for visited-chat drafts, metadata and transient resources.
+ * Text and metadata pass through the supplied adapter; attachments and view
  * resources never leave memory.
- * @param {{
- *   limit?: number,
- *   loadDraft?: (key: string) => string,
- *   saveDraft?: (key: string, draft: string) => void,
- *   removeDraft?: (key: string) => void,
- * }} [options]
+ * @param {{ limit?: number, draftStorage?: DraftStorage }} [options]
  */
 export function createChatCache({
   limit = CHAT_CACHE_LIMIT,
-  loadDraft = (..._args) => "",
-  saveDraft = (..._args) => {},
-  removeDraft = (..._args) => {},
+  draftStorage = EMPTY_DRAFT_STORAGE,
 } = {}) {
   requireLimit(limit);
-  requireFunction(loadDraft, "loadDraft");
-  requireFunction(saveDraft, "saveDraft");
-  requireFunction(removeDraft, "removeDraft");
+  requireDraftStorage(draftStorage);
 
   const entries = new Map();
 
   function newEntry(key) {
-    const savedDraft = loadDraft(key);
+    const saved = draftStorage.get(key);
     return {
       key,
       composer: {
-        draft: typeof savedDraft === "string" ? savedDraft : "",
+        draft: typeof saved?.draft === "string" ? saved.draft : "",
+        metadata: saved?.metadata ? draftMetadata(saved.metadata) : null,
         attachments: [],
       },
       view: {
@@ -119,13 +150,55 @@ export function createChatCache({
     return entries.get(key) ?? null;
   }
 
-  function setDraft(key, draft) {
+  /** @param {string} key @param {string} draft @param {{ metadata?: DraftMetadata|null }} [options] */
+  function setDraft(key, draft, { metadata } = {}) {
     if (typeof draft !== "string") throw new TypeError("chat draft must be a string");
     const entry = ensure(key);
     entry.composer.draft = draft;
-    if (draft.trim()) saveDraft(key, draft);
-    else removeDraft(key);
+    if (metadata !== undefined) entry.composer.metadata = metadata === null ? null : draftMetadata(metadata);
+    draftStorage.set(key, { draft, metadata: entry.composer.metadata });
     return entry;
+  }
+
+  function setMetadata(key, metadata) {
+    const entry = ensure(key);
+    entry.composer.metadata = metadata === null ? null : draftMetadata(metadata);
+    draftStorage.set(key, { draft: entry.composer.draft, metadata: entry.composer.metadata });
+    return entry;
+  }
+
+  function draftRecord(key) {
+    requireKey(key);
+    const entry = entries.get(key);
+    if (entry) {
+      return {
+        draft: entry.composer.draft,
+        metadata: entry.composer.metadata ? { ...entry.composer.metadata } : null,
+      };
+    }
+    const saved = draftStorage.get(key);
+    return {
+      draft: typeof saved?.draft === "string" ? saved.draft : "",
+      metadata: saved?.metadata ? draftMetadata(saved.metadata) : null,
+    };
+  }
+
+  function persistedDrafts() {
+    return draftStorage.entries().map(({ key, draft, metadata }) => ({
+      key: requireKey(key),
+      draft: typeof draft === "string" ? draft : "",
+      metadata: metadata ? draftMetadata(metadata) : null,
+    }));
+  }
+
+  function confirmDrafts(keys) {
+    if (!Array.isArray(keys)) throw new TypeError("confirmed draft keys must be an array");
+    for (const key of keys) {
+      requireKey(key);
+      const entry = entries.get(key);
+      if (entry) entry.composer.metadata = null;
+      draftStorage.removeMetadata(key);
+    }
   }
 
   function setAttachments(key, attachments) {
@@ -234,12 +307,10 @@ export function createChatCache({
     if (oldKey === newKey) return ensure(newKey);
     if (entries.has(newKey)) throw new TypeError("new chat key already identifies another cached chat");
     const entry = entries.get(oldKey) ?? newEntry(oldKey);
+    draftStorage.rekey(oldKey, newKey);
     entries.delete(oldKey);
     entry.key = newKey;
     entries.set(newKey, entry);
-    if (entry.composer.draft.trim()) saveDraft(newKey, entry.composer.draft);
-    else removeDraft(newKey);
-    removeDraft(oldKey);
     evictOverflow();
     return entry;
   }
@@ -256,6 +327,11 @@ export function createChatCache({
     ensure,
     peek,
     setDraft,
+    setMetadata,
+    draftRecord,
+    persistedDrafts,
+    confirmDrafts,
+    flushDrafts: () => draftStorage.flush(),
     setAttachments,
     saveView,
     captureView,

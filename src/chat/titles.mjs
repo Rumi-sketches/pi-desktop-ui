@@ -28,14 +28,14 @@
  * use subscription-backed providers; API keys are never selected implicitly.
  */
 import path from "node:path";
+import { AGENT_DIR } from "../storage/agent-paths.mjs";
+import { jsonFile } from "../storage/json-store.mjs";
 import {
-  AGENT_DIR,
   isLunaTitleFallbackEnabled,
   isTitleGenerationEnabled,
-  jsonFile,
   lunaTitleFallbackEnabledAt,
   titleGenerationEnabledAt,
-} from "./session-store.mjs";
+} from "../storage/preferences.mjs";
 
 // The process owns one ModelRuntime, created by contexts.mjs and shared with
 // title generation. It is injected here rather than imported: titles never

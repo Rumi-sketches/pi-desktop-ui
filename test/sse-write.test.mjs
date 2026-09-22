@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
 import { once } from "node:events";
-import { SSE_PING, openSseStream, sseSend, sseWrite } from "../http.mjs";
-import { broadcast } from "../contexts.mjs";
+import { SSE_PING, openSseStream, sseSend, sseWrite } from "../src/http/http.mjs";
+import { broadcast } from "../src/chat/contexts.mjs";
 
 /** A response that records what reached it. */
 function fakeRes(state) {

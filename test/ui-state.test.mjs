@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createChatCache } from "../public/chat-cache.js";
+import { createDraftStorage } from "../public/draft-storage.js";
 import {
   ALL_TAB_ID,
   VIEW_CHAT,
@@ -189,13 +190,26 @@ test("session keys stay opaque while transitions retain independent chat state",
   assert.equal(ui.chatState(CHAT_B).thinking, "off");
 });
 
-test("a persisted session clears its optimistic sidebar state", () => {
-  const ui = createUiState();
-  ui.chatState(CHAT_A).sidebarPending = true;
+test("a persisted session clears cache-owned optimistic sidebar metadata", () => {
+  const values = new Map([
+    ["piComposerDrafts", JSON.stringify({ [CHAT_A]: "unsent addition" })],
+    ["piComposerDraftMeta", JSON.stringify({
+      [CHAT_A]: { cwd: PROJECT_A, title: "Pending", modified: "2026-09-22T10:00:00.000Z", pending: true },
+    })],
+  ]);
+  const draftStorage = createDraftStorage({
+    storage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    },
+  });
+  const cache = createChatCache({ draftStorage });
+  const ui = createUiState({ chatCache: cache });
 
   ui.applySessionsPayload(sessionsPayload());
 
-  assert.equal(ui.chatState(CHAT_A).sidebarPending, false);
+  assert.equal(cache.draftRecord(CHAT_A).draft, "unsent addition");
+  assert.equal(cache.draftRecord(CHAT_A).metadata, null);
 });
 
 test("chat rekey transfers the bounded per-chat view state", () => {

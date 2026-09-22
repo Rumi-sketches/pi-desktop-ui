@@ -1044,6 +1044,15 @@ body.sb-closed #chatView.hero #checkoutTray { max-width: 1048px; }
 .settings-inner { max-width: 1000px; margin: 0 auto; padding: 1.6rem 1.4rem 3rem; }
 .settings-inner h2 { font-size: 1.5rem; font-weight: var(--w-semi); margin: 0 0 .2rem; letter-spacing: -.01em; }
 .settings-inner .lead { color: var(--txt-dim); font-size: .87rem; margin: 0 0 1.4rem; }
+.settingsCard { padding: .9rem 1rem; }
+.settingsCardSpaced { margin-bottom: .7rem; }
+.settingsActionRow { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.settingsActions { margin-top: .5rem; }
+.settingsMessage { flex: 1 0 100%; }
+.usageCredentialInput {
+  width: 100%; resize: vertical; padding: .5rem; color: var(--txt); background: var(--bg-2);
+  border: 1px solid var(--line-2); border-radius: var(--r-2); font: 12px var(--font-mono);
+}
 .sec { margin-bottom: 1.8rem; }
 .sec > h3 { font-size: .74rem; text-transform: uppercase; letter-spacing: .11em; color: var(--faint); margin: 0 0 .6rem; }
 .modelGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: .7rem; }

@@ -19,7 +19,7 @@ import {
   subscribe,
   terminateTerminalsForChat,
   writeTo,
-} from "../terminals.mjs";
+} from "../src/terminals/terminals.mjs";
 
 // These tests spawn real PowerShell processes. Every one of them registers its
 // cleanup with t.after() BEFORE anything can fail, so a red assertion never

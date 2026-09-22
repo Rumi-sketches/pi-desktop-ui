@@ -9,7 +9,7 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 - **Scope.** The routes marked *[s]* act on the chat the tab is attached to. The
   tab names it with the query parameter `?s=<key>` or the header
   `x-pi-session`; without it the server picks the most recent chat. The key is
-  opaque for the client (see the boundary comment in `contexts.mjs`).
+  opaque for the client (see the boundary comment in `src/chat/contexts.mjs`).
 - **Bodies.** Requests and responses are JSON (`application/json; charset=utf-8`),
   capped at 32 MB. `GET /api/events` is the exception: it answers
   `text/event-stream`.
@@ -31,10 +31,10 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
   state is sent only after its disk write completes. A write failure follows the
   sanitized `500` path above; atomic UI state stores keep their prior confirmed
   file and in-memory value.
-- **Static routes** are not part of this API: `GET /` (the page),
-  `GET /app.js`, `GET /app.css` (its two assets, see `PAGE_ROUTES` in
-  `http.mjs`) and `GET /vendor/*` (the vendored browser libraries, a prefix
-  route). They answer HTML/JS/CSS, or `404` when a path is not whitelisted.
+- **Static routes** are not part of this API: `GET /` serves the page;
+  `PAGE_ROUTES` in `src/http/http.mjs` lists its browser modules, stylesheet and
+  icons; `GET /vendor/*` serves the allowed local browser libraries. Static paths
+  answer their declared content type, or `404` when a path is not whitelisted.
 
 ## Chat
 

@@ -13,9 +13,10 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { PRODUCT_ID } from "./product.mjs";
+import { PRODUCT_ID } from "../../product.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
 
 // A value that is present and means something: the shape most endpoints ask
 // of the fields they read from a JSON body.
@@ -201,7 +202,7 @@ export function openSseStream(res) {
 // the UI works offline and no third party sees the traffic of a page that drives an
 // agent. Only the sub-trees listed here are reachable.
 const VENDOR_PREFIX = "/vendor/";
-const VENDOR_ROOT = path.join(__dirname, "node_modules");
+const VENDOR_ROOT = path.join(PROJECT_ROOT, "node_modules");
 // highlight.js comes from @highlightjs/cdn-assets, not from the `highlight.js`
 // package: the latter ships only CommonJS under lib/ and ES shims that re-import
 // it, which no browser can load. The cdn-assets build is the browser one.
@@ -262,11 +263,16 @@ async function serveVendor(res, pathname) {
 // 'unsafe-inline'. This is a fixed whitelist, not a static
 // file server rooted at public/: the pathname is a key, never a path fragment,
 // so no traversal is possible.
-const PUBLIC_DIR = path.join(__dirname, "public");
+const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 const PAGE_ASSETS = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "/chat-view.js": { file: "chat-view.js", type: "text/javascript; charset=utf-8" },
+  "/settings-view.js": { file: "settings-view.js", type: "text/javascript; charset=utf-8" },
+  "/terminal-view.js": { file: "terminal-view.js", type: "text/javascript; charset=utf-8" },
+  "/agent-inputs.js": { file: "agent-inputs.js", type: "text/javascript; charset=utf-8" },
   "/ui-state.js": { file: "ui-state.js", type: "text/javascript; charset=utf-8" },
   "/chat-cache.js": { file: "chat-cache.js", type: "text/javascript; charset=utf-8" },
+  "/draft-storage.js": { file: "draft-storage.js", type: "text/javascript; charset=utf-8" },
   "/navigation.js": { file: "navigation.js", type: "text/javascript; charset=utf-8" },
   "/transport.js": { file: "transport.js", type: "text/javascript; charset=utf-8" },
   "/provider-icons.js": { file: "provider-icons.js", type: "text/javascript; charset=utf-8" },
@@ -312,7 +318,7 @@ async function handleVendorFile({ res, url }) {
 }
 
 // The static part of the route table, ready to be spread into it: the page, its
-// two assets, and the sub-tree of vendored libraries (a prefix route, since
+// whitelisted assets, and the sub-tree of vendored libraries (a prefix route, since
 // there the pathname is data for the handler instead of a key).
 export const PAGE_ROUTES = [
   ["GET", "/", handleIndex],

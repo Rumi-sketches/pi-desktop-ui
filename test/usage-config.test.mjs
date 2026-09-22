@@ -22,7 +22,7 @@ before(async () => {
   await writeFile(blocker, "");
   process.env.PI_WEB_UI_TEST = "1";
   process.env.PI_WEB_UI_AGENT_DIR = path.join(blocker, "agent");
-  ({ saveUsageConfig, clearUsageConfig, fetchOpenAIUsage } = await import("../usage-tracker.mjs"));
+  ({ saveUsageConfig, clearUsageConfig, fetchOpenAIUsage } = await import("../src/settings/usage-tracker.mjs"));
 });
 
 after(() => rm(tmpDir, { recursive: true, force: true }));

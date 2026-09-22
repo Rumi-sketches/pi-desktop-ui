@@ -9,8 +9,8 @@
  */
 import path from "node:path";
 import { stat } from "node:fs/promises";
-import { listSessionFiles, readSessionRecords } from "./session-store.mjs";
-import { createIssueTracker, createPullRequestTracker } from "./pull-requests.mjs";
+import { listSessionFiles, readSessionRecords } from "../storage/session-store.mjs";
+import { createIssueTracker, createPullRequestTracker } from "../chat/pull-requests.mjs";
 
 
 // file path -> { mtimeMs, size, project, sessionId, file, buckets, lastModel, first, last }

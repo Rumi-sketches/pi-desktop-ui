@@ -12,21 +12,13 @@
  * ~/.pi/agent/web-usage.json. OpenAI tokens remain in pi's auth store. No
  * credential is committed or sent anywhere except its provider's endpoint.
  */
-import { readFile, writeFile, mkdir, chmod } from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { AGENT_DIR } from "../storage/agent-paths.mjs";
+import { jsonFile, mutationQueue } from "../storage/json-store.mjs";
 
 const execFileP = promisify(execFile);
-
-// Overridable so tests (and sandboxed runs) never touch the real ~/.pi/agent,
-// but only under PI_WEB_UI_TEST=1: the file below holds live session
-// credentials, and a production run must not let the environment decide where
-// they are written or read from.
-const AGENT_DIR =
-  (process.env.PI_WEB_UI_TEST === "1" ? process.env.PI_WEB_UI_AGENT_DIR : undefined)
-  ?? path.join(os.homedir(), ".pi", "agent");
 const CONFIG_PATH = path.join(AGENT_DIR, "web-usage.json");
 const TTL_MS = 45_000; // don't hammer the providers; UI polls faster than this
 const OPENAI_USAGE_TIMEOUT_MS = 10_000;
@@ -43,28 +35,15 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const PROVIDERS = ["anthropic", "kimi"];
 
 let cache = { anthropic: null, kimi: null, openai: null };
-let configMutation = Promise.resolve();
-/** @param {() => Promise<any>} operation */
-function mutateConfig(operation) {
-  const result = configMutation.then(operation);
-  configMutation = result.catch(() => {});
-  return result;
-}
-
-async function readConfig() {
-  try {
-    return JSON.parse(await readFile(CONFIG_PATH, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-async function writeConfig(cfg) {
-  await mkdir(AGENT_DIR, { recursive: true, mode: DIR_MODE });
-  await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: SECRET_FILE_MODE });
-  // `mode` on writeFile only applies when the file is created: tighten pre-existing ones.
-  await chmod(CONFIG_PATH, SECRET_FILE_MODE).catch(() => {});
-}
+const configStore = jsonFile(CONFIG_PATH, {
+  fallback: () => ({}),
+  revive: (raw) => raw && typeof raw === "object" && !Array.isArray(raw) ? raw : undefined,
+  mode: SECRET_FILE_MODE,
+  dirMode: DIR_MODE,
+});
+const mutateConfig = mutationQueue();
+const readConfig = () => configStore.load();
+const writeConfig = (config) => configStore.save(config);
 
 /** Status without leaking secrets, for the settings page. */
 export async function usageConfigStatus() {

@@ -54,8 +54,8 @@ before(async () => {
   agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-titles-"));
   process.env.PI_WEB_UI_TEST = "1";
   process.env.PI_WEB_UI_AGENT_DIR = agentDir;
-  titles = await import("../titles.mjs");
-  store = await import("../session-store.mjs");
+  titles = await import("../src/chat/titles.mjs");
+  store = await import("../src/storage/preferences.mjs");
 });
 
 after(async () => {

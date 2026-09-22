@@ -355,9 +355,6 @@ function newChatState(key = null) {
     responseActivityLabel: null,
     pendingAssistantMeta: null,
     started: false,
-    sidebarTitle: "",
-    sidebarModified: null,
-    sidebarPending: false,
     tasks: new Map(),
     agentTask: null,
   };
@@ -368,8 +365,9 @@ function sameProject(left, right) {
 }
 
 export function createUiState({ chatCache = createChatCache() } = {}) {
-  if (!chatCache || typeof chatCache.ensure !== "function" || typeof chatCache.rekey !== "function") {
-    invalid("chat cache", "must provide ensure and rekey functions");
+  if (!chatCache || typeof chatCache.ensure !== "function" || typeof chatCache.rekey !== "function"
+      || typeof chatCache.persistedDrafts !== "function" || typeof chatCache.confirmDrafts !== "function") {
+    invalid("chat cache", "must provide draft ownership and rekey functions");
   }
   const global = {
     totals: null,
@@ -411,6 +409,13 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
   function chatViewState(key) {
     string(key, "chat key");
     return chatCache.ensure(key);
+  }
+
+  for (const { key, draft, metadata } of chatCache.persistedDrafts()) {
+    if (!metadata || (!draft.trim() && !metadata.pending)) continue;
+    const restored = chatState(key);
+    restored.cwd = metadata.cwd;
+    restored.started = metadata.pending;
   }
 
   function rekeyChat(oldKey, newKey) {
@@ -580,10 +585,10 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
       const target = chatState(item.path);
       target.cwd = item.cwd;
       target.started ||= item.messageCount > 0;
-      target.sidebarPending = false;
       if (item.provider && item.model) target.model = { provider: item.provider, id: item.model };
       if (item.cwd) registerProject(item.cwd);
     }
+    chatCache.confirmDrafts(payload.sessions.map((item) => item.path));
     return payload;
   }
 

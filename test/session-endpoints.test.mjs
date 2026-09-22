@@ -7,6 +7,7 @@
 // existed then still has its test here, under the route that replaced it.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -102,7 +103,7 @@ before(async () => {
   const { startServer } = await import("../server.mjs");
   server = await startServer({ port: 0 });
   origin = server.url.replace(/\/$/, "");
-  bootContext = (await import("../contexts.mjs")).getBootContext();
+  bootContext = (await import("../src/chat/contexts.mjs")).getBootContext();
 });
 
 after(async () => {
@@ -185,7 +186,7 @@ describe("the agent bootstrap routes", () => {
   });
 
   test("the catalog returns the contents pi loaded for a project", async () => {
-    const { createContext } = await import("../contexts.mjs");
+    const { createContext } = await import("../src/chat/contexts.mjs");
     const projectDir = path.join(agentDir, "catalog-project");
     const projectAgents = path.join(projectDir, "AGENTS.md");
     const globalSystem = path.join(agentDir, "SYSTEM.md");
@@ -235,7 +236,7 @@ describe("the agent bootstrap routes", () => {
   });
 
   test("a file saved outside the UI after draft creation reaches its first prompt", async () => {
-    const { createContext, getModelRuntime } = await import("../contexts.mjs");
+    const { createContext, getModelRuntime } = await import("../src/chat/contexts.mjs");
     const projectDir = path.join(agentDir, "bootstrap-project");
     await mkdir(projectDir, { recursive: true });
     const runtime = getModelRuntime();
@@ -274,7 +275,7 @@ describe("the agent bootstrap routes", () => {
 });
 
 test("live usage includes the just-persisted SDK response without a state refresh", async () => {
-  const { createContext, getModelRuntime } = await import("../contexts.mjs");
+  const { createContext, getModelRuntime } = await import("../src/chat/contexts.mjs");
   const runtime = getModelRuntime();
   const answer = {
     role: "assistant", provider: "review-fixture", model: "metrics", api: "review-fixture",
@@ -318,6 +319,15 @@ async function getJson(pathname) {
   return { status: res.status, body: await res.json() };
 }
 
+function runGit(cwd, args) {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd, windowsHide: true }, (error) => {
+      if (error) reject(error);
+      else resolve(undefined);
+    });
+  });
+}
+
 // A chat is identified by its session file, so the id travels url-encoded.
 const sessionUrl = (id, suffix) => `/api/sessions/${encodeURIComponent(id)}/${suffix}`;
 
@@ -357,6 +367,57 @@ describe("the agent dir the pi library resolves", () => {
     const config = await import(pathToFileURL(configPath).href);
     assert.equal(config.ENV_AGENT_DIR, "PI_CODING_AGENT_DIR");
     assert.equal(path.resolve(config.getAgentDir()), path.resolve(agentDir));
+  });
+});
+
+describe("the Git routes", () => {
+  test("status and branch switching keep their HTTP payloads and errors", async () => {
+    const { createContext } = await import("../src/chat/contexts.mjs");
+    const projectDir = path.join(agentDir, "git route fixture");
+    await mkdir(projectDir, { recursive: true });
+    await runGit(projectDir, ["init", "--initial-branch=main"]);
+    await runGit(projectDir, ["config", "user.name", "Git route fixture"]);
+    await runGit(projectDir, ["config", "user.email", "git-route-fixture@example.invalid"]);
+    await writeFile(path.join(projectDir, "tracked.txt"), "fixture\n");
+    await runGit(projectDir, ["add", "tracked.txt"]);
+    await runGit(projectDir, ["commit", "-m", "initial fixture"]);
+    await runGit(projectDir, ["branch", "feature"]);
+    const ctx = await createContext({ cwd: projectDir, mode: "new" });
+    const key = encodeURIComponent(ctx.key);
+
+    const status = await getJson(`/api/git?s=${key}&force=1`);
+    assert.equal(status.status, 200);
+    assert.deepEqual(status.body, {
+      repo: true,
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      staged: 0,
+      unstaged: 0,
+      untracked: 0,
+      changed: 0,
+      branches: ["feature", "main"],
+    });
+
+    const missing = await postJson(`/api/git/branch?s=${key}`, {});
+    assert.equal(missing.status, 400);
+    assert.equal(missing.body.error.code, "invalid_branch");
+    const unknown = await postJson(`/api/git/branch?s=${key}`, { branch: "missing" });
+    assert.equal(unknown.status, 409);
+    assert.equal(unknown.body.error.code, "branch_switch_failed");
+
+    const switched = await postJson(`/api/git/branch?s=${key}`, { branch: "feature" });
+    assert.equal(switched.status, 200);
+    assert.deepEqual(switched.body, {
+      repo: true,
+      branch: "feature",
+      ahead: 0,
+      behind: 0,
+      staged: 0,
+      unstaged: 0,
+      untracked: 0,
+      changed: 0,
+    });
   });
 });
 
@@ -551,7 +612,7 @@ describe("the transcript route", () => {
   });
 
   test("OpenAI streaming reasoning uses the provider-agnostic SSE shape", async () => {
-    const { assistantDeltaEvent } = await import("../contexts.mjs");
+    const { assistantDeltaEvent } = await import("../src/chat/contexts.mjs");
     const openAiPartial = { provider: "openai-codex", model: "gpt-fixture" };
     assert.deepEqual(assistantDeltaEvent({
       type: "message_update",
@@ -564,7 +625,7 @@ describe("the transcript route", () => {
   });
 
   test("assistant completion metadata reports its timestamp", async () => {
-    const { assistantMessageMeta } = await import("../contexts.mjs");
+    const { assistantMessageMeta } = await import("../src/chat/contexts.mjs");
     assert.deepEqual(assistantMessageMeta(66_000), {
       kind: "message-meta",
       role: "assistant",
@@ -592,7 +653,7 @@ describe("canonical chat metrics", () => {
   });
 
   test("per-model rows plus Session work equal canonical totals after compaction", async () => {
-    const { sessionMetrics } = await import("../contexts.mjs");
+    const { sessionMetrics } = await import("../src/chat/contexts.mjs");
     const firstUsage = {
       input: 5, output: 3, cacheRead: 10, cacheWrite: 2,
       cost: { total: 0.1 },
@@ -645,7 +706,7 @@ describe("canonical chat metrics", () => {
   });
 
   test("an empty session keeps zero totals and a real zero-percent context", async () => {
-    const { sessionMetrics } = await import("../contexts.mjs");
+    const { sessionMetrics } = await import("../src/chat/contexts.mjs");
     const metrics = sessionMetrics({
       getSessionStats: () => ({
         assistantMessages: 0,

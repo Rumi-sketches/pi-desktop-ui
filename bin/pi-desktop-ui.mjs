@@ -5,10 +5,10 @@
 
 import { spawn } from "node:child_process";
 import { runCli } from "../server.mjs";
-import { DEFAULT_PORT } from "../network.mjs";
+import { DEFAULT_PORT } from "../src/http/network.mjs";
 import { PRODUCT_ID } from "../product.mjs";
 
-// One source of truth for the default port: network.mjs owns it.
+// One source of truth for the default port: src/http/network.mjs owns it.
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
 const BROWSER_HOST = "localhost";
 

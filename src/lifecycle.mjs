@@ -14,10 +14,10 @@
  * take — detached child, `server.log`, two processes fighting over the port —
  * was a lot of machinery for the secondary way of running the app.
  */
-import { PRODUCT_ID } from "./product.mjs";
-import { jsonBody, send, sendError } from "./http.mjs";
-import { disposeAllContexts, runningContextKeys } from "./contexts.mjs";
-import { closeAllTerminals, countLiveTerminals } from "./terminals.mjs";
+import { PRODUCT_ID } from "../product.mjs";
+import { jsonBody, send, sendError } from "./http/http.mjs";
+import { disposeAllContexts, runningContextKeys } from "./chat/contexts.mjs";
+import { closeAllTerminals, countLiveTerminals } from "./terminals/terminals.mjs";
 
 // The listening socket, handed over by startServer() once it is bound.
 let server = null;

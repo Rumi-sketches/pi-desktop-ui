@@ -5,7 +5,7 @@ import {
   createInteractiveFormTool,
   normalizeFormRequest,
   normalizeFormResponse,
-} from "../interactive-forms.mjs";
+} from "../src/chat/interactive-forms.mjs";
 
 const form = () => normalizeFormRequest({
   title: "Project details",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
-import { resolveDir } from "../session-store.mjs";
+import { resolveDir } from "../src/storage/agent-paths.mjs";
 
 // A directory whose name carries the metacharacters a shell would reinterpret:
 // backtick (PowerShell escape), `$` (PowerShell expansion), `%` (cmd expansion)

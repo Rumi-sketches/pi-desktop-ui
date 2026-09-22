@@ -47,24 +47,27 @@ No external service is required. **Do not open a pull request with a red verify.
 |---|---|
 | `product.mjs` | The two names of the product: `PRODUCT_ID` (logs, filenames) and `PRODUCT_NAME` (window title, UI text). |
 | `server.mjs` | Boot, the route table, and the wiring between the modules below. |
-| `http.mjs` | Request/response helpers, body parsing, the router, the static assets. |
-| `session-store.mjs` | What is persisted under `~/.pi/agent`, and reading the session log. |
-| `agent-bootstrap.mjs` | Safe discovery and editing of global and project files that shape pi's initial prompt. |
-| `interactive-forms.mjs` | Validation and lifecycle of forms opened by the agent's `request_form` tool. |
-| `prompt-queue.mjs` | Cancellable steering and follow-up messages for a running chat. |
-| `contexts.mjs` | One agent context per open chat, plus its SSE event stream. |
-| `analytics.mjs` | Cost/token history aggregated from the session log. |
-| `network.mjs` | The listening address and the LAN access token. |
-| `lifecycle.mjs` | Shutdown: signals, `/api/shutdown`, `/api/restart`. |
-| `api-chat.mjs` | The endpoints of a chat (scoped to the tab's context). |
-| `api-settings.mjs` | The endpoints of the settings and analytics screens. |
-| `access-control.mjs` | Pure functions deciding who may reach the server (loopback, LAN token, CSRF). |
-| `usage-tracker.mjs` | Polls claude.ai / kimi.com account limits. |
-| `platform.mjs` | Native helpers (folder picker, file manager, terminal) per OS. |
+| `src/http/` | Request and response helpers, the router, static assets, access control and LAN state. |
+| `src/chat/` | Chat handlers, agent contexts, prompt queues, interactive forms, issue tracking and titles. |
+| `src/settings/` | Machine settings, agent-input files, analytics and provider usage. |
+| `src/terminals/` | Loopback-only terminal handlers and the server-side PTY registry. |
+| `src/storage/` | Agent paths, JSON stores, UI preferences and session logs. |
+| `src/platform/` | Native helpers and the PowerShell folder picker. |
+| `src/project/git.mjs` | Git status, branch listing and branch switching for a project directory. |
+| `src/lifecycle.mjs` | Shutdown and restart handling for signals and API requests. |
 | `public/index.html` | The frontend markup. |
-| `public/app.js` | The frontend logic, loaded as an ES module. |
+| `public/app.js` | Frontend wiring and the chat application controller. |
+| `public/chat-view.js` | Transcript rendering, tool cards, interactive forms, snapshots and scroll state. |
+| `public/settings-view.js` | Settings rendering, internal navigation, analytics and save interactions. |
+| `public/terminal-view.js` | xterm instances, streams, terminal panels and terminal actions. |
+| `public/agent-inputs.js` | Agent-input editors shared by Settings and the project menu. |
+| `public/chat-cache.js` | Cached chat resources, drafts, metadata and rekey transitions. |
+| `public/draft-storage.js` | Browser persistence for draft text and metadata. |
+| `public/navigation.js` | Selection and transitions between chats, settings and terminals. |
+| `public/transport.js` | Browser requests and SSE transport. |
+| `public/ui-state.js` | Shared state helpers for activity and navigation behavior. |
+| `public/provider-icons.js` | Provider icon metadata and neutral fallbacks. |
 | `public/app.css` | The frontend styles. |
-| `public/ui-state.js` | Small, testable state helpers shared by activity and navigation behavior. |
 | `bin/pi-desktop-ui.mjs` | The `npm start` launcher: boots the server and opens the browser. |
 | `jsconfig.json` | Type-check configuration (`checkJs`); lists the files `tsc` reads. |
 | `scripts/verify.mjs` | The verification gate described above. |
@@ -80,17 +83,19 @@ No external service is required. **Do not open a pull request with a red verify.
   `pi-web-ui`. The exception is the **persisted** names — the `web-ui-*.json` stores, the
   `pi_web_ui_access` cookie, `PI_WEB_UI_AGENT_DIR` and `PI_WEB_UI_TEST` — which are on disk and in
   live installations: they keep the old spelling forever.
-- **`public/app.js` is a known monolith.** The frontend logic deliberately lives in a single
-  file. Do not try to split it up: keep PRs against it **small and focused**, one concern per
-  change, so diffs stay reviewable.
+- **Split frontend code by owner.** `app.js` wires navigation, transport and the extracted views.
+  Settings owns its DOM and analytics in `settings-view.js`; both Settings and the project menu use
+  `agent-inputs.js` for agent-input editors. Keep each change focused, and do not add a second state
+  owner or a wrapper that copies another module's API.
 - **Keep frequent renderer work bounded.** Do not parse a growing transcript, rebuild the full
   sidebar, write browser storage or force layout for every token or keystroke. Batch streaming
   updates, update the affected row, and defer storage and layout work. Add a regression test for
   every hot path you change.
-- **The split is by concern, not by endpoint.** A new handler belongs to `api-chat.mjs` if it
-  answers about the tab's chat and to `api-settings.mjs` if it answers about the machine; the
-  rules it needs go in the module that owns that state (`contexts.mjs`, `session-store.mjs`,
-  `network.mjs`), never in `server.mjs`, which stays boot + route table + wiring.
+- **The split is by concern, not by endpoint.** A new handler belongs to `src/chat/api-chat.mjs`
+  if it answers about the tab's chat and to `src/settings/api-settings.mjs` if it answers about
+  the machine. Put its rules in the module that owns that state: `src/chat/contexts.mjs`,
+  `src/storage/session-store.mjs` or `src/http/network.mjs`. Keep `server.mjs` limited to boot,
+  route tables and wiring.
 - **New endpoints go in the route table.** `server.mjs` declares every route as a
   `[method, path, handler]` triple in `ROUTES` (`PARAM_ROUTES` for a path with a `:name`
   segment, `PREFIX_ROUTES` for a whole sub-tree); the handler takes the request bag
@@ -114,8 +119,9 @@ No external service is required. **Do not open a pull request with a red verify.
   typedefs next to the handler that builds them: extend them when you add a field.
 - **No inline `<script>` or `<style>` in `index.html`.** The page ships a CSP with
   `script-src 'self'`: anything inline is blocked by the browser, silently. Styles go in
-  `app.css`, logic in `app.js`, both served from the `PAGE_ASSETS` whitelist in `http.mjs`.
-- **Security-sensitive code** (`access-control.mjs`, the request guard, secret redaction, the
+  `app.css`, logic in the browser modules under `public/`, all served from the `PAGE_ASSETS`
+  whitelist in `src/http/http.mjs`.
+- **Security-sensitive code** (`src/http/access-control.mjs`, the request guard, secret redaction, the
   DOMPurify/CSP pipeline) must keep its existing tests green and gain new ones when behavior
   changes. Read the "Threat model" section of the README first.
 - **No new runtime dependencies** without discussion. Frontend libraries are vendorized and

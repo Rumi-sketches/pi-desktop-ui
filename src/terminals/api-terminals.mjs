@@ -14,10 +14,10 @@
  * Transport: SSE for the output (scrollback first, then live), plain POSTs for
  * input and resize. No WebSocket, so the page stays a page.
  */
-import { isLoopbackPeer } from "./access-control.mjs";
-import { SSE_PING, SSE_PING_MS, jsonBody, openSseStream, send, sendError, sseSend, sseWrite } from "./http.mjs";
-import { broadcastGlobal, useContext } from "./contexts.mjs";
-import { openFolder } from "./platform.mjs";
+import { isLoopbackPeer } from "../http/access-control.mjs";
+import { SSE_PING, SSE_PING_MS, jsonBody, openSseStream, send, sendError, sseSend, sseWrite } from "../http/http.mjs";
+import { broadcastGlobal, useContext } from "../chat/contexts.mjs";
+import { openFolder } from "../platform/platform.mjs";
 import {
   closeTerminal,
   createTerminal,

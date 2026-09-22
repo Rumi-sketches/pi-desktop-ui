@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PAGE_ROUTES, vendorFilePath } from "../http.mjs";
+import { PAGE_ROUTES, vendorFilePath } from "../src/http/http.mjs";
 
 const VENDOR_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "node_modules");
 

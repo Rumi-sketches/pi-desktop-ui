@@ -10,7 +10,7 @@
 // the `web-ui-*.json` stores, the `pi_web_ui_access` cookie and the
 // `PI_WEB_UI_AGENT_DIR` / `PI_WEB_UI_TEST` env vars. They are on disk and in
 // live installations; changing them would silently orphan someone's settings.
-// See the comment in session-store.mjs.
+// See the compatibility note in src/storage/preferences.mjs.
 
 export const PRODUCT_ID = "pi-desktop-ui";
 export const PRODUCT_NAME = "pi desktop ui";

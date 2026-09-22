@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { isAgentDirPath } from "../session-store.mjs";
-import { projectFileChanges, projectFileDiff } from "../contexts.mjs";
+import { isAgentDirPath } from "../src/storage/agent-paths.mjs";
+import { projectFileChanges, projectFileDiff } from "../src/chat/contexts.mjs";
 
 // A stand-in for ~/.pi/agent: absolute, so the predicate sees the same shape it
 // sees in production, without depending on the machine's real home.

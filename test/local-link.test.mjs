@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resolveLocalLink } from '../api-chat.mjs';
+import { resolveLocalLink } from '../src/chat/api-chat.mjs';
 
 test('local links resolve relative to the chat folder and discard source locations', () => {
   const cwd = path.resolve('fixture-project');

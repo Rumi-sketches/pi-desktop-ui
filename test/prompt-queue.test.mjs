@@ -6,7 +6,7 @@ import {
   createPromptQueueController,
   normalizePromptInput,
   queuedExtensionCommand,
-} from "../prompt-queue.mjs";
+} from "../src/chat/prompt-queue.mjs";
 
 function ids() {
   let value = 0;

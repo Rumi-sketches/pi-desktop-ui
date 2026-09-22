@@ -258,14 +258,20 @@ async function checkHtmlCsp(port) {
   }
 }
 
-// The page is useless without its two assets, and a wrong Content-Type is fatal
-// under nosniff: the browser refuses the module and the UI stays blank.
+// The page is useless without its modules and stylesheet. A wrong Content-Type
+// is fatal under nosniff: the browser refuses the module and the UI stays blank.
 const PAGE_ASSET_TYPES = {
   "/app.js": "text/javascript; charset=utf-8",
+  "/chat-view.js": "text/javascript; charset=utf-8",
+  "/settings-view.js": "text/javascript; charset=utf-8",
+  "/terminal-view.js": "text/javascript; charset=utf-8",
+  "/agent-inputs.js": "text/javascript; charset=utf-8",
   "/ui-state.js": "text/javascript; charset=utf-8",
   "/chat-cache.js": "text/javascript; charset=utf-8",
+  "/draft-storage.js": "text/javascript; charset=utf-8",
   "/navigation.js": "text/javascript; charset=utf-8",
   "/transport.js": "text/javascript; charset=utf-8",
+  "/provider-icons.js": "text/javascript; charset=utf-8",
   "/app.css": "text/css; charset=utf-8",
 };
 
@@ -276,6 +282,14 @@ async function checkPageAssets(port) {
     const actual = res.headers.get("content-type");
     if (actual !== type) {
       throw new Error(`GET ${pathname}: Content-Type is "${actual}", expected "${type}"`);
+    }
+    if (!pathname.endsWith(".js")) continue;
+    const source = await res.text();
+    for (const [, specifier] of source.matchAll(/\bfrom\s+["'](\.\/[^"']+)["']/g)) {
+      const dependency = new URL(specifier, `http://page.local${pathname}`).pathname;
+      if (!Object.hasOwn(PAGE_ASSET_TYPES, dependency)) {
+        throw new Error(`${pathname} imports ${specifier}, which is absent from the page asset smoke test`);
+      }
     }
   }
 }
@@ -441,7 +455,7 @@ async function smokeTest() {
 // must be refused at save time. Run in a child process so the temporary agent
 // dir is picked up by usage-tracker's module-level constant.
 async function checkOrgIdTraversalRejected() {
-  const trackerUrl = pathToFileURL(path.join(ROOT, "usage-tracker.mjs")).href;
+  const trackerUrl = pathToFileURL(path.join(ROOT, "src", "settings", "usage-tracker.mjs")).href;
   const script = `
     const { saveUsageConfig } = await import(${JSON.stringify(trackerUrl)});
     try {

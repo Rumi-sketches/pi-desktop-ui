@@ -6,6 +6,7 @@ import { PROVIDER_ICONS, providerIcon, providerIconHtml } from '../public/provid
 
 const indexSource = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+const settingsSource = await readFile(new URL('../public/settings-view.js', import.meta.url), 'utf8');
 const cssSource = await readFile(new URL('../public/app.css', import.meta.url), 'utf8');
 
 test('every provider record documents an official source and usage constraint', () => {
@@ -76,7 +77,7 @@ test('all UI surfaces import the one map and the browser preloads its served mod
   assert.match(appSource, /import \{ providerIconHtml \} from '.\/provider-icons\.js';/);
   assert.doesNotMatch(appSource, /const LOGOS\s*=/);
   assert.match(appSource, /h\.innerHTML = providerIconHtml\(s\.provider, s\.model\)/);
-  assert.match(appSource, /checkbox\(modelPattern\(m\).*m\.provider, m\.id\)/);
+  assert.match(settingsSource, /checkbox\(modelPattern\(m\).*m\.provider, m\.id\)/);
   assert.match(appSource, /classList\.add\('icon-failed'\)/);
   assert.match(cssSource, /\.logo\.icon-failed \.logo-neutral/);
   assert.match(indexSource, /<link rel="modulepreload" href="\/provider-icons\.js">/);

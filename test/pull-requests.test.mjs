@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createIssueTracker, createPullRequestTracker } from "../pull-requests.mjs";
+import { createIssueTracker, createPullRequestTracker } from "../src/chat/pull-requests.mjs";
 
 const record = (message) => ({ type: "message", message });
 const call = (id, command) => record({

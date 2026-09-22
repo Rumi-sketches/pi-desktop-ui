@@ -1,5 +1,5 @@
 // Minimal lint gate: ESLint recommended rules only, on the server-side sources
-// and on the browser source of the page (public/app.js).
+// and on the browser modules under public/.
 // Deliberately no stylistic rules and no formatter — see CONTRIBUTING.md.
 import js from "@eslint/js";
 import globals from "globals";
@@ -36,9 +36,9 @@ export default [
       globals: { ...globals.node },
     },
   },
-  // public/app.js is the only browser source: it runs in the page, next to the
-  // vendored libraries. Those are reached through the `win` view of the global
-  // object, never as bare identifiers, so no extra global is declared here.
+  // Browser modules run in the page next to the vendored libraries. app.js
+  // reaches those libraries through its `win` view of the global object, never
+  // as bare identifiers, so no extra global is declared here.
   {
     files: ["public/*.js"],
     languageOptions: { globals: { ...globals.browser } },

@@ -10,7 +10,7 @@ import {
   provesSameOrigin,
   classifyRequest,
   ACCESS_COOKIE,
-} from "../access-control.mjs";
+} from "../src/http/access-control.mjs";
 
 const PORT = 3141;
 const TOKEN = "s3cret-token";

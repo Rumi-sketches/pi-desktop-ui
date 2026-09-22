@@ -11,29 +11,33 @@
 import path from "node:path";
 import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "./platform.mjs";
-import { terminateTerminalsForChat } from "./terminals.mjs";
-import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "./http.mjs";
+import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "../platform/platform.mjs";
+import { terminateTerminalsForChat } from "../terminals/terminals.mjs";
+import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "../http/http.mjs";
 import { titleFor } from "./titles.mjs";
 import {
   SESSIONS_DIR,
-  SESSION_STATUS_INPUTS,
+  isInsideDir,
+  resolveDir,
+  resolveFile,
+} from "../storage/agent-paths.mjs";
+import {
   forgetCwd,
   isArchivingEnabled,
-  isFavorite,
   isFullSearchEnabled,
-  isInsideDir,
-  listFavorites,
-  readSessionRecords,
   recentCwdList,
   redactSecrets,
   rememberCwd,
-  resolveDir,
-  resolveFile,
+} from "../storage/preferences.mjs";
+import {
+  SESSION_STATUS_INPUTS,
+  isFavorite,
+  listFavorites,
+  readSessionRecords,
   sessionStatusOf,
   setFavorite,
   setSessionStatus,
-} from "./session-store.mjs";
+} from "../storage/session-store.mjs";
 import {
   attachEventClient,
   broadcast,
@@ -44,9 +48,6 @@ import {
   extractToolText,
   filesForProject,
   diffForProjectFile,
-  gitStatus,
-  gitBranches,
-  switchGitBranch,
   pickerModels,
   prepareFirstPrompt,
   refreshSessionMetrics,
@@ -63,9 +64,10 @@ import {
   totals,
   useContext,
 } from "./contexts.mjs";
-import { scanSessionFile } from "./analytics.mjs";
+import { scanSessionFile } from "../settings/analytics.mjs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { PromptQueueError, normalizePromptInput, queuedExtensionCommand } from "./prompt-queue.mjs";
+import { gitBranches, gitStatus, switchGitBranch } from "../project/git.mjs";
 
 // ---- the event stream ------------------------------------------------------
 export async function handleEvents({ req, res, sessionKey }) {

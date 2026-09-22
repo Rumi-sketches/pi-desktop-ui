@@ -1,17 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CHAT_CACHE_LIMIT, createChatCache } from "../public/chat-cache.js";
+import { createDraftStorage } from "../public/draft-storage.js";
+
+function memoryDraftStorage(drafts = {}, metadata = {}) {
+  const values = new Map([
+    ["piComposerDrafts", JSON.stringify(drafts)],
+    ["piComposerDraftMeta", JSON.stringify(metadata)],
+  ]);
+  return createDraftStorage({
+    storage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    },
+    setTimer: () => 1,
+    clearTimer: () => {},
+  });
+}
 
 const CHAT_A = "C:\\sessions\\alpha.jsonl";
 const CHAT_B = "draft:C:\\work\\beta";
 
 test("drafts and attachments are isolated by opaque session key", () => {
-  const persisted = new Map();
-  const cache = createChatCache({
-    loadDraft: (key) => persisted.get(key) ?? "",
-    saveDraft: (key, draft) => persisted.set(key, draft),
-    removeDraft: (key) => persisted.delete(key),
-  });
+  const draftStorage = memoryDraftStorage();
+  const cache = createChatCache({ draftStorage });
   const photo = { kind: "image", data: "base64-only-in-memory" };
 
   cache.setDraft(CHAT_A, "alpha prompt");
@@ -22,23 +34,31 @@ test("drafts and attachments are isolated by opaque session key", () => {
   assert.deepEqual(cache.ensure(CHAT_A).composer.attachments, [photo]);
   assert.equal(cache.ensure(CHAT_B).composer.draft, "beta prompt");
   assert.deepEqual(cache.ensure(CHAT_B).composer.attachments, []);
-  assert.deepEqual(Object.fromEntries(persisted), {
-    [CHAT_A]: "alpha prompt",
-    [CHAT_B]: "beta prompt",
-  });
-  assert.equal(JSON.stringify(Object.fromEntries(persisted)).includes("base64-only-in-memory"), false);
+  assert.equal(draftStorage.get(CHAT_A).draft, "alpha prompt");
+  assert.equal(draftStorage.get(CHAT_B).draft, "beta prompt");
+  assert.equal(JSON.stringify(draftStorage.entries()).includes("base64-only-in-memory"), false);
 });
 
-test("view snapshots and scroll positions stay with the visited chat", () => {
+test("rapid A to B to A switching keeps each chat composer and view state", () => {
   const cache = createChatCache();
   const snapshotA = { dom: "alpha" };
   const snapshotB = { dom: "beta" };
+  const attachmentA = { kind: "file", text: "alpha" };
+  const attachmentB = { kind: "file", text: "beta" };
 
+  cache.setDraft(CHAT_A, "alpha draft");
+  cache.setAttachments(CHAT_A, [attachmentA]);
   cache.saveView(CHAT_A, { scrollTop: 125, snapshot: snapshotA });
+  cache.setDraft(CHAT_B, "beta draft");
+  cache.setAttachments(CHAT_B, [attachmentB]);
   cache.saveView(CHAT_B, { scrollTop: 9, snapshot: snapshotB });
 
+  assert.equal(cache.ensure(CHAT_A).composer.draft, "alpha draft");
+  assert.deepEqual(cache.ensure(CHAT_A).composer.attachments, [attachmentA]);
   assert.equal(cache.ensure(CHAT_A).view.scrollTop, 125);
   assert.equal(cache.takeSnapshot(CHAT_A), snapshotA);
+  assert.equal(cache.ensure(CHAT_B).composer.draft, "beta draft");
+  assert.deepEqual(cache.ensure(CHAT_B).composer.attachments, [attachmentB]);
   assert.equal(cache.ensure(CHAT_B).view.scrollTop, 9);
   assert.equal(cache.takeSnapshot(CHAT_B), snapshotB);
   assert.equal(cache.peek(CHAT_A).view.snapshot, null);
@@ -109,12 +129,8 @@ test("eviction explicitly disposes DOM snapshots, listeners, timers and cleanup 
 });
 
 test("rekey moves the same transient state and persisted draft to the new opaque key", () => {
-  const persisted = new Map([[CHAT_B, "keep this draft"]]);
-  const cache = createChatCache({
-    loadDraft: (key) => persisted.get(key) ?? "",
-    saveDraft: (key, draft) => persisted.set(key, draft),
-    removeDraft: (key) => persisted.delete(key),
-  });
+  const draftStorage = memoryDraftStorage({ [CHAT_B]: "keep this draft" });
+  const cache = createChatCache({ draftStorage });
   const attachment = { kind: "file", text: "not persisted" };
   const before = cache.ensure(CHAT_B);
   cache.setAttachments(CHAT_B, [attachment]);
@@ -131,6 +147,24 @@ test("rekey moves the same transient state and persisted draft to the new opaque
   assert.deepEqual(after.composer.attachments, [attachment]);
   assert.equal(after.view.scrollTop, 33);
   assert.deepEqual(after.view.snapshot, { dom: "draft" });
-  assert.equal(persisted.has(CHAT_B), false);
-  assert.equal(persisted.get(nextKey), "keep this draft");
+  assert.equal(draftStorage.get(CHAT_B).draft, "");
+  assert.equal(draftStorage.get(nextKey).draft, "keep this draft");
+});
+
+test("reload restores text and metadata but never attachment payloads", () => {
+  const draftStorage = memoryDraftStorage();
+  const cache = createChatCache({ draftStorage });
+  const metadata = {
+    cwd: "C:\\work\\alpha",
+    title: "Alpha draft",
+    modified: "2026-09-22T12:00:00.000Z",
+    pending: false,
+  };
+  cache.setDraft(CHAT_A, "alpha", { metadata });
+  cache.setAttachments(CHAT_A, [{ kind: "image", data: "secret-image" }]);
+  cache.flushDrafts();
+
+  const restored = createChatCache({ draftStorage });
+  assert.deepEqual(restored.draftRecord(CHAT_A), { draft: "alpha", metadata });
+  assert.deepEqual(restored.ensure(CHAT_A).composer.attachments, []);
 });

@@ -33,7 +33,7 @@ before(async () => {
 
 after(async () => {
   // Belt and braces: a PTY left alive keeps the event loop up forever.
-  const { closeAllTerminals } = await import("../terminals.mjs");
+  const { closeAllTerminals } = await import("../src/terminals/terminals.mjs");
   closeAllTerminals();
   await server?.stop();
   await rm(agentDir, { recursive: true, force: true });
@@ -142,8 +142,8 @@ describe("terminal endpoints", () => {
   });
 
   test("open-folder resolves the folder from the terminal resource", { skip }, async (t) => {
-    const { createTerminal, closeTerminal } = await import("../terminals.mjs");
-    const { handleOpenTerminalFolder } = await import("../api-terminals.mjs");
+    const { createTerminal, closeTerminal } = await import("../src/terminals/terminals.mjs");
+    const { handleOpenTerminalFolder } = await import("../src/terminals/api-terminals.mjs");
     const terminal = createTerminal({ kind: "shell", cwd: os.tmpdir() });
     t.after(() => closeTerminal(terminal.id));
     let opened = null;
@@ -186,7 +186,7 @@ describe("terminal endpoints", () => {
   });
 
   test("restart failure has its own observable error and does not report success", { skip }, async () => {
-    const { handleRestartTerminal } = await import("../api-terminals.mjs");
+    const { handleRestartTerminal } = await import("../src/terminals/api-terminals.mjs");
     let status = 0;
     /** @type {any} */
     let payload = {};
@@ -465,7 +465,7 @@ describe("terminals are loopback only", () => {
   ];
 
   test("every handler answers 403 to a LAN peer", async () => {
-    const api = await import("../api-terminals.mjs");
+    const api = await import("../src/terminals/api-terminals.mjs");
     for (const [name, method] of handlerNames) {
       const sent = { code: null, payload: null };
       const req = {
@@ -497,7 +497,7 @@ describe("terminals are loopback only", () => {
   });
 
   test("a loopback peer is not refused by the same guard", async () => {
-    const { handleListTerminals } = await import("../api-terminals.mjs");
+    const { handleListTerminals } = await import("../src/terminals/api-terminals.mjs");
     const sent = { code: null };
     const req = { method: "GET", headers: { host: "127.0.0.1:3777" }, socket: { remoteAddress: "::ffff:127.0.0.1" } };
     const res = {
@@ -523,7 +523,7 @@ describe("stopping the server", () => {
 
     await server.stop();
 
-    const { listTerminals } = await import("../terminals.mjs");
+    const { listTerminals } = await import("../src/terminals/terminals.mjs");
     assert.deepEqual(listTerminals(), [], "no terminal may outlive the server that owns it");
   });
 });

@@ -16,9 +16,10 @@
 import os from "node:os";
 import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { PRODUCT_ID } from "./product.mjs";
+import { PRODUCT_ID } from "../../product.mjs";
 import { ACCESS_COOKIE, ACCESS_PARAM, isLoopbackPeer } from "./access-control.mjs";
-import { AGENT_DIR, jsonFile } from "./session-store.mjs";
+import { AGENT_DIR } from "../storage/agent-paths.mjs";
+import { jsonFile, mutationQueue } from "../storage/json-store.mjs";
 import { send } from "./http.mjs";
 
 export const DEFAULT_PORT = 3777;
@@ -56,12 +57,7 @@ const networkStore = jsonFile(NETWORK_PATH, {
   dirMode: AGENT_DIR_MODE,
 });
 let network = defaultNetwork();
-let networkMutation = Promise.resolve();
-function mutateNetwork(operation) {
-  const result = networkMutation.then(operation);
-  networkMutation = result.catch(() => {});
-  return result;
-}
+const mutateNetwork = mutationQueue();
 export async function loadNetwork() {
   network = await networkStore.load();
 }

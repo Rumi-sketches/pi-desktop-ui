@@ -61,6 +61,15 @@ describe("method not allowed", () => {
     assert.equal(allow, "GET, HEAD, POST");
   });
 
+  test("the Git routes retain their declared methods", async () => {
+    const statusRoute = await request("POST", "/api/git");
+    assert.equal(statusRoute.status, 405);
+    assert.equal(statusRoute.allow, "GET, HEAD");
+    const branchRoute = await request("GET", "/api/git/branch");
+    assert.equal(branchRoute.status, 405);
+    assert.equal(branchRoute.allow, "POST");
+  });
+
   test("GET on a POST-only path is a 405, and nothing happens", async () => {
     const { status, allow } = await request("GET", "/api/shutdown");
     assert.equal(status, 405);
