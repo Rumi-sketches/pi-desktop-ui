@@ -285,11 +285,23 @@
           <span class="vsep"></span>
 
           <div class="dd up" id="thinkDd">
-            <button type="button" class="cmeta" id="thinkBtn" title="Reasoning effort (only the levels this model supports)">
-              <span id="thinkName">reasoning</span>
+            <button type="button" class="cmeta effortToggle" id="thinkBtn" title="Reasoning effort">
+              <span class="effortSwatch" id="thinkSwatch" aria-hidden="true"></span>
+              <span id="thinkName">off</span>
               <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="dd-menu" id="thinkMenu"></div>
+            <div class="dd-menu effortMenu" id="thinkMenu">
+              <div class="effortHead">
+                <span class="effortEyebrow">Reasoning effort</span>
+                <strong id="thinkPreviewName">Off</strong>
+              </div>
+              <p class="effortReadout" id="thinkReadout">No extended reasoning</p>
+              <div class="effortControl" id="thinkPicker">
+                <input type="range" id="thinkRange" min="0" max="0" step="1" value="0" aria-label="Reasoning effort">
+                <div class="effortStops" id="thinkStops" aria-hidden="true"></div>
+              </div>
+              <div class="effortEnds" aria-hidden="true"><span>Focused</span><span>Exploratory</span></div>
+            </div>
           </div>
 
           <span class="vsep"></span>

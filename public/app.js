@@ -434,7 +434,7 @@ try { sessionFilter = { ...sessionFilter, ...JSON.parse(localStorage.getItem('pi
 let sessionSort = localStorage.getItem('piSortBy') || 'recent';
 let sessionGroup = localStorage.getItem('piGroupBy') || 'none';
 const modelDd = setupDd('modelDd', 'modelBtn');
-const thinkDd = setupDd('thinkDd', 'thinkBtn');
+setupDd('thinkDd', 'thinkBtn');
 const cwdDd = setupDd('cwdDd', 'cwdChip');
 const projectBootstrapDd = setupDd('projectBootstrapDd', 'projectBootstrapBtn');
 setupDd('statsDd', 'stats');
@@ -1871,31 +1871,60 @@ function renderModelMenu() {
     menu.appendChild(sub);
   }
 }
+const THINK_LABEL = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 const THINK_DESC = { off: 'No extended reasoning', low: 'Short reasoning', medium: 'Moderate reasoning', high: 'Deep reasoning', xhigh: 'Very deep reasoning', max: 'Maximum reasoning budget' };
 function renderThinking() {
   const levels = activeChatState().thinkingLevels?.length ? activeChatState().thinkingLevels : ['off'];
   if (!levels.includes(activeChatState().thinking)) activeChatState().thinking = levels[0];
-  const only = levels.length === 1;
-  $('thinkName').textContent = only && levels[0] === 'off' ? 'no reasoning' : activeChatState().thinking;
-  $('thinkBtn').style.opacity = only ? '.55' : '1';
-  const menu = $('thinkMenu');
-  menu.innerHTML = `<div class="dd-group">Effort levels available for ${esc(activeChatState().model?.id ?? 'this model')}</div>`;
-  for (const lv of levels) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'dd-item' + (lv === activeChatState().thinking ? ' sel' : '');
-    b.innerHTML = `<span class="col"><span>${lv}</span><span class="desc">${THINK_DESC[lv] ?? ''}</span></span>`;
-    b.addEventListener('click', async () => {
-      thinkDd.classList.remove('open');
-      const key = activeChatKey();
-      const r = await post('/api/thinking', { level: lv }, { key, guardChat: true });
-      if (r.error || key !== activeChatKey()) return;
-      activeChatState().thinking = r.thinkingLevel ?? lv;
-      renderThinking();
-    });
-    menu.appendChild(b);
-  }
+  const range = $('thinkRange');
+  const stops = $('thinkStops');
+  const preview = (index) => {
+    const level = levels[index] ?? levels[0];
+    const ratio = levels.length > 1 ? index / (levels.length - 1) : 0;
+    const accent = ratio < .5
+      ? `color-mix(in srgb, var(--teal) ${Math.round(34 + ratio * 108)}%, var(--panel-3))`
+      : `color-mix(in srgb, var(--teal) ${Math.round(100 - (ratio - .5) * 42)}%, var(--txt))`;
+    $('thinkMenu').style.setProperty('--effort-accent', accent);
+    $('thinkPicker').style.setProperty('--effort-accent', accent);
+    $('thinkPicker').style.setProperty('--effort-progress', `${ratio * 100}%`);
+    $('thinkSwatch').style.setProperty('--effort-accent', accent);
+    $('thinkName').textContent = THINK_LABEL[level] ?? level;
+    $('thinkPreviewName').textContent = THINK_LABEL[level] ?? level;
+    $('thinkReadout').textContent = THINK_DESC[level] ?? 'Reasoning effort';
+    [...stops.children].forEach((stop, stopIndex) => stop.classList.toggle('passed', stopIndex <= index));
+  };
+  range.min = '0';
+  range.max = String(Math.max(0, levels.length - 1));
+  range.value = String(levels.indexOf(activeChatState().thinking));
+  range.disabled = levels.length === 1;
+  stops.replaceChildren(...levels.map(() => {
+    const stop = document.createElement('span');
+    return stop;
+  }));
+  preview(Number(range.value));
+  $('thinkBtn').title = `${THINK_LABEL[activeChatState().thinking] ?? activeChatState().thinking}: ${THINK_DESC[activeChatState().thinking] ?? 'Reasoning effort'}`;
+  range.oninput = () => preview(Number(range.value));
+  range.onchange = async () => {
+    const level = levels[Number(range.value)] ?? levels[0];
+    preview(Number(range.value));
+    range.disabled = true;
+    const key = activeChatKey();
+    const r = await post('/api/thinking', { level }, { key, guardChat: true });
+    if (key !== activeChatKey()) return;
+    if (!r.error) activeChatState().thinking = r.thinkingLevel ?? level;
+    renderThinking();
+  };
 }
+$('thinkRange').addEventListener('wheel', (event) => {
+  const range = $('thinkRange');
+  if (range.disabled || !event.deltaY) return;
+  event.preventDefault();
+  const next = Math.max(Number(range.min), Math.min(Number(range.max), Number(range.value) + Math.sign(event.deltaY)));
+  if (next === Number(range.value)) return;
+  range.value = String(next);
+  range.dispatchEvent(new Event('input', { bubbles: true }));
+  range.dispatchEvent(new Event('change', { bubbles: true }));
+}, { passive: false });
 // MOD+E: cycle through the reasoning effort levels of the current model
 async function cycleThinking() {
   const levels = activeChatState().thinkingLevels?.length ? activeChatState().thinkingLevels : ['off'];

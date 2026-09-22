@@ -930,8 +930,56 @@ body.sb-closed #chatView.hero #checkoutTray { max-width: 1048px; }
 .cmeta .logo { display: none; }
 .cmeta .spark { color: var(--teal); flex-shrink: 0; }
 .cmeta svg.caret { color: var(--faint); flex-shrink: 0; }
-#thinkBtn.cmeta, #attachBtn.cmeta { color: var(--txt-dim); }
-#thinkBtn.cmeta:hover, #attachBtn.cmeta:hover { color: var(--txt); }
+#attachBtn.cmeta { color: var(--txt-dim); }
+#attachBtn.cmeta:hover { color: var(--txt); }
+/* The composer shows only the chosen effort. The dropdown is a continuous-feel
+   dial backed by the model's discrete levels, so its orb follows pointer, touch
+   and keyboard input instead of jumping after a click. */
+.effortToggle { min-width: 76px; color: var(--txt-dim); }
+.effortToggle:hover { color: var(--txt); }
+.effortSwatch {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--effort-accent, var(--teal)); box-shadow: 0 0 7px var(--effort-accent, var(--teal));
+}
+.effortMenu { width: 244px; padding: .8rem .85rem .7rem; }
+.effortHead { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; }
+.effortHead strong { color: var(--effort-accent, var(--teal)); font-size: .88rem; font-weight: var(--w-semi); }
+.effortEyebrow { color: var(--faint); font-size: .68rem; }
+.effortReadout { min-height: 1.1rem; margin: .15rem 0 .8rem; color: var(--txt-dim); font-size: .71rem; }
+.effortControl {
+  --effort-accent: var(--teal); --effort-progress: 0%;
+  position: relative; height: 28px; padding: 0 11px; border-radius: var(--r-pill);
+  background: linear-gradient(90deg,
+    var(--effort-accent) 0 var(--effort-progress),
+    var(--panel-3) var(--effort-progress) 100%);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+#thinkRange {
+  position: relative; z-index: 2; display: block; width: calc(100% + 22px); height: 28px;
+  margin: 0 -11px; appearance: none; -webkit-appearance: none; background: transparent; cursor: grab;
+}
+#thinkRange:active { cursor: grabbing; }
+#thinkRange:focus-visible { outline: 2px solid var(--effort-accent); outline-offset: 3px; border-radius: var(--r-pill); }
+#thinkRange::-webkit-slider-runnable-track { height: 28px; background: transparent; }
+#thinkRange::-moz-range-track { height: 28px; background: transparent; }
+#thinkRange::-webkit-slider-thumb {
+  width: 26px; height: 26px; margin-top: 1px; border: 1px solid color-mix(in srgb, var(--effort-accent) 42%, var(--line));
+  border-radius: 50%; appearance: none; -webkit-appearance: none; background: var(--txt);
+  box-shadow: 0 2px 8px rgb(0 0 0 / .35), inset 0 0 0 5px var(--panel);
+}
+#thinkRange::-moz-range-thumb {
+  width: 26px; height: 26px; border: 1px solid color-mix(in srgb, var(--effort-accent) 42%, var(--line));
+  border-radius: 50%; background: var(--txt);
+  box-shadow: 0 2px 8px rgb(0 0 0 / .35), inset 0 0 0 5px var(--panel);
+}
+#thinkRange:disabled { cursor: default; opacity: .62; }
+.effortStops {
+  position: absolute; z-index: 1; inset: 0 12px; display: flex; align-items: center; justify-content: space-between;
+  pointer-events: none;
+}
+.effortStops span { width: 4px; height: 4px; border-radius: 50%; background: color-mix(in srgb, var(--txt) 28%, transparent); }
+.effortStops span.passed { background: color-mix(in srgb, var(--txt) 70%, transparent); }
+.effortEnds { display: flex; justify-content: space-between; padding: .35rem .2rem 0; color: var(--faint); font-size: .62rem; }
 .vsep { width: 1px; height: 16px; background: var(--line); margin: 0 .45rem; flex: none; }
 /* dropdowns living in the composer open upwards, anchored to their own chip
    (the chips now sit on the left of the bar, so they hug the left edge) */
