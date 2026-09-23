@@ -24,6 +24,8 @@
  */
 import {
   createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
   parseSkillBlock,
   ModelRuntime,
   SessionManager,
@@ -611,8 +613,18 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     sessionManager = SessionManager.continueRecent(cwd);
   }
   const formBroker = new InteractiveFormBroker();
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir: getAgentDir(),
+    appendSystemPromptOverride: (base) => [
+      ...base,
+      "Per file e cartelle usa link Markdown `[nome](percorso)`, non backtick. L’interfaccia apre anche percorsi locali relativi alla cartella della chat, inclusi file HTML.",
+    ],
+  });
+  await resourceLoader.reload();
   const { session } = await createAgentSession({
     cwd,
+    resourceLoader,
     sessionManager,
     modelRuntime,
     customTools: [createInteractiveFormTool(formBroker), ...createPreviewTools()],
