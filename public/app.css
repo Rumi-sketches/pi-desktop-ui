@@ -1268,6 +1268,14 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
   padding: .6rem .7rem; overflow: auto; max-height: 320px; font: 11.5px/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word;
 }
 
+.toolGroup { margin: .45rem 0; padding: 0 .75rem; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--panel-2); }
+.toolGroup > summary { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; min-height: 42px; cursor: pointer; color: var(--txt-dim); font-size: 12px; }
+.toolGroup > summary:focus-visible { outline: 2px solid var(--tool-nm); outline-offset: 2px; }
+.toolGroupCount { font-weight: var(--w-semi); }
+.toolGroupPreview { display: flex; flex-wrap: wrap; gap: .3rem; }
+.toolGroupPreview span { padding: .15rem .4rem; border-radius: var(--r-2); background: var(--panel-3); color: var(--tool-nm); font: 11px var(--font-mono); }
+.toolGroupCalls { padding-bottom: .5rem; }
+
 /* Model-requested input is a first-class transcript block. It is rendered from
    a validated schema, never from model-authored HTML. */
 .interactiveForm {

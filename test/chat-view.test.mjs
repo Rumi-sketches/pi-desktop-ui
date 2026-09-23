@@ -466,6 +466,28 @@ test('tool cards summarize output and expose one expandable timeline entry', asy
   assert.equal(head.getAttribute('aria-expanded'), 'true');
 });
 
+test('four consecutive tool calls collapse into a group with individual expandable details', async () => {
+  const view = fixture();
+  for (const [index, name] of ['read', 'read', 'bash', 'edit', 'bash'].entries()) {
+    view.controller.applyStreamEvent({ kind: 'tool', id: `call-${index}`, name, status: 'start', args: {} }, view.state);
+    if (index === 2) assert.equal(view.document.chat.querySelector('.toolGroup'), null);
+  }
+  const group = view.document.chat.querySelector('.toolGroup');
+  assert.equal(group.open, undefined);
+  assert.equal(group.querySelectorAll('.toolCard').length, 5);
+  assert.equal(group.querySelector('.toolGroupCount').textContent, '5 tool calls');
+  assert.equal(group.querySelector('.toolGroupPreview').textContent, 'read ×2bash ×2edit ×1');
+  const head = group.querySelector('.toolHead');
+  await head.emit('click');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'call-4', name: 'bash', status: 'end', isError: true, output: 'failed' }, view.state);
+  assert.equal(group.open, true);
+  view.controller.applyStreamEvent({ kind: 'text', delta: 'Next step' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'call-5', name: 'read', status: 'start', args: {} }, view.state);
+  assert.equal(group.querySelectorAll('.toolCard').length, 5);
+  assert.equal(view.document.chat.querySelectorAll('.toolCard').length, 6);
+});
+
 test('live mutations follow the reader only when already at the bottom', () => {
   const view = fixture();
   view.document.chatWrap.scrollHeight = 100;

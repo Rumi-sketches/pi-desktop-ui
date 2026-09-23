@@ -710,6 +710,50 @@ export function createChatView({
     return lines.length > 1 ? `${lines.length} lines · ${preview}` : preview;
   }
 
+  function updateToolGroup(group) {
+    const cards = [...group.querySelector('.toolGroupCalls').children];
+    group.querySelector('.toolGroupCount').textContent = `${cards.length} tool calls`;
+    const counts = new Map();
+    for (const card of cards) {
+      const name = card.querySelector('.nm').textContent || 'tool';
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const preview = group.querySelector('.toolGroupPreview');
+    preview.replaceChildren();
+    for (const [name, count] of counts) {
+      const pill = documentRef.createElement('span');
+      pill.textContent = `${name} ×${count}`;
+      preview.appendChild(pill);
+    }
+  }
+
+  function appendToolCard(body, card) {
+    const previous = body.lastElementChild;
+    if (previous?.classList.contains('toolGroup')) {
+      previous.querySelector('.toolGroupCalls').appendChild(card);
+      updateToolGroup(previous);
+      return;
+    }
+    body.appendChild(card);
+    const cards = [];
+    for (let node = card; node?.classList.contains('toolCard'); node = node.previousElementSibling) cards.unshift(node);
+    if (cards.length !== 4) return;
+    const group = documentRef.createElement('details');
+    group.className = 'toolGroup';
+    const summary = documentRef.createElement('summary');
+    const count = documentRef.createElement('span');
+    count.className = 'toolGroupCount';
+    const preview = documentRef.createElement('span');
+    preview.className = 'toolGroupPreview';
+    summary.append(count, preview);
+    const calls = documentRef.createElement('div');
+    calls.className = 'toolGroupCalls';
+    group.append(summary, calls);
+    body.insertBefore(group, cards[0]);
+    group.querySelector('.toolGroupCalls').append(...cards);
+    updateToolGroup(group);
+  }
+
   function renderTool(event) {
     return mutateTranscript(() => {
       if (!currentTurn) currentTurn = newTurn('pi');
@@ -736,7 +780,7 @@ export function createChatView({
           const open = card.classList.toggle('open');
           head.setAttribute('aria-expanded', String(open));
         });
-        currentTurn.appendChild(card);
+        appendToolCard(currentTurn, card);
         if (event.id) toolCards.set(event.id, card);
         addCopyButtons(card);
       }
@@ -759,10 +803,14 @@ export function createChatView({
         query('.toolResult').textContent = toolResultSummary(event.output, { isError: !!event.isError });
         query('.out').textContent = event.output || '(no output)';
         if (event.isError) {
+          const group = card.closest('.toolGroup');
+          if (group) group.open = true;
           card.classList.add('open');
           query('.toolHead').setAttribute('aria-expanded', 'true');
         }
       }
+      const group = card.closest('.toolGroup');
+      if (group && event.status === 'start') updateToolGroup(group);
       return card;
     });
   }
