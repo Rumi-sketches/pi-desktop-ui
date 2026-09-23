@@ -67,6 +67,14 @@ test("independent consents preserve each other's state and timestamps", async ()
   assert.deepEqual(preferences.titleGenerationState(), titleState);
 });
 
+test("a corrupted consent file fails closed even after a successful update", async () => {
+  await preferences.setOpenAIUsageEnabled(true);
+  assert.equal(preferences.isOpenAIUsageEnabled(), true);
+  await writeFile(path.join(agentDir, "web-ui-openai-usage.json"), "not JSON");
+  assert.equal(preferences.isOpenAIUsageEnabled(), false);
+  assert.deepEqual(preferences.openAIUsageState(), { enabled: false });
+});
+
 test("missing preference files restore each store's own defaults", async () => {
   await Promise.all(preferenceFiles.map((name) => rm(path.join(agentDir, name), { force: true })));
   await preferences.loadPreferences();

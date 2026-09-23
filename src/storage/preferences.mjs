@@ -7,7 +7,7 @@ import { jsonFile, mutateJsonFile, mutationQueue } from "./json-store.mjs";
 import { withFileLock } from "./file-lock.mjs";
 
 /**
- * One independently persisted preference with a private state and mutation
+ * One independently persisted preference with fresh reads and a mutation
  * queue. Stores share the lifecycle, not their defaults or transactions.
  * @template T
  * @param {string} name
@@ -17,29 +17,23 @@ function preferenceFile(name, options) {
   const file = path.join(AGENT_DIR, name);
   const store = jsonFile(file, options);
   const mutate = mutationQueue();
-  let state = options.fallback();
   return {
     async load() {
-      state = await store.load();
+      await store.load();
     },
     read() {
       // A different instance may have changed a consent since startup.
       // On read failure, never authorize provider work from stale memory.
       try {
         const latest = options.revive(JSON.parse(readFileSync(file, "utf8")));
-        state = latest === undefined ? options.fallback() : latest;
+        return latest === undefined ? options.fallback() : latest;
       } catch {
-        state = options.fallback();
+        return options.fallback();
       }
-      return state;
     },
     /** @param {(current: T) => T} operation */
     update(operation) {
-      return mutate(async () => {
-        const next = await mutateJsonFile(store, file, operation);
-        state = next;
-        return next;
-      });
+      return mutate(() => mutateJsonFile(store, file, operation));
     },
   };
 }
