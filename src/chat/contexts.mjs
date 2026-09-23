@@ -37,6 +37,7 @@ import { readSessionRecords } from "../storage/session-store.mjs";
 import { configureTitleModelRuntime } from "./titles.mjs";
 import { createPromptQueueController } from "./prompt-queue.mjs";
 import { InteractiveFormBroker, createInteractiveFormTool } from "./interactive-forms.mjs";
+import { createPreviewTools, previewKind } from "./chat-previews.mjs";
 
 // ---- thinking levels -------------------------------------------------------
 // Mirrors getSupportedThinkingLevels() from @earendil-works/pi-ai (not directly
@@ -448,8 +449,8 @@ function wireSession(ctx) {
         id: event.toolCallId,
         name: event.toolName,
         status: "start",
-        args: sanitizeArgs(event.args),
-        summary: summarizeTool(event.toolName, event.args),
+        args: previewKind(event.toolName) ? {} : sanitizeArgs(event.args),
+        summary: previewKind(event.toolName) ? "Chat preview" : summarizeTool(event.toolName, event.args),
       };
       ctx.live.push({ type: "tool", tool: { ...ev } });
       broadcast(ctx, ev);
@@ -507,8 +508,13 @@ function wireSession(ctx) {
       adoptSessionFile(ctx);
       broadcastGlobal({ kind: "sessions" });
     } else if (event.type === "turn_end") {
-      // AgentSession notifies message_end listeners before persisting the
-      // message. At turn_end, stats include this response and its tool results.
+      // Tool results are persisted by now; the earlier tool_execution_end event
+      // is too early for /api/preview to resolve its call in the active branch.
+      for (const seg of ctx.live) {
+        if (seg.type !== "tool" || !previewKind(seg.tool.name) || seg.tool.status !== "end" || seg.tool.isError) continue;
+        seg.tool.previewReady = true;
+        broadcast(ctx, { kind: "tool", id: seg.tool.id, name: seg.tool.name, status: "preview" });
+      }
       refreshSessionMetrics(ctx);
       broadcastUsage(ctx);
     } else if (event.type === "agent_start") {
@@ -609,7 +615,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     cwd,
     sessionManager,
     modelRuntime,
-    customTools: [createInteractiveFormTool(formBroker)],
+    customTools: [createInteractiveFormTool(formBroker), ...createPreviewTools()],
   });
   applyBootstrapTools(session);
   const file = session.sessionManager?.getSessionFile?.() ?? null;

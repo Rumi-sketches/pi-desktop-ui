@@ -69,6 +69,7 @@ import { scanSessionFile } from "../settings/analytics.mjs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { PromptQueueError, normalizePromptInput, queuedExtensionCommand } from "./prompt-queue.mjs";
 import { gitBranches, gitStatus, switchGitBranch } from "../project/git.mjs";
+import { previewFromBranch, previewKind } from "./chat-previews.mjs";
 
 // ---- the event stream ------------------------------------------------------
 export async function handleEvents({ req, res, sessionKey }) {
@@ -719,12 +720,13 @@ export async function handleGetHistory({ res, sessionKey, url }) {
               type: "tool",
               id: c.id,
               name: c.name,
-              args: sanitizeArgs(c.arguments),
-              summary: summarizeTool(c.name, c.arguments),
+              args: previewKind(c.name) ? {} : sanitizeArgs(c.arguments),
+              summary: previewKind(c.name) ? "Chat preview" : summarizeTool(c.name, c.arguments),
               // no result stored → the tool never finished (aborted turn)
               status: r ? "end" : "start",
               output: r?.output ?? "",
               isError: r?.isError ?? false,
+              previewReady: !!r && !r.isError && !!previewKind(c.name),
             };
           }
           return null;
@@ -767,6 +769,16 @@ export async function handleGetHistory({ res, sessionKey, url }) {
     streaming: ctx.running || session.isStreaming,
     awaitingInput: contextAwaitingInput(ctx),
   });
+}
+
+export async function handleGetPreview({ res, url, sessionKey }) {
+  const callId = url.searchParams.get("call") ?? "";
+  if (!callId || callId.length > 200) return send(res, 400, { error: "invalid preview reference" });
+  const ctx = await useContext(sessionKey);
+  const preview = previewFromBranch(ctx.session.sessionManager?.getBranch?.() ?? [], callId);
+  if (!preview) return send(res, 404, { error: "preview not found" });
+  if (preview.kind === "html") return send(res, 200, preview.html, "text/plain; charset=utf-8");
+  return sendBytes(res, 200, preview.bytes, preview.mimeType);
 }
 
 const SAFE_IMAGE_MIME = /^image\/[a-z0-9][a-z0-9.+-]*$/i;

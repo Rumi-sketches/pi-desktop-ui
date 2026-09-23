@@ -53,6 +53,7 @@ The activity label shows how long the current response has been running. Its tim
 - Switch between authenticated models and supported thinking levels.
 - Use slash commands, prompt templates and skills from your pi installation.
 - Fill in forms created by pi's `request_form` tool without leaving the chat.
+- Ask the agent to show self-contained HTML/CSS in the chat with `show_html`, or display existing base64 PNG, JPEG, GIF or WebP data with `show_image`. HTML previews block scripts and external assets; `show_image` does not generate images.
 - Inspect the exact generated prompt and the instruction files pi loaded.
 - Edit global agent inputs from Settings and project inputs from the chat header. You can restore every file to its pre-edit state.
 - Choose which tools, providers and models appear in the app.

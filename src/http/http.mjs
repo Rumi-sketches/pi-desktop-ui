@@ -267,6 +267,7 @@ const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 const PAGE_ASSETS = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/chat-view.js": { file: "chat-view.js", type: "text/javascript; charset=utf-8" },
+  "/chat-previews.js": { file: "chat-previews.js", type: "text/javascript; charset=utf-8" },
   "/settings-view.js": { file: "settings-view.js", type: "text/javascript; charset=utf-8" },
   "/terminal-view.js": { file: "terminal-view.js", type: "text/javascript; charset=utf-8" },
   "/agent-inputs.js": { file: "agent-inputs.js", type: "text/javascript; charset=utf-8" },

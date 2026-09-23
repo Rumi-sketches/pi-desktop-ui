@@ -1,4 +1,5 @@
 import { withSessionKey } from './transport.js';
+import { showChatPreview } from './chat-previews.js';
 
 export function decorateMarkdownAlert(quote, documentRef) {
   const first = quote.firstElementChild;
@@ -787,7 +788,9 @@ export function createChatView({
         addCopyButtons(card);
       }
       const query = (selector) => card.querySelector(selector);
-      if (event.status === 'start') {
+      if (event.status === 'preview') {
+        showChatPreview(card, event, getKey(), documentRef, (url) => windowRef.fetch(url));
+      } else if (event.status === 'start') {
         query('.nm').textContent = event.name;
         query('.sm').textContent = event.summary || '';
         query('.sm').title = event.summary || '';
@@ -804,6 +807,7 @@ export function createChatView({
         query('.st').textContent = event.isError ? 'error' : 'done';
         query('.toolResult').textContent = toolResultSummary(event.output, { isError: !!event.isError });
         query('.out').textContent = event.output || '(no output)';
+        if (event.previewReady) showChatPreview(card, event, getKey(), documentRef, (url) => windowRef.fetch(url));
         if (event.isError) {
           const group = card.closest('.toolGroup');
           if (group) group.open = true;
@@ -812,6 +816,7 @@ export function createChatView({
         }
       }
       const group = card.closest('.toolGroup');
+      if (group && (event.status === 'preview' || event.previewReady)) group.open = true;
       if (group && event.status === 'start') updateToolGroup(group);
       return card;
     });
