@@ -42,8 +42,9 @@ const post = (pathname, body) => request("POST", pathname, body);
 
 test("a failed LAN save returns 500, keeps access off, and a later save recovers", async (t) => {
   const file = path.join(agentDir, "web-ui-network.json");
-  const tmpFile = `${file}.tmp`;
+  const tmpFile = `${file}.lock`;
   await mkdir(tmpFile);
+  await writeFile(path.join(tmpFile, "owner.json"), JSON.stringify({ pid: process.pid, id: "test-lock" }));
   t.after(() => rm(tmpFile, { recursive: true, force: true }));
 
   const failed = await post("/api/network", { lanAccess: true });
@@ -62,8 +63,9 @@ test("a failed LAN save returns 500, keeps access off, and a later save recovers
 test("a failed preference save keeps the confirmed opt-in and later recovers", async (t) => {
   const file = path.join(agentDir, "web-ui-openai-usage.json");
   assert.equal((await post("/api/usage/config", { provider: "openai-codex", enabled: false })).status, 200);
-  const tmpFile = `${file}.tmp`;
+  const tmpFile = `${file}.lock`;
   await mkdir(tmpFile);
+  await writeFile(path.join(tmpFile, "owner.json"), JSON.stringify({ pid: process.pid, id: "test-lock" }));
   t.after(() => rm(tmpFile, { recursive: true, force: true }));
 
   const failed = await post("/api/usage/config", { provider: "openai-codex", enabled: true });
@@ -86,10 +88,11 @@ test("a failed reopened-status save rejects the prompt and releases its starting
   const previousSessionFile = ctx.sessionFile;
   const sessionFile = path.join(agentDir, "sessions", "reopen-fixture.jsonl");
   const statusFile = path.join(agentDir, "web-ui-status.json");
-  const tmpFile = `${statusFile}.tmp`;
+  const tmpFile = `${statusFile}.lock`;
   ctx.sessionFile = sessionFile;
   await setSessionStatus(sessionFile, "done");
   await mkdir(tmpFile);
+  await writeFile(path.join(tmpFile, "owner.json"), JSON.stringify({ pid: process.pid, id: "test-lock" }));
   t.after(async () => {
     await rm(tmpFile, { recursive: true, force: true });
     await setSessionStatus(sessionFile, "active").catch(() => {});

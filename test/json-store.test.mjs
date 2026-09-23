@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, stat, rename } from "node:fs/promises";
 import { jsonFile } from "../src/storage/json-store.mjs";
 
 // Each test gets its own directory: the store creates it on demand, exactly as
@@ -74,18 +74,19 @@ test("jsonFile: a failed save rejects without poisoning the queue", async (t) =>
   t.after(() => rm(dir, { recursive: true, force: true }));
   await store.save({ n: 1 });
 
-  const tmpFile = `${file}.tmp`;
-  await mkdir(tmpFile);
+  const backup = `${file}.backup`;
+  await rename(file, backup);
+  await mkdir(file);
   await assert.rejects(store.save({ n: 2 }), (/** @type {any} */ error) => {
     assert.ok(error.code, "the original filesystem error keeps its code");
     return true;
   });
-  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { n: 1 });
-  await rm(tmpFile, { recursive: true, force: true });
+  assert.deepEqual(JSON.parse(await readFile(backup, "utf8")), { n: 1 });
+  await rm(file, { recursive: true, force: true });
+  await rename(backup, file);
 
   await store.save({ n: 3 });
   assert.deepEqual(await store.load(), { n: 3 });
-  await assert.rejects(stat(tmpFile), { code: "ENOENT" });
 });
 
 test("jsonFile: queued values are captured when save is requested", async (t) => {

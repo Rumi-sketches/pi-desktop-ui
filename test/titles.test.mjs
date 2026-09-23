@@ -4,7 +4,7 @@ import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 let agentDir;
 let titles;
@@ -336,8 +336,9 @@ test("a valid empty Haiku response does not authorize Luna", async () => {
 test("a cache write failure keeps the generated title ephemeral without regenerating it", async (t) => {
   runtime = fakeRuntime({ complete: async () => assistant("Ephemeral generated title") });
   titles.configureTitleModelRuntime(runtime);
-  const tmpFile = path.join(agentDir, "web-ui-titles.json.tmp");
+  const tmpFile = path.join(agentDir, "web-ui-titles.json.lock");
   await mkdir(tmpFile);
+  await writeFile(path.join(tmpFile, "owner.json"), JSON.stringify({ pid: process.pid, id: "test-lock" }));
   t.after(() => rm(tmpFile, { recursive: true, force: true }));
   const sessionPath = "/sessions/cache-write-failure.jsonl";
 

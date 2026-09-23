@@ -4,12 +4,13 @@
  * policies that depend on pi's SessionManager next to the session state.
  */
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import readline from "node:readline";
 import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR, SESSIONS_DIR } from "./agent-paths.mjs";
-import { jsonFile, mutationQueue } from "./json-store.mjs";
+import { jsonFile, mutateJsonFile, mutationQueue } from "./json-store.mjs";
 import {
   archivingState,
   isArchivingEnabled,
@@ -20,7 +21,8 @@ const PERSISTED_SESSION_STATUSES = ["done", "reopened"];
 export const SESSION_STATUS_INPUTS = [...PERSISTED_SESSION_STATUSES, "active"];
 
 // ---- favorite chats -------------------------------------------------------
-const favoritesStore = jsonFile(path.join(AGENT_DIR, "web-ui-favorites.json"), {
+const FAVORITES_PATH = path.join(AGENT_DIR, "web-ui-favorites.json");
+const favoritesStore = jsonFile(FAVORITES_PATH, {
   fallback: () => [],
   revive: (raw) => (Array.isArray(raw) ? raw.filter((entry) => typeof entry === "string") : undefined),
 });
@@ -29,21 +31,30 @@ const mutateFavorites = mutationQueue();
 async function loadFavorites() {
   favorites = new Set(await favoritesStore.load());
 }
-export const listFavorites = () => [...favorites];
-export const isFavorite = (chatPath) => favorites.has(chatPath);
+function refreshFavorites() {
+  try {
+    const stored = JSON.parse(readFileSync(FAVORITES_PATH, "utf8"));
+    favorites = new Set(Array.isArray(stored) ? stored.filter((item) => typeof item === "string") : []);
+  } catch { favorites = new Set(); }
+}
+export const listFavorites = () => { refreshFavorites(); return [...favorites]; };
+export const isFavorite = (chatPath) => { refreshFavorites(); return favorites.has(chatPath); };
 export function setFavorite(chatPath, favorite) {
   return mutateFavorites(async () => {
-    const next = new Set(favorites);
-    if (favorite) next.add(chatPath);
-    else next.delete(chatPath);
-    await favoritesStore.save([...next]);
-    favorites = next;
+    const next = await mutateJsonFile(favoritesStore, FAVORITES_PATH, (stored) => {
+      const updated = new Set(stored);
+      if (favorite) updated.add(chatPath);
+      else updated.delete(chatPath);
+      return [...updated];
+    });
+    favorites = new Set(next);
   });
 }
 
 // ---- session status: done / reopened -------------------------------------
 // Indexed by session file path: a draft chat has no persisted status.
-const sessionStatusStore = jsonFile(path.join(AGENT_DIR, "web-ui-status.json"), {
+const STATUS_PATH = path.join(AGENT_DIR, "web-ui-status.json");
+const sessionStatusStore = jsonFile(STATUS_PATH, {
   fallback: () => [],
   revive: (raw) =>
     raw && typeof raw === "object"
@@ -55,14 +66,22 @@ const mutateSessionStatus = mutationQueue();
 async function loadSessionStatus() {
   sessionStatus = new Map(await sessionStatusStore.load());
 }
-export const sessionStatusOf = (chatPath) => sessionStatus.get(chatPath) ?? "active";
+export const sessionStatusOf = (chatPath) => {
+  try {
+    const stored = JSON.parse(readFileSync(STATUS_PATH, "utf8"));
+    sessionStatus = new Map(Object.entries(stored).filter(([, value]) => PERSISTED_SESSION_STATUSES.includes(value)));
+  } catch { sessionStatus = new Map(); }
+  return sessionStatus.get(chatPath) ?? "active";
+};
 export function setSessionStatus(chatPath, status) {
   return mutateSessionStatus(async () => {
-    const next = new Map(sessionStatus);
-    if (status === "active") next.delete(chatPath);
-    else next.set(chatPath, status);
-    await sessionStatusStore.save(Object.fromEntries(next));
-    sessionStatus = next;
+    const next = await mutateJsonFile(sessionStatusStore, STATUS_PATH, (stored) => {
+      const updated = new Map(stored);
+      if (status === "active") updated.delete(chatPath);
+      else updated.set(chatPath, status);
+      return Object.fromEntries(updated);
+    });
+    sessionStatus = new Map(Object.entries(next));
   });
 }
 
@@ -71,19 +90,19 @@ const ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000;
 export function archiveStaleChats(now = Date.now()) {
   return mutateSessionStatus(async () => {
     const sessions = await SessionManager.listAll();
-    const next = new Map(sessionStatus);
     let archived = 0;
-    for (const session of sessions) {
-      if (!session?.path || next.get(session.path) === "done") continue;
-      const lastActivity = new Date(session.modified).getTime();
-      if (!Number.isFinite(lastActivity) || now - lastActivity < ARCHIVE_AFTER_MS) continue;
-      next.set(session.path, "done");
-      archived += 1;
-    }
-    if (archived) {
-      await sessionStatusStore.save(Object.fromEntries(next));
-      sessionStatus = next;
-    }
+    const next = await mutateJsonFile(sessionStatusStore, STATUS_PATH, (stored) => {
+      const updated = new Map(stored);
+      for (const session of sessions) {
+        if (!session?.path || updated.get(session.path) === "done") continue;
+        const lastActivity = new Date(session.modified).getTime();
+        if (!Number.isFinite(lastActivity) || now - lastActivity < ARCHIVE_AFTER_MS) continue;
+        updated.set(session.path, "done");
+        archived += 1;
+      }
+      return Object.fromEntries(updated);
+    });
+    sessionStatus = new Map(Object.entries(next));
     return archived;
   });
 }

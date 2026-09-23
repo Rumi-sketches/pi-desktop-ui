@@ -83,6 +83,13 @@ No external service is required. **Do not open a pull request with a red verify.
   `pi-web-ui`. The exception is the **persisted** names — the `web-ui-*.json` stores, the
   `pi_web_ui_access` cookie, `PI_WEB_UI_AGENT_DIR` and `PI_WEB_UI_TEST` — which are on disk and in
   live installations: they keep the old spelling forever.
+- **Shared JSON stores need a file lock.** Use `mutateJsonFile` for read-modify-write on
+  `web-ui-*.json` and `web-usage.json`. It reloads the file while holding the lock; a
+  process-local queue alone cannot protect another app instance. A dead owner's lock is
+  recovered when its PID is gone. An ambiguous lock times out after five seconds; remove
+  a stranded `.lock.reclaim` directory manually only after stopping all app instances.
+  Writes use distinct temporary filenames. This protocol does not cover pi or other
+  writers that ignore the lock, including pi's own `settings.json` updates.
 - **Split frontend code by owner.** `app.js` wires navigation, transport and the extracted views.
   Settings owns its DOM and analytics in `settings-view.js`; both Settings and the project menu use
   `agent-inputs.js` for agent-input editors. Keep each change focused, and do not add a second state

@@ -1,4 +1,6 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { withFileLock } from "./file-lock.mjs";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { PRODUCT_ID } from "../../product.mjs";
 
@@ -26,16 +28,18 @@ export function mutationQueue() {
  *   missing or unreadable. A factory, so no store shares a mutable default.
  * @param {(raw: any) => T | undefined} [opts.revive] validates the parsed JSON;
  *   returning `undefined` (or throwing) falls back to `fallback()`.
+ * @param {number} [opts.indent] JSON indentation width.
+ * @param {boolean} [opts.trailingNewline] append a newline after JSON.
  * @param {number} [opts.mode] permission bits for the file, for secrets.
  * @param {number} [opts.dirMode] permission bits used if the directory has to
  *   be created.
- * @returns {{ load: () => Promise<T>, save: (value: T) => Promise<void> }}
+ * @returns {{ load: () => Promise<T>, loadStrict: () => Promise<T>, save: (value: T) => Promise<void> }}
  */
-export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, mode, dirMode } = {}) {
-  const tmpFile = `${file}.tmp`;
+export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, indent = JSON_INDENT, trailingNewline = false, mode, dirMode } = {}) {
   let queue = Promise.resolve();
 
   async function writeAtomically(serialized) {
+    const tmpFile = `${file}.${process.pid}.${randomUUID()}.tmp`;
     try {
       await mkdir(path.dirname(file), dirMode ? { recursive: true, mode: dirMode } : { recursive: true });
       await writeFile(tmpFile, serialized, mode ? { mode } : undefined);
@@ -50,6 +54,17 @@ export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, m
   }
 
   return {
+    async loadStrict() {
+      let text;
+      try { text = await readFile(file, "utf8"); }
+      catch (error) {
+        if (error.code === "ENOENT") return fallback();
+        throw error;
+      }
+      const revived = revive(JSON.parse(text));
+      if (revived === undefined) throw new Error(`invalid storage file: ${path.basename(file)}`);
+      return revived;
+    },
     async load() {
       try {
         const revived = revive(JSON.parse(await readFile(file, "utf8")));
@@ -63,7 +78,7 @@ export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, m
       try {
         // Capture the requested value now: callers often pass mutable state,
         // which may change before an earlier queued write runs.
-        serialized = JSON.stringify(value, null, JSON_INDENT);
+        serialized = JSON.stringify(value, null, indent) + (trailingNewline ? "\n" : "");
       } catch (error) {
         return Promise.reject(error);
       }
@@ -74,4 +89,14 @@ export function jsonFile(file, { fallback = () => null, revive = (raw) => raw, m
       return result;
     },
   };
+}
+
+/** @template T @param {{ loadStrict: () => Promise<T>, save: (value: T) => Promise<void> }} store @param {string} file @param {(current: T) => T | Promise<T>} operation */
+export async function mutateJsonFile(store, file, operation) {
+  return withFileLock(file, async () => {
+    const current = await store.loadStrict();
+    const next = await operation(current);
+    await store.save(next);
+    return next;
+  });
 }

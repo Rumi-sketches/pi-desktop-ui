@@ -29,7 +29,7 @@
  */
 import path from "node:path";
 import { AGENT_DIR } from "../storage/agent-paths.mjs";
-import { jsonFile } from "../storage/json-store.mjs";
+import { jsonFile, mutateJsonFile } from "../storage/json-store.mjs";
 import {
   isLunaTitleFallbackEnabled,
   isTitleGenerationEnabled,
@@ -83,7 +83,8 @@ export function fallbackTitle(firstMessage) {
 // ---- cache -----------------------------------------------------------------
 // Session file path -> title. `web-ui-titles.json` joins the other `web-ui-*`
 // stores: same atomic write, same "read once, rewrite whole" pattern.
-const titlesStore = jsonFile(path.join(AGENT_DIR, "web-ui-titles.json"), {
+const TITLES_PATH = path.join(AGENT_DIR, "web-ui-titles.json");
+const titlesStore = jsonFile(TITLES_PATH, {
   fallback: () => /** @type {Record<string, string>} */ ({}),
   revive: (raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -111,11 +112,10 @@ function loadTitles() {
 
 async function rememberTitle(sessionPath, title) {
   const current = await loadTitles();
-  const next = new Map(current);
-  next.set(sessionPath, title);
   try {
-    await titlesStore.save(Object.fromEntries(next));
-    current.set(sessionPath, title);
+    const next = await mutateJsonFile(titlesStore, TITLES_PATH, (stored) => ({ ...stored, [sessionPath]: title }));
+    current.clear();
+    for (const [key, value] of Object.entries(next)) current.set(key, value);
   } catch (error) {
     // The paid model work already happened. Keep that result for this process
     // so a disk outage does not spend the retry budget generating it again;
@@ -322,7 +322,14 @@ export function flushTitleQueue() {
 export async function titleFor(sessionPath, firstMessage, createdAt, now = Date.now()) {
   const fallback = fallbackTitle(firstMessage);
   if (!sessionPath) return fallback;
-  const cached = (await loadTitles()).get(sessionPath);
+  const cache = await loadTitles();
+  try {
+    const stored = await titlesStore.loadStrict();
+    for (const [key, value] of Object.entries(stored)) cache.set(key, value);
+  } catch {
+    return fallback;
+  }
+  const cached = cache.get(sessionPath);
   if (cached) return cleanTitle(cached) ?? fallback;
   if (fallback && isCoveredByTheSwitch(createdAt)) {
     enqueue(sessionPath, String(firstMessage), now, isCoveredByLunaSwitch(createdAt));
@@ -342,6 +349,10 @@ export async function titleFor(sessionPath, firstMessage, createdAt, now = Date.
 export async function queueMissingTitles(chats, now = Date.now()) {
   if (!isTitleGenerationEnabled()) return 0;
   const cache = await loadTitles();
+  try {
+    const stored = await titlesStore.loadStrict();
+    for (const [key, value] of Object.entries(stored)) cache.set(key, value);
+  } catch { return 0; }
   let count = 0;
   for (const chat of chats ?? []) {
     const sessionPath = chat?.path;

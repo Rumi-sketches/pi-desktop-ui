@@ -16,7 +16,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { AGENT_DIR } from "../storage/agent-paths.mjs";
-import { jsonFile, mutationQueue } from "../storage/json-store.mjs";
+import { jsonFile, mutateJsonFile, mutationQueue } from "../storage/json-store.mjs";
 
 const execFileP = promisify(execFile);
 const CONFIG_PATH = path.join(AGENT_DIR, "web-usage.json");
@@ -43,7 +43,6 @@ const configStore = jsonFile(CONFIG_PATH, {
 });
 const mutateConfig = mutationQueue();
 const readConfig = () => configStore.load();
-const writeConfig = (config) => configStore.save(config);
 
 /** Status without leaking secrets, for the settings page. */
 export async function usageConfigStatus() {
@@ -183,12 +182,21 @@ export async function saveUsageConfig(provider, values) {
       .filter(([k, v]) => k !== "url" && typeof v === "string" && v.trim() !== "")
       .map(([k, v]) => [k, v.trim()]),
   );
+  // Reject obviously invalid input before touching storage; full validation
+  // still runs under the lock against the latest persisted provider entry.
+  if (provider === "kimi" && clean.bearer) validate(provider, clean);
+  if (provider === "anthropic" && clean.orgId && !clean.cookie) {
+    // Preserve the missing-cookie input error even when storage is unavailable.
+    const existing = await readConfig();
+    if (!existing.anthropic?.cookie) validate(provider, clean);
+  }
   return mutateConfig(async () => {
-    const cfg = await readConfig();
-    const next = { ...(cfg[provider] ?? {}), ...clean };
-    validate(provider, next);
-    cfg[provider] = next;
-    await writeConfig(cfg);
+    let next;
+    await mutateJsonFile(configStore, CONFIG_PATH, (cfg) => {
+      next = { ...(cfg[provider] ?? {}), ...clean };
+      validate(provider, next);
+      return { ...cfg, [provider]: next };
+    });
     cache[provider] = null; // force refetch with the new creds
     return next;
   });
@@ -197,9 +205,11 @@ export async function saveUsageConfig(provider, values) {
 export async function clearUsageConfig(provider) {
   assertKnownProvider(provider);
   return mutateConfig(async () => {
-    const cfg = await readConfig();
-    delete cfg[provider];
-    await writeConfig(cfg);
+    await mutateJsonFile(configStore, CONFIG_PATH, (cfg) => {
+      const next = { ...cfg };
+      delete next[provider];
+      return next;
+    });
     cache[provider] = null;
   });
 }

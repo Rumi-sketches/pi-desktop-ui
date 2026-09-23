@@ -1,8 +1,10 @@
 import path from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AGENT_DIR, SETTINGS_PATH } from "./agent-paths.mjs";
-import { jsonFile, mutationQueue } from "./json-store.mjs";
+import { jsonFile, mutateJsonFile, mutationQueue } from "./json-store.mjs";
+import { withFileLock } from "./file-lock.mjs";
 
 /**
  * One independently persisted preference with a private state and mutation
@@ -12,7 +14,8 @@ import { jsonFile, mutationQueue } from "./json-store.mjs";
  * @param {{ fallback: () => T, revive: (raw: any) => T | undefined }} options
  */
 function preferenceFile(name, options) {
-  const store = jsonFile(path.join(AGENT_DIR, name), options);
+  const file = path.join(AGENT_DIR, name);
+  const store = jsonFile(file, options);
   const mutate = mutationQueue();
   let state = options.fallback();
   return {
@@ -20,13 +23,20 @@ function preferenceFile(name, options) {
       state = await store.load();
     },
     read() {
+      // A different instance may have changed a consent since startup.
+      // On read failure, never authorize provider work from stale memory.
+      try {
+        const latest = options.revive(JSON.parse(readFileSync(file, "utf8")));
+        state = latest === undefined ? options.fallback() : latest;
+      } catch {
+        state = options.fallback();
+      }
       return state;
     },
     /** @param {(current: T) => T} operation */
     update(operation) {
       return mutate(async () => {
-        const next = operation(state);
-        await store.save(next);
+        const next = await mutateJsonFile(store, file, operation);
         state = next;
         return next;
       });
@@ -39,7 +49,7 @@ function preferenceFile(name, options) {
 // files without a migration.
 
 // Pi owns settings.json and models.json. This adapter is for read-only config
-// payloads; the explicit settings writer below preserves pi's own formatting.
+// payloads; the settings writer below preserves pi's own formatting.
 export const agentJsonFile = (name) => jsonFile(path.join(AGENT_DIR, name));
 
 // ---- agent bootstrap preferences -----------------------------------------
@@ -274,19 +284,19 @@ export async function readSettingsFile() {
     return {};
   }
 }
-export async function saveSettingsFile(settings) {
-  await mkdir(AGENT_DIR, { recursive: true });
-  await writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n", "utf8");
+const settingsStore = jsonFile(SETTINGS_PATH, { indent: 2, trailingNewline: true });
+export function saveSettingsFile(settings) {
+  return settingsStore.save(settings);
 }
 const mutateSettings = mutationQueue();
 /** @param {(settings: Record<string, any>) => void} update */
 export function updateSettingsFile(update) {
-  return mutateSettings(async () => {
-    const settings = await readSettingsFile();
+  return mutateSettings(() => withFileLock(SETTINGS_PATH, async () => {
+    const settings = await settingsStore.loadStrict().then((value) => value ?? {});
     update(settings);
     await saveSettingsFile(settings);
     return settings;
-  });
+  }));
 }
 
 // ---- secret redaction -----------------------------------------------------

@@ -14,12 +14,13 @@
  * resolves to a real port only then.
  */
 import os from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { PRODUCT_ID } from "../../product.mjs";
 import { ACCESS_COOKIE, ACCESS_PARAM, isLoopbackPeer } from "./access-control.mjs";
 import { AGENT_DIR } from "../storage/agent-paths.mjs";
-import { jsonFile, mutationQueue } from "../storage/json-store.mjs";
+import { jsonFile, mutateJsonFile, mutationQueue } from "../storage/json-store.mjs";
 import { send } from "./http.mjs";
 
 export const DEFAULT_PORT = 3777;
@@ -61,14 +62,27 @@ const mutateNetwork = mutationQueue();
 export async function loadNetwork() {
   network = await networkStore.load();
 }
-export const lanAccessEnabled = () => network.lanAccess;
+function currentNetwork() {
+  try {
+    const raw = JSON.parse(readFileSync(NETWORK_PATH, "utf8"));
+    network = {
+      lanAccess: raw?.lanAccess === true,
+      token: typeof raw?.token === "string" && raw.token ? raw.token : null,
+    };
+  } catch {
+    // Never authorize a remote request using a stale in-memory token.
+    network = defaultNetwork();
+  }
+  return network;
+}
+export const lanAccessEnabled = () => currentNetwork().lanAccess;
 
 // Every activation starts from a fresh token: turning access off invalidates
 // the URLs already handed out. Publish it only after the secret file is safe.
 export function setLanAccess(enabled) {
   return mutateNetwork(async () => {
-    const next = { lanAccess: enabled, token: enabled ? newAccessToken() : null };
-    await networkStore.save(next);
+    const next = await mutateJsonFile(networkStore, NETWORK_PATH, () =>
+      ({ lanAccess: enabled, token: enabled ? newAccessToken() : null }));
     network = next;
   });
 }
@@ -76,11 +90,14 @@ export function setLanAccess(enabled) {
 // False when there is nothing to regenerate: no LAN access, no token.
 export function regenerateAccessToken() {
   return mutateNetwork(async () => {
-    if (!network.lanAccess) return false;
-    const next = { ...network, token: newAccessToken() };
-    await networkStore.save(next);
+    let changed = false;
+    const next = await mutateJsonFile(networkStore, NETWORK_PATH, (current) => {
+      if (!current.lanAccess) return current;
+      changed = true;
+      return { ...current, token: newAccessToken() };
+    });
     network = next;
-    return true;
+    return changed;
   });
 }
 
@@ -100,12 +117,13 @@ function lanAddress() {
 export function networkStatus() {
   // Deliberately token-free: the URL that embeds the token is only handed out
   // by an explicit `reveal` POST, never by the default status response.
+  const current = currentNetwork();
   return {
-    lanAccess: network.lanAccess,
+    lanAccess: current.lanAccess,
     ip: lanAddress(),
     port: Number(PORT),
     listening: HOST,
-    restartRequired: network.lanAccess !== (HOST !== "127.0.0.1"),
+    restartRequired: current.lanAccess !== (HOST !== "127.0.0.1"),
   };
 }
 // The URL carries the token: it is the only way to get it to the other
@@ -114,8 +132,8 @@ export function accessUrl() {
   const ip = lanAddress();
   // One read of network.token: the guard and the interpolation must never see
   // two different values (nor interpolate a null into the URL).
-  const token = network.token;
-  return network.lanAccess && ip && token ? `http://${ip}:${PORT}/?${ACCESS_PARAM}=${token}` : null;
+  const { token, lanAccess } = currentNetwork();
+  return lanAccess && ip && token ? `http://${ip}:${PORT}/?${ACCESS_PARAM}=${token}` : null;
 }
 
 // Loopback until LAN access is opened on purpose; an explicit override (HOST=…
@@ -123,8 +141,9 @@ export function accessUrl() {
 // expose the agent with no token gate at all: refuse to start rather than start
 // exposed. Throws instead of exiting, so an embedder can handle it.
 export function resolveHost(hostOverride = null) {
-  const host = hostOverride ?? (network.lanAccess ? ALL_INTERFACES_HOST : LOOPBACK_HOST);
-  if (!network.lanAccess && host !== "localhost" && !isLoopbackPeer(host)) {
+  const enabled = lanAccessEnabled();
+  const host = hostOverride ?? (enabled ? ALL_INTERFACES_HOST : LOOPBACK_HOST);
+  if (!enabled && host !== "localhost" && !isLoopbackPeer(host)) {
     throw new Error(
       `refusing to listen on ${host} while LAN access is disabled. ` +
         "Enable LAN access from the settings panel, or unset HOST.",
@@ -146,14 +165,14 @@ function secretEquals(candidate, secret) {
   return timingSafeEqual(a, b);
 }
 
-export const hasAccessToken = (value) => secretEquals(value, network.token ?? "");
+export const hasAccessToken = (value) => secretEquals(value, currentNetwork().token ?? "");
 
 // Move the token out of the URL and into an HttpOnly cookie, so it never stays
 // in the address bar, in history or in a Referer header.
 export function completeAccessHandshake(res, url) {
   // No token, no handshake: interpolating a null here would hand the peer a
   // `pi_web_ui_access=null` cookie, which is a credential nobody issued.
-  const token = network.token;
+  const token = currentNetwork().token;
   if (!token) return send(res, 403, { error: "forbidden origin" });
   const clean = new URL(url);
   clean.searchParams.delete(ACCESS_PARAM);
@@ -172,8 +191,8 @@ export function completeAccessHandshake(res, url) {
 // 0.0.0.0 is a bind address, not something a client can open: use loopback.
 export function localUrl() {
   const reachable = HOST === ALL_INTERFACES_HOST || HOST === "localhost" ? LOOPBACK_HOST : HOST;
-  const token = network.token;
-  const needsToken = !isLoopbackPeer(reachable) && network.lanAccess && token;
+  const { token, lanAccess } = currentNetwork();
+  const needsToken = !isLoopbackPeer(reachable) && lanAccess && token;
   return `http://${reachable}:${PORT}/${needsToken ? `?${ACCESS_PARAM}=${token}` : ""}`;
 }
 
