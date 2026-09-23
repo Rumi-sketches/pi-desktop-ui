@@ -152,7 +152,8 @@ function terminal(id, overrides = {}) {
   };
 }
 
-function fixture({ clipboard = null } = {}) {
+/** @param {{ clipboard?: any, getSelection?: () => any }} [options] */
+function fixture({ clipboard = null, getSelection: readSelection } = {}) {
   FakeTerminal.instances = [];
   const document = new FakeDocument();
   const window = new FakeWindow();
@@ -181,7 +182,7 @@ function fixture({ clipboard = null } = {}) {
     },
     getTerminalConstructor: () => FakeTerminal,
     getFitAddonConstructor: () => FakeFitAddon,
-    getSelection: () => selection,
+    getSelection: () => readSelection ? readSelection() : selection,
     getActiveProjectCwd: () => null,
     selectTerminal(value) { selected = value; selection = { ...selection, resourceId: value.id }; },
     restoreSelection() {},
@@ -243,6 +244,25 @@ test('terminal view leaves the native context menu available when clipboard is a
   });
 
   assert.equal(prevented, false);
+  view.controller.dispose();
+});
+
+test('terminal actions use one selection snapshot per lookup', async () => {
+  let reads = 0;
+  const copied = [];
+  const view = fixture({
+    clipboard: { writeText: async (text) => copied.push(text) },
+    getSelection: () => {
+      reads += 1;
+      return { view: VIEW_TERMINAL, resourceId: reads === 1 ? 'term-1' : 'term-2' };
+    },
+  });
+  view.controller.start();
+  view.controller.update({ terminals: [terminal('term-1'), terminal('term-2', { cwd: 'C:\\other' })] });
+  reads = 0;
+  await view.document.getElementById('terminalCopyPathBtn').emit('click');
+  assert.deepEqual(copied, ['C:\\work']);
+  assert.equal(reads, 1);
   view.controller.dispose();
 });
 

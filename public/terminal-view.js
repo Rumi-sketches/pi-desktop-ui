@@ -54,7 +54,10 @@ export function createTerminalView({
   let colorProbe;
 
   const list = () => [...state.terminals.values()];
-  const activeId = () => getSelection()?.view === 'terminal' ? getSelection().resourceId : null;
+  const activeId = () => {
+    const selection = getSelection();
+    return selection?.view === 'terminal' ? selection.resourceId : null;
+  };
   const hasExited = (terminal) => terminal.exited !== null && terminal.exited !== undefined;
   const projectName = (cwd) => (cwd || '').split(/[\\/]/).filter(Boolean).pop() || cwd;
 
