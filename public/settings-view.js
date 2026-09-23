@@ -79,6 +79,12 @@ export function createSettingsView({
   const api = (url, options, requestOptions) => requestApi(url, options, withSignal(requestOptions));
   const post = (url, body, requestOptions) => requestPost(url, body, withSignal(requestOptions));
   const sendJson = (method, url, body, requestOptions) => requestSendJson(method, url, body, withSignal(requestOptions));
+  function bindSwitch(element, toggle) {
+    element.addEventListener('click', toggle);
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); }
+    });
+  }
 
 // settings page sections listed in the sidebar (in place of the chats)
 const SETTINGS_SECTIONS = [
@@ -646,10 +652,7 @@ async function renderSettings() {
   const setLanAccess = async (body) => drawNetwork(await post('/api/network', body));
   const lanSw = $('lanAccessSw');
   const toggleLan = () => setLanAccess({ lanAccess: !lanSw.classList.contains('on') });
-  lanSw.addEventListener('click', toggleLan);
-  lanSw.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLan(); }
-  });
+  bindSwitch(lanSw, toggleLan);
   $('lanRegen').addEventListener('click', () => setLanAccess({ regenerate: true }));
   $('lanReveal').addEventListener('click', async () => {
     const res = await post('/api/network', { reveal: true });
@@ -675,10 +678,7 @@ async function renderSettings() {
       setChatNotifications(!getChatNotifications());
       drawNotifications();
     };
-    notificationsSwitch.addEventListener('click', toggleNotifications);
-    notificationsSwitch.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleNotifications(); }
-    });
+    bindSwitch(notificationsSwitch, toggleNotifications);
   }
 
   /* ---- chat archiving ---- */
@@ -696,10 +696,7 @@ async function renderSettings() {
     drawArchiving(await sendJson('PUT', '/api/archiving', { enabled: !getChatArchiving() }));
     loadSessions();
   };
-  $('chatArchivingSw').addEventListener('click', toggleArchiving);
-  $('chatArchivingSw').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleArchiving(); }
-  });
+  bindSwitch($('chatArchivingSw'), toggleArchiving);
   $('archiveNowBtn').addEventListener('click', async () => {
     const r = await post('/api/archiving/sweep');
     if (r.error) { $('chatArchivingMsg').textContent = r.error; return; }
@@ -727,19 +724,13 @@ async function renderSettings() {
   const toggleTitleGen = async () => {
     drawTitleGen(await sendJson('PUT', '/api/title-generation', { enabled: !titleGen }));
   };
-  $('titleGenSw').addEventListener('click', toggleTitleGen);
-  $('titleGenSw').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTitleGen(); }
-  });
+  bindSwitch($('titleGenSw'), toggleTitleGen);
   const toggleLunaTitleFallback = async () => {
     drawTitleGen(await sendJson('PUT', '/api/title-generation', {
       lunaTitleFallback: !lunaTitleFallback,
     }));
   };
-  $('lunaTitleFallbackSw').addEventListener('click', toggleLunaTitleFallback);
-  $('lunaTitleFallbackSw').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLunaTitleFallback(); }
-  });
+  bindSwitch($('lunaTitleFallbackSw'), toggleLunaTitleFallback);
   $('titleGenBackfillBtn').addEventListener('click', async () => {
     const r = await post('/api/title-generation/backfill');
     if (r.error) { $('titleGenMsg').textContent = r.error; return; }
@@ -761,10 +752,7 @@ async function renderSettings() {
   const toggleFullSearch = async () => {
     drawFullSearch(await sendJson('PUT', '/api/full-search', { enabled: !fullSearch }));
   };
-  $('fullSearchSw').addEventListener('click', toggleFullSearch);
-  $('fullSearchSw').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFullSearch(); }
-  });
+  bindSwitch($('fullSearchSw'), toggleFullSearch);
 
   /* ---- usage credentials handlers ---- */
   let openAIUsageEnabled = usageCfg.openai?.enabled === true;
@@ -782,10 +770,7 @@ async function renderSettings() {
     setTimeout(() => { if ($('openaiUsageMsg')) $('openaiUsageMsg').textContent = ''; }, 2500);
     refreshUsage(true);
   };
-  openAIUsageSw.addEventListener('click', toggleOpenAIUsage);
-  openAIUsageSw.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpenAIUsage(); }
-  });
+  bindSwitch(openAIUsageSw, toggleOpenAIUsage);
 
   function cfgMsg(id, text, kind) {
     const el = $(id);
@@ -880,8 +865,7 @@ async function renderSettings() {
       const next = !sw.classList.contains('on');
       if (await saveSetting(sw.dataset.key, next, $(sw.id + '_ok'))) sw.classList.toggle('on', next);
     };
-    sw.addEventListener('click', toggle);
-    sw.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    bindSwitch(sw, toggle);
   });
   body.querySelectorAll('select[data-key]').forEach((sel) => {
     sel.addEventListener('change', () => saveSetting(sel.dataset.key, sel.value === '' ? null : sel.value, $(sel.id + '_ok')));

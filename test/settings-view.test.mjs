@@ -237,6 +237,47 @@ test('settings view saves only confirmed values and reopens without duplicate li
   });
 });
 
+test('settings switches keep click and keyboard activation on their own endpoints', async () => {
+  await withBrowserGlobals(async (installDocument) => {
+    const state = fixture();
+    installDocument(state.document);
+    await state.controller.show();
+    const originalSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = /** @type {typeof setTimeout} */ (/** @type {unknown} */ (() => 0));
+    try {
+      for (const [id, url, kind] of [
+        ['lanAccessSw', '/api/network', 'post'],
+        ['chatArchivingSw', '/api/archiving', 'sendJson'],
+        ['titleGenSw', '/api/title-generation', 'sendJson'],
+        ['lunaTitleFallbackSw', '/api/title-generation', 'sendJson'],
+        ['fullSearchSw', '/api/full-search', 'sendJson'],
+        ['openaiUsageSw', '/api/usage/config', 'post'],
+        ['set_featureFlag', '/api/settings', 'post'],
+      ]) {
+        const switchElement = state.document.getElementById(id);
+        const before = state.calls.length;
+        let prevented = false;
+        await switchElement.emit('keydown', { key: 'Escape', preventDefault() { prevented = true; } });
+        assert.equal(state.calls.length, before, `${id}: other keys do nothing`);
+        for (const key of ['Enter', ' ']) {
+          await switchElement.emit('keydown', { key, preventDefault() { prevented = true; } });
+          assert.equal(prevented, true, `${id}: ${key} prevents the browser default`);
+          assert.equal(state.calls.at(-1).url, url);
+          assert.equal(state.calls.at(-1).kind, kind);
+          prevented = false;
+        }
+        await switchElement.emit('click');
+        assert.equal(state.calls.at(-1).url, url);
+      }
+      assert.deepEqual(state.calls.filter((call) => call.url === '/api/title-generation' && call.kind === 'sendJson')
+        .map((call) => call.body), [
+          { enabled: true }, { enabled: true }, { enabled: true },
+          { lunaTitleFallback: true }, { lunaTitleFallback: true }, { lunaTitleFallback: true },
+        ]);
+    } finally { globalThis.setTimeout = originalSetTimeout; }
+  });
+});
+
 test('refresh requests live provider catalogs and fetches fresh configuration', async () => {
   await withBrowserGlobals(async (installDocument) => {
     const state = fixture();
