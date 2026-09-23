@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "../platform/platform.mjs";
 import { terminateTerminalsForChat } from "../terminals/terminals.mjs";
 import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "../http/http.mjs";
-import { titleFor } from "./titles.mjs";
+import { titleLookup } from "./titles.mjs";
 import {
   SESSIONS_DIR,
   isInsideDir,
@@ -31,9 +31,10 @@ import {
 } from "../storage/preferences.mjs";
 import {
   SESSION_STATUS_INPUTS,
-  isFavorite,
+  favoritePaths,
   listFavorites,
   readSessionRecords,
+  sessionStatuses,
   sessionStatusOf,
   setFavorite,
   setSessionStatus,
@@ -370,7 +371,7 @@ function skillPresentationText(text) {
 // One chat as the sidebar wants it. Written once because two routes answer
 // with it (`/api/sessions` and `/api/search`): a field added to a list the
 // page renders the same way must never exist in one of the two only.
-async function sessionEntry(s) {
+async function sessionEntry(s, title, favorites, statuses) {
   // last model used in that chat, so the sidebar can show its logo
   // (scanSessionFile is mtime-cached: repeated calls are free)
   const scan = await scanSessionFile(s.path).catch(() => null);
@@ -386,11 +387,11 @@ async function sessionEntry(s) {
     // truncation of it otherwise: expanded skill instructions stay server-side.
     // The creation date travels with it because listing a chat older than the
     // title switch must not summarize it.
-    title: await titleFor(s.path, firstMessage, s.created),
+    title: title(s.path, firstMessage, s.created),
     messageCount: s.messageCount ?? 0,
     modified: s.modified,
-    favorite: isFavorite(s.path),
-    status: sessionStatusOf(s.path),
+    favorite: favorites.has(s.path),
+    status: statuses.get(s.path) ?? "active",
     provider: last?.provider ?? "",
     model: last?.model ?? "",
     thinkingLevel: scan?.thinkingLevel ?? "",
@@ -400,6 +401,15 @@ async function sessionEntry(s) {
     pullRequests: scan?.pullRequests ?? [],
     issues: scan?.issues ?? [],
   };
+}
+
+// All three shared archives are refreshed once per response, not once per row.
+async function sessionEntries(sessions) {
+  if (!sessions.length) return [];
+  const [title, favorites, statuses] = await Promise.all([
+    titleLookup(), favoritePaths(), sessionStatuses(),
+  ]);
+  return Promise.all(sessions.map((s) => sessionEntry(s, title, favorites, statuses)));
 }
 
 const byNewestFirst = (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime();
@@ -419,7 +429,7 @@ export async function handleListSessions({ res, url, sessionKey }) {
     scope,
     running: runningContextKeys(),
     open: openContextKeys(),
-    sessions: await Promise.all(list.sort(byNewestFirst).map(sessionEntry)),
+    sessions: await sessionEntries(list.sort(byNewestFirst)),
   });
 }
 
@@ -506,7 +516,7 @@ export async function handleSearchMessages({ req, res, url, sessionKey }) {
     // `capped` tells the two apart: 50 matches found, or chats left unread.
     capped,
     truncated: hits.length >= SEARCH_MAX_RESULTS || capped,
-    sessions: await Promise.all(hits.map(sessionEntry)),
+    sessions: await sessionEntries(hits),
   });
 }
 

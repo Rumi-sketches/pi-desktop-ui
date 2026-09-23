@@ -307,34 +307,52 @@ export function flushTitleQueue() {
 
 // ---- public entry point ----------------------------------------------------
 /**
- * The title to show for a chat, right now. Cached when there is one, the old
- * truncation otherwise — and in that case the chat is queued for a summary that
- * a later refresh will pick up.
- *
+ * Read the shared archive once for a sidebar response. The returned lookup
+ * still applies the per-chat fallback and generation rules, but never rereads
+ * the file for each row. A failed read uses fallbacks and queues nothing.
+ * @returns {Promise<(sessionPath: string, firstMessage: string, createdAt?: Date | string | number, now?: number) => string>}
+ */
+export async function titleLookup() {
+  let snapshot;
+  try {
+    const stored = await titlesStore.loadStrict();
+    // On the first lookup the strict read also initializes the process cache:
+    // a cold sidebar request must not read the same archive twice.
+    if (!titlesReady) {
+      titles = new Map(Object.entries(stored));
+      titlesReady = Promise.resolve(titles);
+    } else {
+      const cache = await loadTitles();
+      for (const [key, value] of Object.entries(stored)) cache.set(key, value);
+    }
+    snapshot = new Map(titles);
+  } catch {
+    return (_sessionPath, firstMessage) => fallbackTitle(firstMessage);
+  }
+  return (sessionPath, firstMessage, createdAt, now = Date.now()) => {
+    const fallback = fallbackTitle(firstMessage);
+    if (!sessionPath) return fallback;
+    const cached = snapshot.get(sessionPath);
+    if (cached) return cleanTitle(cached) ?? fallback;
+    if (fallback && isCoveredByTheSwitch(createdAt)) {
+      enqueue(sessionPath, String(firstMessage), now, isCoveredByLunaSwitch(createdAt));
+    }
+    return fallback;
+  };
+}
+
+/**
+ * The title to show for a chat, right now. Single-chat callers get a fresh
+ * archive read, while sidebar lists reuse one lookup across all their rows.
  * @param {string} sessionPath session file path, the cache key.
  * @param {string} firstMessage what the user opened the chat with.
- * @param {Date | string | number} [createdAt] when the chat was created; a chat
- *   older than the switch is never queued from here.
- * @param {number} [now] current time in ms; injectable for tests, which is the
- *   only way to observe the ten minutes between two attempts.
+ * @param {Date | string | number} [createdAt] when the chat was created.
+ * @param {number} [now] current time in ms; injectable for retry tests.
  * @returns {Promise<string>}
  */
 export async function titleFor(sessionPath, firstMessage, createdAt, now = Date.now()) {
-  const fallback = fallbackTitle(firstMessage);
-  if (!sessionPath) return fallback;
-  const cache = await loadTitles();
-  try {
-    const stored = await titlesStore.loadStrict();
-    for (const [key, value] of Object.entries(stored)) cache.set(key, value);
-  } catch {
-    return fallback;
-  }
-  const cached = cache.get(sessionPath);
-  if (cached) return cleanTitle(cached) ?? fallback;
-  if (fallback && isCoveredByTheSwitch(createdAt)) {
-    enqueue(sessionPath, String(firstMessage), now, isCoveredByLunaSwitch(createdAt));
-  }
-  return fallback;
+  if (!sessionPath) return fallbackTitle(firstMessage);
+  return (await titleLookup())(sessionPath, firstMessage, createdAt, now);
 }
 
 /**

@@ -8,6 +8,8 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
@@ -119,6 +121,33 @@ async function search(query) {
 const pathsOf = (body) => body.sessions.map((s) => path.basename(s.path));
 
 describe("GET /api/search", () => {
+  test("a cold sidebar lookup reads all three archives asynchronously once", async () => {
+    const paths = ["web-ui-titles.json", "web-ui-favorites.json", "web-ui-status.json"]
+      .map((name) => path.join(agentDir, name));
+    const originalSync = fs.readFileSync;
+    const originalAsync = fs.promises.readFile;
+    const syncReads = new Map(paths.map((file) => [file, 0]));
+    const asyncReads = new Map(paths.map((file) => [file, 0]));
+    Object.defineProperty(fs, "readFileSync", { configurable: true, value: (file, ...args) => {
+      if (syncReads.has(file)) syncReads.set(file, syncReads.get(file) + 1);
+      return originalSync(file, ...args);
+    } });
+    Object.defineProperty(fs.promises, "readFile", { configurable: true, value: async (file, ...args) => {
+      if (asyncReads.has(file)) asyncReads.set(file, asyncReads.get(file) + 1);
+      return originalAsync(file, ...args);
+    } });
+    syncBuiltinESMExports();
+    try {
+      assert.equal((await search("cappuccino")).body.sessions.length, 50);
+      assert.deepEqual(paths.map((file) => asyncReads.get(file)), [1, 1, 1]);
+      assert.deepEqual(paths.map((file) => syncReads.get(file)), [0, 0, 0]);
+    } finally {
+      fs.readFileSync = originalSync;
+      fs.promises.readFile = originalAsync;
+      syncBuiltinESMExports();
+    }
+  });
+
   test("all the words match, in any order, across different messages", async () => {
     const { status, body } = await search("FIX docker");
     assert.equal(status, 200);
@@ -155,6 +184,54 @@ describe("GET /api/search", () => {
       Object.keys(body.sessions[0]).sort(),
       ["branch", "cwd", "favorite", "firstMessage", "id", "issues", "messageCount", "model", "modified", "name", "path", "provider", "pullRequests", "status", "thinkingLevel", "title"],
     );
+  });
+
+  test("list and search read each shared archive once per response and see later writes", async () => {
+    const files = ["web-ui-titles.json", "web-ui-favorites.json", "web-ui-status.json"];
+    const target = path.join(sessionsDir, "bulk-54.jsonl");
+    const paths = files.map((name) => path.join(agentDir, name));
+    const originalSync = fs.readFileSync;
+    const originalAsync = fs.promises.readFile;
+    const syncReads = new Map(paths.map((file) => [file, 0]));
+    const asyncReads = new Map(paths.map((file) => [file, 0]));
+    Object.defineProperty(fs, "readFileSync", { configurable: true, value: (file, ...args) => {
+      if (syncReads.has(file)) syncReads.set(file, syncReads.get(file) + 1);
+      return originalSync(file, ...args);
+    } });
+    Object.defineProperty(fs.promises, "readFile", { configurable: true, value: async (file, ...args) => {
+      if (asyncReads.has(file)) asyncReads.set(file, asyncReads.get(file) + 1);
+      return originalAsync(file, ...args);
+    } });
+    syncBuiltinESMExports();
+    try {
+      async function check(url, title, favorite, status) {
+        syncReads.forEach((_, file) => syncReads.set(file, 0));
+        asyncReads.forEach((_, file) => asyncReads.set(file, 0));
+        const response = await fetch(`${origin}${url}`);
+        assert.equal(response.status, 200);
+        const { sessions } = await response.json();
+        assert.ok(sessions.length >= 50);
+        const row = sessions.find((s) => s.path === target);
+        assert.equal(row?.title, title);
+        assert.equal(row.favorite, favorite);
+        assert.equal(row.status, status);
+        assert.deepEqual(paths.map((file) => asyncReads.get(file)), [1, 1, 1]);
+        assert.deepEqual(paths.map((file) => syncReads.get(file)), [0, 0, 0]);
+      }
+      await writeFile(paths[0], JSON.stringify({ [target]: "External title one" }));
+      await writeFile(paths[1], JSON.stringify([target]));
+      await writeFile(paths[2], JSON.stringify({ [target]: "done" }));
+      await check("/api/sessions?scope=all", "External title one", true, "done");
+      await writeFile(paths[0], JSON.stringify({ [target]: "External title two" }));
+      await writeFile(paths[1], "[]");
+      await writeFile(paths[2], "{}");
+      await check("/api/search?scope=all&q=cappuccino", "External title two", false, "active");
+    } finally {
+      fs.readFileSync = originalSync;
+      fs.promises.readFile = originalAsync;
+      syncBuiltinESMExports();
+      await Promise.all(paths.map((file) => rm(file, { force: true })));
+    }
   });
 
   test("no more than 50 results, and it says so", async () => {

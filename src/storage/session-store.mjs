@@ -37,6 +37,11 @@ function refreshFavorites() {
     favorites = new Set(Array.isArray(stored) ? stored.filter((item) => typeof item === "string") : []);
   } catch { favorites = new Set(); }
 }
+// A fresh async snapshot per sidebar response keeps other processes visible
+// without blocking the event loop or rereading the archive for every row.
+export async function favoritePaths() {
+  return new Set(await favoritesStore.load());
+}
 export const listFavorites = () => { refreshFavorites(); return [...favorites]; };
 export const isFavorite = (chatPath) => { refreshFavorites(); return favorites.has(chatPath); };
 export function setFavorite(chatPath, favorite) {
@@ -65,6 +70,9 @@ let sessionStatus = new Map();
 const mutateSessionStatus = mutationQueue();
 async function loadSessionStatus() {
   sessionStatus = new Map(await sessionStatusStore.load());
+}
+export async function sessionStatuses() {
+  return new Map(await sessionStatusStore.load());
 }
 export const sessionStatusOf = (chatPath) => {
   try {
