@@ -296,14 +296,15 @@
             <div class="dd-menu effortMenu" id="thinkMenu">
               <div class="effortHead">
                 <span class="effortEyebrow">Reasoning effort</span>
-                <strong id="thinkPreviewName">Off</strong>
               </div>
               <p class="effortReadout" id="thinkReadout">No extended reasoning</p>
-              <div class="effortControl" id="thinkPicker">
-                <input type="range" id="thinkRange" min="0" max="0" step="1" value="0" aria-label="Reasoning effort">
-                <div class="effortStops" id="thinkStops" aria-hidden="true"></div>
+              <div class="effortPicker" id="thinkPicker">
+                <div class="effortBubbleRow" aria-hidden="true"><span class="effortBubble" id="thinkBubble">Off</span></div>
+                <div class="effortControl">
+                  <input type="range" id="thinkRange" min="0" max="0" step="1" value="0" aria-label="Reasoning effort" aria-valuetext="Off">
+                  <div class="effortStops" id="thinkStops" aria-hidden="true"></div>
+                </div>
               </div>
-              <div class="effortEnds" aria-hidden="true"><span>Focused</span><span>Exploratory</span></div>
             </div>
           </div>
 

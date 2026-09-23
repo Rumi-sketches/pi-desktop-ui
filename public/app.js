@@ -1029,8 +1029,8 @@ function renderModelMenu() {
     menu.appendChild(sub);
   }
 }
-const THINK_LABEL = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
-const THINK_DESC = { off: 'No extended reasoning', low: 'Short reasoning', medium: 'Moderate reasoning', high: 'Deep reasoning', xhigh: 'Very deep reasoning', max: 'Maximum reasoning budget' };
+const THINK_LABEL = { off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+const THINK_DESC = { off: 'No extended reasoning', minimal: 'Minimal reasoning', low: 'Short reasoning', medium: 'Moderate reasoning', high: 'Deep reasoning', xhigh: 'Very deep reasoning', max: 'Maximum reasoning budget' };
 function renderThinking() {
   const levels = activeChatState().thinkingLevels?.length ? activeChatState().thinkingLevels : ['off'];
   if (!levels.includes(activeChatState().thinking)) activeChatState().thinking = levels[0];
@@ -1043,11 +1043,13 @@ function renderThinking() {
       ? `color-mix(in srgb, var(--teal) ${Math.round(34 + ratio * 108)}%, var(--panel-3))`
       : `color-mix(in srgb, var(--teal) ${Math.round(100 - (ratio - .5) * 42)}%, var(--txt))`;
     $('thinkMenu').style.setProperty('--effort-accent', accent);
+    const label = THINK_LABEL[level] ?? level;
     $('thinkPicker').style.setProperty('--effort-accent', accent);
-    $('thinkPicker').style.setProperty('--effort-progress', `${ratio * 100}%`);
+    $('thinkPicker').style.setProperty('--effort-position', `calc(14px + ${ratio * 100}% - ${ratio * 28}px)`);
     $('thinkSwatch').style.setProperty('--effort-accent', accent);
-    $('thinkName').textContent = THINK_LABEL[level] ?? level;
-    $('thinkPreviewName').textContent = THINK_LABEL[level] ?? level;
+    $('thinkName').textContent = label;
+    $('thinkBubble').textContent = label;
+    range.setAttribute('aria-valuetext', label);
     $('thinkReadout').textContent = THINK_DESC[level] ?? 'Reasoning effort';
     [...stops.children].forEach((stop, stopIndex) => stop.classList.toggle('passed', stopIndex <= index));
   };

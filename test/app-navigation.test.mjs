@@ -177,6 +177,53 @@ test('chat rows expose a yellow marker for unsent drafts', () => {
   assert.match(cssSource, /\.sessionItem \.draftDot \{[^}]*background:\s*var\(--warn\)/s);
 });
 
+test('effort slider keeps its detached value and rounded rail aligned with the native stops', () => {
+  assert.match(indexSource, /class="effortBubbleRow" aria-hidden="true"><span class="effortBubble" id="thinkBubble"/);
+  assert.doesNotMatch(indexSource, /Focused<\/span><span>Exploratory/);
+  assert.match(cssSource, /\.effortControl::before \{[^}]*inset: 9px 0 auto/s);
+  assert.match(cssSource, /\.effortBubble \{[^}]*left: clamp\(45px, var\(--effort-position\), calc\(100% - 45px\)\)/s);
+  assert.doesNotMatch(cssSource, /\.effortBubble::after/);
+
+  const styleValues = new Map();
+  const style = { setProperty: (name, value) => styleValues.set(name, value) };
+  const elements = {
+    thinkRange: {
+      value: '', disabled: false,
+      setAttribute(name, value) { this[name] = value; },
+    },
+    thinkStops: {
+      children: [],
+      replaceChildren(...children) { this.children = children; },
+    },
+    thinkMenu: { style }, thinkPicker: { style }, thinkSwatch: { style },
+    thinkName: {}, thinkBubble: {}, thinkReadout: {}, thinkBtn: {},
+  };
+  const state = { thinking: 'medium', thinkingLevels: ['off', 'medium', 'max'] };
+  const context = vm.createContext({
+    THINK_LABEL: { off: 'Off', medium: 'Medium', max: 'Max' },
+    THINK_DESC: { off: 'None', medium: 'Moderate', max: 'Maximum' },
+    activeChatState: () => state,
+    $: (id) => elements[id],
+    document: {
+      createElement: () => ({ classList: { toggle() {} } }),
+    },
+  });
+  vm.runInContext(appFunction('renderThinking'), context);
+  context.renderThinking();
+
+  assert.equal(elements.thinkRange['aria-valuetext'], 'Medium');
+  assert.equal(elements.thinkBubble.textContent, 'Medium');
+  assert.equal(styleValues.get('--effort-position'), 'calc(14px + 50% - 14px)');
+  elements.thinkRange.value = '0';
+  elements.thinkRange.oninput();
+  assert.equal(styleValues.get('--effort-position'), 'calc(14px + 0% - 0px)');
+  assert.equal(elements.thinkRange['aria-valuetext'], 'Off');
+  elements.thinkRange.value = '2';
+  elements.thinkRange.oninput();
+  assert.equal(styleValues.get('--effort-position'), 'calc(14px + 100% - 28px)');
+  assert.equal(elements.thinkBubble.textContent, 'Max');
+});
+
 test('project tabs reorder on either side of the drop target', () => {
   const context = vm.createContext({});
   vm.runInContext(appFunction('reorderProjectTabs'), context);
