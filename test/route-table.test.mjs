@@ -92,6 +92,16 @@ describe("method not allowed", () => {
   });
 });
 
+test("catalog refresh is POST-only and rejects a foreign Origin", async () => {
+  const wrongMethod = await request("GET", "/api/config/refresh");
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.allow, "POST");
+  const foreign = await fetch(`${origin}/api/config/refresh`, {
+    method: "POST", headers: { Origin: "https://example.com" },
+  });
+  assert.equal(foreign.status, 403);
+});
+
 describe("routes that keep working", () => {
   test("GET /api/state is served", async () => {
     const { status } = await request("GET", "/api/state");

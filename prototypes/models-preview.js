@@ -1,0 +1,19 @@
+const catalogue={ 'OpenAI Codex':['GPT-6 Sol','GPT-6 Luna','GPT-6 Astra','GPT-5.6 Terra','GPT-5.3 Codex Spark'],Anthropic:['Claude Opus 4.7','Claude Sonnet 4.6','Claude Haiku 4.5','Claude Opus 4.5'],'Kimi Coding':['Kimi for Coding','K3','K3 256k'],OpenRouter:['Gemini 3.1 Pro','DeepSeek V4','GLM-5','Qwen 3.5'],Omniakey:['GPT-6 Sol','Claude Opus 4.7']};
+const icons={'OpenAI Codex':'◎',Anthropic:'✳','Kimi Coding':'◈',OpenRouter:'◇',Omniakey:'▣'};
+const access={'OpenAI Codex':true,Anthropic:true,'Kimi Coding':false,OpenRouter:true,Omniakey:false};
+const enabled={'OpenAI Codex':true,Anthropic:false,'Kimi Coding':false,OpenRouter:true,Omniakey:false};
+const chosen={'OpenAI Codex':new Set(['GPT-6 Sol','GPT-6 Luna','GPT-5.3 Codex Spark']),Anthropic:new Set(['Claude Sonnet 4.6']),'Kimi Coding':new Set(),OpenRouter:new Set(['Gemini 3.1 Pro']),Omniakey:new Set()};
+let current='OpenAI Codex';const $=id=>document.getElementById(id);
+function render(){
+ const providerQuery=$('providerSearch')?.value.trim().toLowerCase()??'';
+ const names=Object.keys(catalogue).filter(name=>name.toLowerCase().includes(providerQuery)).sort((a,b)=>Number(enabled[b])-Number(enabled[a]));
+ $('providers').innerHTML=names.map(name=>`<div class="provider ${current===name?'active':''}"><button class="choose" data-open="${name}" aria-pressed="${current===name}"><span class="icon">${icons[name]}</span><span><strong>${name}</strong><small>${!access[name]?'Accesso necessario':enabled[name]?`${chosen[name].size} modelli selezionati`:'Disattivato'}</small></span></button><button class="switch" role="switch" aria-label="Attiva ${name}" aria-checked="${enabled[name]}" data-enable="${name}" ${access[name]?'':'disabled title="Configura prima l’accesso"'}></button></div>`).join('')||'<p class="noProviders">Nessun provider trovato.</p>';
+ $('title').textContent=current;$('subtitle').textContent=!access[current]?'Configura l’accesso per selezionare i modelli.':enabled[current]?'Scegli i modelli da mostrare nel selettore.':'Provider disattivato. Le scelte dei modelli restano memorizzate.';
+ $('status').textContent=access[current]?'Accesso configurato':'Accesso necessario';$('auth').classList.toggle('hidden',access[current]);$('all').disabled=!access[current];$('all').textContent=chosen[current].size===catalogue[current].length?'Deseleziona tutti':'Seleziona tutti';
+ const q=$('search').value.trim().toLowerCase();const results=catalogue[current].filter(name=>name.toLowerCase().includes(q));
+ $('models').innerHTML=results.map((name,i)=>`<div class="model"><label><input type="checkbox" data-model="${name}" ${chosen[current].has(name)?'checked':''} ${access[current]?'':'disabled'}><span><strong>${name}</strong><small>${current.toLowerCase().replaceAll(' ','-')}/${name.toLowerCase().replaceAll(' ','-')}</small></span></label><span class="pill">${i%2?'Reasoning':'200k ctx'}</span></div>`).join('')||'<p>Nessun modello trovato.</p>';
+ $('count').textContent=`${chosen[current].size} / ${catalogue[current].length} selezionati`;
+}
+document.addEventListener('click',e=>{const open=e.target.closest('[data-open]');if(open){current=open.dataset.open;$('search').value='';render();return}const toggle=e.target.closest('[data-enable]');if(toggle){enabled[toggle.dataset.enable]=!enabled[toggle.dataset.enable];render();return}if(e.target.id==='all'){chosen[current]=new Set(chosen[current].size===catalogue[current].length?[]:catalogue[current]);render()}if(e.target.id==='refresh'){$('feedback').textContent='Preview: provider and model refresh simulated. No network request was sent.';render()}});
+document.addEventListener('change',e=>{if(e.target.dataset.model){if(e.target.checked)chosen[current].add(e.target.dataset.model);else chosen[current].delete(e.target.dataset.model);render()}});
+$('search').addEventListener('input',render);$('providerSearch')?.addEventListener('input',render);render();

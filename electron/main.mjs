@@ -7,7 +7,7 @@
 // is what makes "close the window, the server is gone" true by construction:
 // there is no second process left to orphan.
 
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, Menu, Notification, dialog, ipcMain, shell } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import { describeWork } from "../src/lifecycle.mjs";
 import { DEFAULT_PORT } from "../src/http/network.mjs";
 import { PRODUCT_ID, PRODUCT_NAME } from "../product.mjs";
 import { textContextMenuTemplate } from "./context-menu.mjs";
+import { chatNotificationPayload } from "./chat-notification.mjs";
 import { isAllowedExternalUrl } from "./external-links.mjs";
 import { spellCheckerLanguages } from "./spellchecker-languages.mjs";
 
@@ -155,6 +156,26 @@ function installTitleBarThemeBridge() {
     } catch (err) {
       console.error(`${PRODUCT_ID}: could not update the title bar (${errorMessage(err)})`);
     }
+  });
+}
+
+function installChatNotifications() {
+  ipcMain.on("chat:finished", (event, payload) => {
+    if (process.platform !== "win32" || !isInternal(event.sender.getURL())) return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed() || win.isFocused() || !Notification.isSupported()) return;
+    const notificationData = chatNotificationPayload(payload);
+    if (!notificationData) return;
+    const { key, title } = notificationData;
+    const notification = new Notification({ title: "Chat finished", body: title });
+    notification.on("click", () => {
+      if (win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      if (!win.webContents.isDestroyed()) win.webContents.send("chat:notification-click", key);
+    });
+    notification.show();
   });
 }
 
@@ -315,6 +336,7 @@ async function boot() {
   }
   installMenu();
   installTitleBarThemeBridge();
+  installChatNotifications();
   const win = new BrowserWindow(windowOptions());
   configureSpellChecker(win.webContents);
   loadInto(win, url);

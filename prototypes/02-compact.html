@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>B. Lista compatta</title><link rel="stylesheet" href="models-preview.css"></head>
+<body class="compact"><header><h1>B. Lista compatta</h1><p>Più modelli visibili contemporaneamente, stessa navigazione a due colonne. Anteprima interattiva, non salva nulla.</p></header>
+<div class="shell"><aside class="providerPane" aria-label="Provider"><div class="providerSearch"><input id="providerSearch" type="search" placeholder="Cerca un provider" aria-label="Cerca un provider"></div><div class="providers" id="providers"></div></aside><main><div class="head"><div><h2 id="title"></h2><p id="subtitle"></p></div><span id="status" class="pill"></span></div>
+<div class="auth hidden" id="auth"><strong>Accesso non configurato</strong><p>Usa /login in pi o configura la chiave API del provider, poi torna qui.</p></div>
+<div class="tools"><input type="search" id="search" placeholder="Cerca un modello" aria-label="Cerca un modello"><button type="button" id="all"></button><button type="button" id="refresh">Aggiorna provider e modelli</button><span id="count" class="pill"></span></div>
+<div id="models" class="models"></div><p class="note" id="feedback" role="status">I provider attivi restano in cima. Aggiorna provider e modelli simula il refresh in questa anteprima.</p></main></div><script src="models-preview.js"></script></body></html>

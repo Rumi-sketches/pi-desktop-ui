@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>C. Banco modelli</title><link rel="stylesheet" href="models-preview.css"></head>
+<body class="workbench"><header><h1>C. Banco modelli</h1><p>Catalogo a due colonne per vedere più modelli dopo aver scelto il provider. Anteprima interattiva, non salva nulla.</p></header>
+<div class="shell"><aside class="providers" id="providers" aria-label="Provider"></aside><main><div class="head"><div><h2 id="title"></h2><p id="subtitle"></p></div><span id="status" class="pill"></span></div>
+<div class="auth hidden" id="auth"><strong>Accesso non configurato</strong><p>Usa /login in pi o configura la chiave API del provider, poi torna qui.</p></div>
+<div class="tools"><input type="search" id="search" placeholder="Cerca un modello" aria-label="Cerca un modello"><button type="button" id="all"></button><button type="button" id="refresh">Aggiorna modelli</button><span id="count" class="pill"></span></div>
+<div id="models" class="models"></div><p class="note" id="feedback" role="status">I provider attivi restano in cima. Il pulsante Aggiorna simula il refresh in questa anteprima.</p></main></div><script src="models-preview.js"></script></body></html>

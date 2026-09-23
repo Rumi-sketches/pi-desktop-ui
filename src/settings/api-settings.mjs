@@ -313,6 +313,19 @@ export async function handleUpdateSetting({ req, res }) {
  * @property {string} node version of the node process serving this.
  */
 
+export async function handleRefreshModels({ res }) {
+  try {
+    const result = await getModelRuntime().refresh({ signal: AbortSignal.timeout(15_000) });
+    return send(res, 200, {
+      ok: !result.aborted && result.errors.size === 0,
+      aborted: result.aborted,
+      failedProviders: [...result.errors.keys()],
+    });
+  } catch {
+    return send(res, 500, { error: "Could not refresh provider and model catalogs" });
+  }
+}
+
 export async function handleGetConfig({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const { session, cwd } = ctx;

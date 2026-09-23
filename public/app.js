@@ -180,10 +180,14 @@ const money = (n) => { const v = n ?? 0; return '$' + (v < 1 ? v.toFixed(4) : v.
 // there Shift stays.
 const IS_ELECTRON = /electron\//i.test(navigator.userAgent);
 document.documentElement.classList.toggle('electron', IS_ELECTRON);
+document.documentElement.classList.toggle('windows-titlebar', win.desktopWindow?.isWindows === true);
 const MOD = IS_ELECTRON ? 'Ctrl' : 'Shift';
 const hasMod = (e) => (IS_ELECTRON ? e.ctrlKey && !e.shiftKey && !e.metaKey : e.shiftKey && !e.ctrlKey && !e.metaKey) && !e.altKey;
 
 const TOAST_LIFETIME_MS = 6000;
+const CHAT_NOTIFICATION_KEY = 'PI_WEB_UI_CHAT_NOTIFICATIONS';
+const getChatNotifications = () => localStorage.getItem(CHAT_NOTIFICATION_KEY) === 'true';
+win.desktopWindow?.onChatNotificationClick((key) => openChatNotification(key));
 function toast(msg, ok = false, { actionLabel = '', onAction = null } = {}) {
   const actionable = typeof onAction === 'function';
   const t = document.createElement(actionable ? 'button' : 'div');
@@ -807,6 +811,10 @@ function handleEvent(ev, ownerKey) {
           actionLabel: 'Open chat',
           onAction: () => openChatNotification(ev.key),
         });
+      }
+      if (!ev.running && wasRunning && getChatNotifications()) {
+        const title = sessionForKey(ev.key)?.title;
+        if (title) win.desktopWindow?.notifyChatFinished(ev.key, title.replace(/\s+/g, ' ').trim().slice(0, 100));
       }
     } else if (ev.kind === 'sessions') {
       loadSessions();
@@ -2542,6 +2550,8 @@ const settingsController = createSettingsView({
   applyPlatformCapabilities,
   applyChatArchiving,
   getChatArchiving: () => chatArchiving,
+  getChatNotifications,
+  setChatNotifications: (enabled) => localStorage.setItem(CHAT_NOTIFICATION_KEY, String(enabled)),
   loadSessions,
   refreshUsage,
   selectModel,

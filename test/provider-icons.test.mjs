@@ -77,7 +77,7 @@ test('all UI surfaces import the one map and the browser preloads its served mod
   assert.match(appSource, /import \{ providerIconHtml \} from '.\/provider-icons\.js';/);
   assert.doesNotMatch(appSource, /const LOGOS\s*=/);
   assert.match(appSource, /h\.innerHTML = providerIconHtml\(s\.provider, s\.model\)/);
-  assert.match(settingsSource, /checkbox\(modelPattern\(m\).*m\.provider, m\.id\)/);
+  assert.match(settingsSource, /providerIconHtml\(p\.id\)/);
   assert.match(appSource, /classList\.add\('icon-failed'\)/);
   assert.match(cssSource, /\.logo\.icon-failed \.logo-neutral/);
   assert.match(indexSource, /<link rel="modulepreload" href="\/provider-icons\.js">/);

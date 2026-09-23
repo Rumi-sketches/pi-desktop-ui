@@ -114,6 +114,7 @@ function fixture({ deferNetwork = false } = {}) {
         description: 'Test setting', default: 'false', set: true,
       }] }],
     },
+    '/api/config/refresh': { ok: true, aborted: false, failedProviders: [] },
     '/api/config': {
       platform: { os: 'win32', openTextFile: true }, paths: { agentDir: '/agent' },
       current: null, thinkingLevel: 'off', thinkingLevels: ['off'], cwd: '/project', sessionFile: null,
@@ -160,6 +161,7 @@ function fixture({ deferNetwork = false } = {}) {
     accents: [{ id: '', name: 'Default', col: '' }],
     logoStyles: [{ id: 'brand', name: 'Provider colours' }],
     agentInputs, getRenderedChatKey: () => 'chat-key', setSidebarCollapsed() {},
+    getChatNotifications: () => false, setChatNotifications() {},
   });
   return {
     document,
@@ -199,18 +201,16 @@ test('settings view saves only confirmed values and reopens without duplicate li
     const duplicate = state.controller.show();
     await Promise.all([first, duplicate]);
 
-    assert.equal(state.document.getElementById('settingsView').listenerCount('scroll'), 1);
+    assert.equal(state.document.getElementById('settingsView').listenerCount('scroll'), 0);
     assert.equal(state.calls.filter((call) => call.url === '/api/settings' && call.kind === 'api').length, 1,
       'a concurrent show shares the in-flight load');
     assert.equal(state.calls.filter((call) => call.url === '/api/analytics').length, 1);
     const settingsView = state.document.getElementById('settingsView');
     settingsView.scrollTop = 80;
-    settingsView.top = 100;
-    state.document.getElementById('sec-theme').top = 460;
     const themeNav = state.document.getElementById('settingsNav').children
       .find((item) => item.dataset.target === 'sec-theme');
     await themeNav.emit('click');
-    assert.deepEqual(settingsView.scrollRequest, { top: 424, behavior: 'smooth' });
+    assert.equal(settingsView.scrollTop, 0);
 
     const setting = state.document.getElementById('set_featureFlag');
     const saved = state.document.getElementById('set_featureFlag_ok');
@@ -230,10 +230,22 @@ test('settings view saves only confirmed values and reopens without duplicate li
     state.controller.hide();
     assert.equal(state.document.getElementById('settingsView').listenerCount('scroll'), 0);
     await state.controller.show();
-    assert.equal(state.document.getElementById('settingsView').listenerCount('scroll'), 1);
+    assert.equal(state.document.getElementById('settingsView').listenerCount('scroll'), 0);
     assert.equal(state.calls.filter((call) => call.url === '/api/settings' && call.kind === 'api').length, 2);
     assert.equal(state.calls.filter((call) => call.url === '/api/analytics').length, 1,
       'cached analytics is rendered without a duplicate request');
+  });
+});
+
+test('refresh requests live provider catalogs and fetches fresh configuration', async () => {
+  await withBrowserGlobals(async (installDocument) => {
+    const state = fixture();
+    installDocument(state.document);
+    await state.controller.show();
+    await state.document.getElementById('refreshCatalog').emit('click');
+    assert.equal(state.calls.filter((call) => call.url === '/api/config/refresh' && call.kind === 'post').length, 1);
+    assert.equal(state.calls.filter((call) => call.url === '/api/config' && call.kind === 'api').length, 2);
+    assert.equal(state.document.getElementById('refreshMsg').textContent, 'Providers and models updated.');
   });
 });
 

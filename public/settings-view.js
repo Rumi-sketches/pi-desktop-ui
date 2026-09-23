@@ -11,9 +11,11 @@ import { providerIconHtml } from './provider-icons.js';
  * @property {(caps: any) => void} applyPlatformCapabilities
  * @property {(enabled: boolean) => void} applyChatArchiving
  * @property {() => boolean} getChatArchiving
+ * @property {() => boolean} getChatNotifications
+ * @property {(enabled: boolean) => void} setChatNotifications
  * @property {() => Promise<any>} loadSessions
- * @property {(force?: boolean) => Promise<any>} refreshUsage
  * @property {(provider: string, id: string) => Promise<any>} selectModel
+ * @property {(force?: boolean) => Promise<any>} refreshUsage
  * @property {(options?: { force?: boolean }) => Promise<any>} loadModels
  * @property {(id: string) => void} applyTheme
  * @property {(id: string) => void} applyAccent
@@ -42,9 +44,10 @@ export function createSettingsView({
   applyPlatformCapabilities,
   applyChatArchiving,
   getChatArchiving,
+  getChatNotifications,
+  setChatNotifications,
   loadSessions,
   refreshUsage,
-  selectModel,
   loadModels,
   applyTheme,
   applyAccent,
@@ -85,22 +88,24 @@ const SETTINGS_SECTIONS = [
   ['sec-theme', 'Theme'],
   ['sec-usage', 'Account limits'],
   ['sec-session', 'Session'],
-  ['sec-enabled', 'Enabled providers and models'],
-  ['sec-models', 'Models'],
+  ['sec-models', 'Models & providers'],
   ['sec-network', 'Local network'],
   ['sec-chats', 'Chats'],
-  ['sec-auth', 'Providers'],
   ['sec-tools', 'Tools'],
   ['sec-paths', 'Paths'],
   ['sec-raw', 'Raw config'],
 ];
-function scrollSettingsSection(id) {
+let activeSettingsSection = 'analytics';
+let preferredProvider = null;
+function showSettingsSection(id) {
   const section = $(id);
   if (!section) return false;
-  const view = $('settingsView');
-  const top = view.scrollTop + section.getBoundingClientRect().top
-    - view.getBoundingClientRect().top - 16;
-  view.scrollTo({ top, behavior: 'smooth' });
+  activeSettingsSection = id;
+  $('settingsBody').querySelectorAll('.sec').forEach((el) => { el.hidden = el !== section; });
+  $('analytics').hidden = id !== 'analytics';
+  $('settingsView').scrollTop = 0;
+  $('settingsNav').querySelectorAll('.snavItem').forEach((el) =>
+    el.classList.toggle('on', el.dataset.target === id));
   return true;
 }
 function buildSettingsNav() {
@@ -112,23 +117,12 @@ function buildSettingsNav() {
     b.dataset.target = id;
     b.textContent = label;
     b.addEventListener('click', () => {
-      if (!scrollSettingsSection(id)) return;
-      nav.querySelectorAll('.snavItem').forEach((x) => x.classList.toggle('on', x === b));
+      if (!showSettingsSection(id)) return;
       if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true);
     });
     nav.appendChild(b);
   }
-}
-// highlight in the sidebar the section you are looking at
-function onSettingsScroll() {
-  const top = $('settingsView').getBoundingClientRect().top;
-  let current = null;
-  for (const [id] of SETTINGS_SECTIONS) {
-    const el = $(id);
-    if (el && el.getBoundingClientRect().top - top < 140) current = id;
-  }
-  $('settingsNav').querySelectorAll('.snavItem').forEach((x) =>
-    x.classList.toggle('on', x.dataset.target === current));
+  showSettingsSection(activeSettingsSection);
 }
 
 /* ---------------- cost analytics dashboard ---------------- */
@@ -510,6 +504,17 @@ async function renderSettings() {
     </div>
 
     <div class="sec" id="sec-chats">
+      ${/** @type {any} */ (window).desktopWindow?.isWindows ? `<h3>Windows notifications</h3>
+      <div class="card settingsCard">
+        <div class="setRow">
+          <div>
+            <div class="k">Chat finished</div>
+            <div class="d">Show a Windows notification with the chat title when a model finishes a request and this window is not in focus. Click it to open the chat.</div>
+            <div class="def">default: <code>off</code></div>
+          </div>
+          <div class="ctl"><span class="sw" id="chatNotificationsSw" role="switch" tabindex="0" aria-label="Windows chat notifications"></span></div>
+        </div>
+      </div>` : ''}
       <h3>Chat archiving</h3>
       <div class="card settingsCard">
         <div class="setRow">
@@ -578,47 +583,25 @@ async function renderSettings() {
       </div></div>
     </div>
 
-    <div class="sec" id="sec-enabled">
-      <h3>Enabled providers and models</h3>
-      <p class="lead" style="margin:-.3rem 0 .8rem">Only the ticked entries show up in the model picker at the top. The list is written to the <code>enabledModels</code> key of settings.json (glob format, shared with the pi CLI): ticking a provider writes <code>provider/*</code>, ticking a model writes its full identifier.</p>
-      <div class="card settingsCard">
-        <div class="sys" id="enabledHint"></div>
-        <h4 style="margin:.7rem 0 .4rem;font-size:.82rem;color:var(--teal);letter-spacing:.04em">Providers</h4>
-        <div id="enabledProviders" style="display:flex;gap:.4rem;flex-wrap:wrap"></div>
-        <h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal);letter-spacing:.04em">Models</h4>
-        <div class="search" style="margin-bottom:.5rem">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
-          <input id="enabledSearch" placeholder="Search model or provider…">
-        </div>
-        <div id="enabledModelList" style="display:flex;gap:.4rem;flex-wrap:wrap;max-height:320px;overflow:auto"></div>
-        <div class="row settingsActionRow" style="margin-top:.6rem">
-          <button class="btn outline" id="enabledClear">Clear the list</button>
-          <span class="sys settingsMessage" id="enabledMsg"></span>
-        </div>
-      </div>
-    </div>
-
     <div class="sec" id="sec-models">
-      <h3>Models — click a card to activate the model</h3>
-      <div style="display:flex;gap:.5rem;margin-bottom:.7rem;align-items:center;flex-wrap:wrap">
-        <div class="search" style="flex:1;min-width:200px">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
-          <input id="modelSearch" placeholder="Search model or provider…">
+      <div class="modelsPageHeader"><div><h3>Models &amp; providers</h3><p class="lead">Choose a provider on the left, then pick its models on the right.</p></div>
+        <button class="btn outline" id="refreshCatalog" type="button">Refresh providers &amp; models</button></div>
+      <p class="sys" id="refreshMsg" role="status"></p>
+      <div class="modelsWorkspace">
+        <div class="modelsProviderPane">
+          <div class="search"><input id="providerSearch" type="search" placeholder="Search providers…" aria-label="Search providers"></div>
+          <div id="providerList" class="providerList"></div>
         </div>
-        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyAuth" checked> authenticated only</label>
-        <label class="chip" style="cursor:pointer"><input type="checkbox" id="onlyReason"> with reasoning only</label>
-        <span class="sys" id="modelCount"></span>
-      </div>
-      <div class="modelGrid" id="modelGrid"></div>
-    </div>
-
-    <div class="sec" id="sec-auth">
-      <h3>Providers &amp; authentication</h3>
-      <div class="card settingsCard"><div class="kv">${c.providers.filter((p) => p.configured || p.models > 0).map((p) => `
-        <div class="k">${esc(p.id)}</div>
-        <div class="v">${p.configured ? '<span class="badge ok">authenticated</span>' : '<span class="badge no">not configured</span>'}
-          ${p.oauth ? '<span class="badge">oauth</span>' : ''}
-          <span class="badge">${p.models} models</span> ${esc(p.detail || '')}</div>`).join('')}</div>
+        <div class="modelsDetailPane">
+          <h4>Models for <span id="selectedProviderName"></span></h4>
+          <p class="sys" id="enabledMsg" role="status"></p>
+          <div class="modelsToolbar">
+            <div class="search"><input id="modelSearch" type="search" placeholder="Search models…" aria-label="Search models"></div>
+            <label class="chip"><input type="checkbox" id="onlyReason"> with reasoning only</label>
+            <span class="sys" id="modelCount"></span>
+          </div>
+          <div class="modelGrid" id="modelGrid"></div>
+        </div>
       </div>
     </div>
 
@@ -641,9 +624,6 @@ async function renderSettings() {
     <div class="sec" id="sec-raw">
       <h3>settings.json (raw)</h3>
       <pre class="raw">${esc(JSON.stringify(st.raw ?? {}, null, 2))}</pre>
-    </div>
-
-    <div class="sec">
       <h3>models.json (raw)</h3>
       <pre class="raw">${esc(JSON.stringify(c.rawModels ?? {}, null, 2))}</pre>
     </div>`;
@@ -682,6 +662,24 @@ async function renderSettings() {
     await navigator.clipboard.writeText(url).catch(() => {});
     $('lanMsg').textContent = 'link copied';
   });
+
+  /* ---- Windows chat notifications ---- */
+  const notificationsSwitch = $('chatNotificationsSw');
+  if (notificationsSwitch) {
+    const drawNotifications = () => {
+      notificationsSwitch.classList.toggle('on', getChatNotifications());
+      notificationsSwitch.setAttribute('aria-checked', String(getChatNotifications()));
+    };
+    drawNotifications();
+    const toggleNotifications = () => {
+      setChatNotifications(!getChatNotifications());
+      drawNotifications();
+    };
+    notificationsSwitch.addEventListener('click', toggleNotifications);
+    notificationsSwitch.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleNotifications(); }
+    });
+  }
 
   /* ---- chat archiving ---- */
   function drawArchiving(cfg, msg = '') {
@@ -904,101 +902,126 @@ async function renderSettings() {
   applyTheme(document.documentElement.dataset.theme);
   applyAccent(localStorage.getItem('piAccent') || '');
 
-  /* ---- enabledModels: allow-list per provider and per model ---- */
-  // An empty list is pi's default and means "everything enabled": it must not be
-  // confused with "nothing enabled".
-  const providerPattern = (provider) => `${provider}/*`;
-  const modelPattern = (m) => `${m.provider}/${m.id}`;
-  const authedModels = c.models.filter((m) => m.authed);
-  const authedProviders = [...new Set(authedModels.map((m) => m.provider))].sort();
+  /* ---- Provider visibility and per-model selection (pi's enabledModels allow-list) ---- */
+  const providers = c.providers.filter((p) => p.models > 0).sort((a, b) => a.id.localeCompare(b.id));
+  let selectedProvider = providers.find((p) => p.id === preferredProvider)?.id
+    ?? providers.find((p) => p.configured)?.id ?? providers[0]?.id;
   let enabledPatterns = c.options?.enabledModels ?? [];
+  let saving = false;
+  const keyFor = (m) => `${m.provider}/${m.id}`;
+  const providerModels = (id) => c.models.filter((m) => m.provider === id);
+  const active = (m) => enabledPatterns.length === 0
+    ? m.authed : enabledPatterns.includes(`${m.provider}/*`) || enabledPatterns.includes(keyFor(m));
+  const activeProvider = (id) => providerModels(id).some(active);
 
-  const checkbox = (pattern, label, on, provider, modelId = '') =>
-    `<label class="chip" style="cursor:pointer"><input type="checkbox" data-pattern="${esc(pattern)}" ${on ? 'checked' : ''}>${providerIconHtml(provider, modelId)} ${esc(label)}</label>`;
-
-  function drawEnabled() {
-    const on = new Set(enabledPatterns);
-    $('enabledHint').textContent = enabledPatterns.length
-      ? `${enabledPatterns.length} active patterns: ${enabledPatterns.join(', ')}`
-      : 'Empty list: every model of the authenticated providers is enabled.';
-    $('enabledProviders').innerHTML = authedProviders
-      .map((p) => checkbox(providerPattern(p), p, on.has(providerPattern(p)), p)).join('')
-      || '<div class="sys">No authenticated provider</div>';
-    const q = $('enabledSearch').value.trim().toLowerCase();
-    const list = authedModels.filter((m) => !q
-      || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q));
-    $('enabledModelList').innerHTML = list
-      .map((m) => checkbox(modelPattern(m), modelPattern(m), on.has(modelPattern(m)), m.provider, m.id)).join('')
-      || '<div class="sys">No model matches the search</div>';
+  function drawProviders() {
+    const q = $('providerSearch').value.trim().toLowerCase();
+    $('providerList').innerHTML = providers.filter((p) => p.id.toLowerCase().includes(q))
+      .sort((a, b) => Number(activeProvider(b.id) && b.configured) - Number(activeProvider(a.id) && a.configured)
+        || a.id.localeCompare(b.id)).map((p) => `
+      <div class="providerRow ${selectedProvider === p.id ? 'selected' : ''}">
+        <button class="providerChoose" data-provider="${esc(p.id)}" aria-pressed="${selectedProvider === p.id}">
+          ${providerIconHtml(p.id)} <span><strong>${esc(p.id)}</strong>
+          <small>${p.configured ? `${providerModels(p.id).filter(active).length} models selected` : 'Access needed'}</small></span>
+        </button>
+        <label class="providerSwitch"><input type="checkbox" aria-label="Show ${esc(p.id)} in picker" data-toggle-provider="${esc(p.id)}" ${activeProvider(p.id) && p.configured ? 'checked' : ''} ${p.configured ? '' : 'disabled'}></label>
+      </div>`).join('') || '<p class="sys">No providers match the search</p>';
+    $('selectedProviderName').textContent = selectedProvider ?? '—';
   }
 
-  async function saveEnabled(patterns) {
-    const r = await post('/api/settings', { key: 'enabledModels', value: patterns });
-    if (r.error) { $('enabledMsg').textContent = '✗ ' + r.error; drawEnabled(); return; }
-    enabledPatterns = r.value ?? [];
-    $('enabledMsg').textContent = 'saved';
-    drawEnabled();
-    loadModels({ force: true });   // explicit invalidation: the global picker changed
-  }
-
-  const onEnabledToggle = (e) => {
-    const box = e.target.closest('input[data-pattern]');
-    if (!box) return;
-    const pattern = box.dataset.pattern;
-    saveEnabled(box.checked
-      ? [...new Set([...enabledPatterns, pattern])]
-      : enabledPatterns.filter((p) => p !== pattern));
-  };
-  $('enabledProviders').addEventListener('change', onEnabledToggle);
-  $('enabledModelList').addEventListener('change', onEnabledToggle);
-  $('enabledSearch').addEventListener('input', drawEnabled);
-  $('enabledClear').addEventListener('click', () => saveEnabled([]));
-  drawEnabled();
-
-  /* ---- model grid with filters (1000+ models registered) ---- */
-  const grid = $('modelGrid');
   function drawGrid() {
     const q = $('modelSearch').value.trim().toLowerCase();
-    const list = c.models
-      .map((m, i) => ({ m, i }))
-      .filter(({ m }) => (!$('onlyAuth').checked || m.authed)
-        && (!$('onlyReason').checked || m.reasoning)
-        && (!q || `${m.provider} ${m.id} ${m.name ?? ''}`.toLowerCase().includes(q)))
-      .slice(0, 180);
-    $('modelCount').textContent = `${list.length} shown out of ${c.models.length}`;
-    grid.innerHTML = list.map(({ m, i }) => `
-      <button class="modelCard ${c.current && m.provider === c.current.provider && m.id === c.current.id ? 'sel' : ''} ${m.authed ? '' : 'off'}" data-i="${i}" ${m.authed ? '' : 'disabled title="provider not authenticated"'}>
-        <div class="h">${providerIconHtml(m.provider, m.id, 'lg')}
-          <div style="min-width:0"><div class="nm">${esc(m.name || m.id)}</div><div class="pv">${esc(m.provider)}/${esc(m.id)}</div></div>
-        </div>
-        <div class="row">
-          ${m.contextWindow ? `<span class="badge">ctx ${fmt(m.contextWindow)}</span>` : ''}
-          ${m.reasoning ? `<span class="badge ok">effort: ${m.thinkingLevels.filter((l) => l !== 'off').join(' · ') || 'yes'}</span>` : '<span class="badge">no reasoning</span>'}
-          ${m.input != null ? `<span class="badge">${m.input}/M in</span>` : ''}
-          ${m.output != null ? `<span class="badge">${m.output}/M out</span>` : ''}
-          ${m.authed ? '' : '<span class="badge no">no auth</span>'}
-        </div>
-      </button>`).join('') || '<div class="sys">No model matches the filters</div>';
-    grid.querySelectorAll('.modelCard[data-i]').forEach((b) => b.addEventListener('click', () => {
-      const m = c.models[+b.dataset.i];
-      if (m.authed) selectModel(m.provider, m.id);
-    }));
+    const models = providerModels(selectedProvider).filter((m) =>
+      (!$('onlyReason').checked || m.reasoning)
+      && (!q || `${m.id} ${m.name ?? ''}`.toLowerCase().includes(q)));
+    $('modelCount').textContent = `${models.length} models`;
+    $('modelGrid').innerHTML = models.map((m) => `
+      <label class="modelCard ${active(m) && m.authed ? 'sel' : ''}">
+        <input type="checkbox" data-model="${esc(keyFor(m))}" ${active(m) && m.authed ? 'checked' : ''} ${m.authed ? '' : 'disabled'}>
+        <span class="modelIdentity"><strong>${esc(m.name || m.id)}</strong><small>${esc(keyFor(m))}</small></span>
+        ${m.contextWindow ? `<span class="badge">ctx ${fmt(m.contextWindow)}</span>` : ''}
+        ${m.reasoning ? '<span class="badge ok">reasoning</span>' : ''}
+      </label>`).join('') || '<p class="sys">No models match the filters</p>';
   }
+  const draw = () => { drawProviders(); drawGrid(); };
+  // An empty list means ALL authenticated models in pi, not none. Materialize
+  // the current selection before the first edit, preserving other providers.
+  function explicitPatterns() {
+    if (enabledPatterns.length) return [...enabledPatterns];
+    return c.models.filter((m) => m.authed).map(keyFor);
+  }
+  async function saveEnabled(patterns) {
+    if (saving) return;
+    if (!patterns.length) {
+      $('enabledMsg').textContent = 'At least one model must remain enabled: an empty pi list means all models.';
+      draw();
+      return;
+    }
+    saving = true;
+    const r = await post('/api/settings', { key: 'enabledModels', value: [...new Set(patterns)] });
+    saving = false;
+    if (r.error) { $('enabledMsg').textContent = r.error; draw(); return; }
+    enabledPatterns = r.value ?? patterns;
+    $('enabledMsg').textContent = 'Saved';
+    draw();
+    loadModels({ force: true });
+  }
+  $('providerList').addEventListener('click', (e) => {
+    const button = e.target.closest('[data-provider]');
+    if (!button) return;
+    selectedProvider = button.dataset.provider;
+    preferredProvider = selectedProvider;
+    draw();
+  });
+  $('providerList').addEventListener('change', (e) => {
+    const id = e.target.dataset.toggleProvider;
+    if (!id) return;
+    const patterns = explicitPatterns().filter((p) => p !== `${id}/*` && !p.startsWith(`${id}/`));
+    saveEnabled(e.target.checked ? [...patterns, `${id}/*`] : patterns);
+  });
+  $('modelGrid').addEventListener('change', (e) => {
+    const key = e.target.dataset.model;
+    if (!key) return;
+    const id = key.slice(0, key.indexOf('/'));
+    let patterns = explicitPatterns();
+    if (patterns.includes(`${id}/*`)) {
+      patterns = patterns.filter((p) => p !== `${id}/*`);
+      patterns.push(...providerModels(id).filter((m) => m.authed).map(keyFor));
+    }
+    saveEnabled(e.target.checked ? [...patterns, key] : patterns.filter((p) => p !== key));
+  });
+  $('providerSearch').addEventListener('input', drawProviders);
+  $('refreshCatalog').addEventListener('click', async () => {
+    const button = $('refreshCatalog');
+    button.disabled = true;
+    $('refreshMsg').textContent = 'Refreshing providers and models…';
+    const refreshed = await post('/api/config/refresh');
+    if (isObsolete()) return;
+    if (refreshed.error) {
+      button.disabled = false;
+      $('refreshMsg').textContent = refreshed.error;
+      return;
+    }
+    await renderSettings();
+    if (isObsolete()) return;
+    buildSettingsNav();
+    $('refreshMsg').textContent = refreshed.ok ? 'Providers and models updated.'
+      : `Update incomplete${refreshed.aborted ? ' (timed out)' : ''}. Retry to refresh all providers.`;
+    loadModels({ force: true });
+  });
   $('modelSearch').addEventListener('input', drawGrid);
-  $('onlyAuth').addEventListener('change', drawGrid);
   $('onlyReason').addEventListener('change', drawGrid);
-  drawGrid();
+  draw();
+
 }
 
   function start() {
     if (started) return;
-    $('settingsView').addEventListener('scroll', onSettingsScroll);
     started = true;
   }
 
   function stop() {
     if (!started) return;
-    $('settingsView').removeEventListener('scroll', onSettingsScroll);
     started = false;
   }
 
