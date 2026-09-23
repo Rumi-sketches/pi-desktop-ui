@@ -321,10 +321,14 @@ test('shared agent-input editor preserves scope and refreshes only after a confi
   const controls = new Map();
   const button = new FakeElement({ capture: () => [] });
   button.dataset.bootstrapSave = 'project-context';
+  const promote = new FakeElement({ capture: () => [] });
+  promote.dataset.bootstrapSource = 'project-context';
+  promote.dataset.bootstrapPromote = 'global-context';
   const editor = { value: 'project instructions' };
   const message = { textContent: '' };
   const root = {
-    querySelectorAll: (selector) => selector === '[data-bootstrap-save]' ? [button] : [],
+    querySelectorAll: (selector) => selector === '[data-bootstrap-save]' ? [button]
+      : selector === '[data-bootstrap-promote]' ? [promote] : [],
     querySelector: (selector) => controls.get(selector) ?? null,
   };
   controls.set('[data-bootstrap-editor="project-context"]', editor);
@@ -359,5 +363,16 @@ test('shared agent-input editor preserves scope and refreshes only after a confi
   assert.deepEqual(calls.at(-1), {
     method: 'PUT', url: '/api/agent-bootstrap/file',
     body: { id: 'project-context', content: 'project instructions' },
+  });
+  result = { error: 'disk full' };
+  await promote.emit('click');
+  assert.equal(refreshes, 1, 'a failed promotion does not refresh the editor');
+  assert.equal(promote.disabled, false);
+  result = { ok: true };
+  await promote.emit('click');
+  assert.equal(refreshes, 2);
+  assert.deepEqual(calls.at(-1), {
+    method: 'PUT', url: '/api/agent-bootstrap/file',
+    body: { id: 'global-context', content: 'project instructions' },
   });
 });

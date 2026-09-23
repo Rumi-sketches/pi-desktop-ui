@@ -72,6 +72,14 @@ export function createAgentInputs({
   }
 
   function bindFileActions(root, { key, refresh }) {
+    async function writeFile(button, id, content, success, message = null) {
+      button.disabled = true;
+      const result = await sendJson('PUT', '/api/agent-bootstrap/file', { id, content }, { key, followKey: false });
+      button.disabled = false;
+      if (result.error) { if (message) message.textContent = result.error; return; }
+      toast(success);
+      await refresh();
+    }
     root.querySelectorAll('[data-bootstrap-open]').forEach((button) => {
       button.addEventListener('click', async () => {
         button.disabled = true;
@@ -85,12 +93,7 @@ export function createAgentInputs({
         const id = button.dataset.bootstrapSave;
         const editor = root.querySelector(`[data-bootstrap-editor="${id}"]`);
         const message = root.querySelector(`[data-bootstrap-message="${id}"]`);
-        button.disabled = true;
-        const result = await sendJson('PUT', '/api/agent-bootstrap/file', { id, content: editor?.value ?? '' }, { key, followKey: false });
-        button.disabled = false;
-        if (result.error) { if (message) message.textContent = result.error; return; }
-        toast('Agent input saved');
-        await refresh();
+        await writeFile(button, id, editor?.value ?? '', 'Agent input saved', message);
       });
     });
     root.querySelectorAll('[data-bootstrap-reset]').forEach((button) => {
@@ -110,15 +113,7 @@ export function createAgentInputs({
       button.addEventListener('click', async () => {
         const sourceId = button.dataset.bootstrapSource;
         const editor = root.querySelector(`[data-bootstrap-editor="${sourceId}"]`);
-        button.disabled = true;
-        const result = await sendJson('PUT', '/api/agent-bootstrap/file', {
-          id: button.dataset.bootstrapPromote,
-          content: editor?.value ?? '',
-        }, { key, followKey: false });
-        button.disabled = false;
-        if (result.error) return;
-        toast('Saved globally for other projects');
-        await refresh();
+        await writeFile(button, button.dataset.bootstrapPromote, editor?.value ?? '', 'Saved globally for other projects');
       });
     });
     root.querySelectorAll('[data-bootstrap-delete]').forEach((button) => {
