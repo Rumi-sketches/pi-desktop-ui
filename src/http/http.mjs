@@ -72,8 +72,26 @@ const HTML_CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "connect-src 'self'",
+  "frame-src 'self'",
   "base-uri 'none'",
   "form-action 'none'",
+].join("; ");
+
+// HTML returned by the preview endpoint is executable only in an opaque-origin
+// sandbox. The response policy also applies if someone opens the URL directly.
+const PREVIEW_CSP = [
+  "sandbox allow-scripts",
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data:",
+  "font-src data:",
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "navigate-to 'none'",
 ].join("; ");
 
 const SECURITY_HEADERS = {
@@ -91,6 +109,17 @@ export function send(res, code, data, type = "application/json; charset=utf-8") 
   }
   res.writeHead(code, { "Content-Type": type, ...SECURITY_HEADERS });
   res.end(typeof data === "string" ? data : JSON.stringify(data));
+}
+
+/** Only use for HTML loaded in a sandboxed chat preview iframe. */
+export function sendPreviewHtml(res, html) {
+  if (res.headersSent) return;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy": PREVIEW_CSP,
+    ...SECURITY_HEADERS,
+  });
+  res.end(html);
 }
 
 /** Send binary content with the same no-sniff/no-store policy as every API response. */

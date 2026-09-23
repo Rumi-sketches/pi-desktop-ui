@@ -29,7 +29,7 @@ test("only successful preview calls in the active branch resolve", () => {
   assert.equal(previewFromBranch([call("bad", "show_image", { data: "AAAA", mimeType: "image/png" }), result("bad")], "bad"), null);
 });
 
-test("HTML preview renders only in a scriptless iframe after fetching text/plain", async () => {
+test("HTML preview loads interactive HTML only in an opaque-origin sandbox after fetching source", async () => {
   const elements = [];
   const documentRef = { createElement(tag) {
     const element = {
@@ -51,9 +51,9 @@ test("HTML preview renders only in a scriptless iframe after fetching text/plain
   await new Promise((resolve) => setImmediate(resolve));
   const frame = elements.find((element) => element.tag === 'iframe');
   assert.equal(requested, '/api/preview?call=call-1&s=chat-key');
-  assert.equal(frame.attributes.sandbox, '');
-  assert.match(frame.srcdoc, /script-src 'none'/);
-  assert.match(frame.srcdoc, /default-src 'none'/);
-  assert.ok(frame.srcdoc.endsWith(html));
+  assert.equal(frame.attributes.sandbox, 'allow-scripts');
+  assert.equal(frame.attributes.referrerpolicy, 'no-referrer');
+  assert.equal(frame.src, '/api/preview?call=call-1&view=1&s=chat-key');
+  assert.equal(frame.srcdoc, undefined);
   assert.equal(elements.find((element) => element.tag === 'pre').textContent, html);
 });

@@ -8,7 +8,7 @@ let root;
 let server;
 let url;
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
-const html = '<h1>Preview</h1><script>window.top.alert(1)</script>';
+const html = '<button onclick="this.textContent=\'Clicked\'">Click</button><script>document.title="Preview"</script>';
 const image = png.toString('base64');
 const entry = (id, parentId, message) => ({
   type: 'message', id, parentId, timestamp: new Date().toISOString(),
@@ -52,10 +52,29 @@ test('preview route serves only completed branch calls and never embeds payloads
   assert.match(htmlResponse.headers.get('content-type'), /^text\/plain/);
   assert.equal(htmlResponse.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(await htmlResponse.text(), html);
+  const viewResponse = await fetch(`${url}html-call&view=1`);
+  assert.equal(viewResponse.status, 200);
+  assert.match(viewResponse.headers.get('content-type'), /^text\/html/);
+  assert.equal(viewResponse.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(viewResponse.headers.get('cache-control'), 'no-store');
+  assert.equal(await viewResponse.text(), html);
+  const csp = viewResponse.headers.get('content-security-policy');
+  assert.match(csp, /sandbox allow-scripts(?:;|$)/);
+  assert.doesNotMatch(csp, /allow-same-origin|allow-top-navigation|allow-popups/);
+  assert.match(csp, /script-src 'unsafe-inline'/);
+  assert.match(csp, /connect-src 'none'/);
+  assert.match(csp, /form-action 'none'/);
+  assert.match(csp, /default-src 'none'/);
+  assert.equal((await fetch(`${url}failed-call&view=1`)).status, 404);
+  const page = await fetch(url.replace('/api/preview?', '/?'));
+  assert.match(page.headers.get('content-security-policy'), /frame-src 'self'/);
+  assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
+  assert.doesNotMatch(page.headers.get('content-security-policy'), /script-src 'unsafe-inline'/);
   const imageResponse = await fetch(`${url}image-call`);
   assert.equal(imageResponse.status, 200);
   assert.equal(imageResponse.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), png);
+  assert.equal((await fetch(`${url}image-call&view=1`)).status, 404);
   assert.equal((await fetch(`${url}failed-call`)).status, 404);
   assert.equal((await fetch(`${url}missing-call`)).status, 404);
   assert.equal((await fetch(url)).status, 400);

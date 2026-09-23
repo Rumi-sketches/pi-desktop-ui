@@ -13,7 +13,7 @@ import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "../platform/platform.mjs";
 import { terminateTerminalsForChat } from "../terminals/terminals.mjs";
-import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError } from "../http/http.mjs";
+import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError, sendPreviewHtml } from "../http/http.mjs";
 import { titleLookup } from "./titles.mjs";
 import {
   SESSIONS_DIR,
@@ -777,6 +777,10 @@ export async function handleGetPreview({ res, url, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const preview = previewFromBranch(ctx.session.sessionManager?.getBranch?.() ?? [], callId);
   if (!preview) return send(res, 404, { error: "preview not found" });
+  if (url.searchParams.get("view") === "1") {
+    if (preview.kind !== "html") return send(res, 404, { error: "preview not found" });
+    return sendPreviewHtml(res, preview.html);
+  }
   if (preview.kind === "html") return send(res, 200, preview.html, "text/plain; charset=utf-8");
   return sendBytes(res, 200, preview.bytes, preview.mimeType);
 }

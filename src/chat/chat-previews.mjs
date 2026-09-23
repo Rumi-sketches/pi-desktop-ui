@@ -26,9 +26,9 @@ export function createPreviewTools() {
     defineTool({
       name: "show_html",
       label: "Show HTML",
-      description: "Display an HTML mockup directly in this chat, without writing a file. Scripts, forms and external assets are blocked. Maximum 256 KiB UTF-8.",
-      promptSnippet: "Show a self-contained HTML/CSS mockup in the chat without creating a file",
-      parameters: Type.Object({ html: Type.String({ description: "Complete self-contained HTML with optional inline CSS" }) }),
+      description: "Display an interactive HTML/CSS/JavaScript mockup directly in this chat, without writing a file. Inline scripts and buttons work in an isolated sandbox; forms, external assets and network APIs are blocked. Maximum 256 KiB UTF-8.",
+      promptSnippet: "Show an interactive self-contained HTML/CSS/JavaScript mockup in the chat without creating a file",
+      parameters: Type.Object({ html: Type.String({ description: "Complete self-contained HTML with optional inline CSS and JavaScript for interactive controls" }) }),
       async execute(_id, { html }) {
         if (!html || Buffer.byteLength(html, "utf8") > MAX_HTML_BYTES) throw new Error("HTML preview must be non-empty and at most 256 KiB");
         return { content: [{ type: "text", text: "HTML preview available in the chat." }], details: {} };
