@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createChatCache } from '../public/chat-cache.js';
-import { createChatView } from '../public/chat-view.js';
+import { createChatView, decorateMarkdownAlert } from '../public/chat-view.js';
 
 class FakeClassList {
   constructor(owner, value = '') {
@@ -547,6 +547,28 @@ test('older history preserves its anchor and ignores a detached response', async
   requests.shift()({ messages: [{ role: 'user', text: 'must not render' }], before: null, start: 0 });
   await stale;
   assert.equal(view.document.chat.querySelectorAll('.msg.user').some((message) => message.textContent === 'must not render'), false);
+});
+
+test('markdown alerts preserve formatted inline content', () => {
+  const marker = { nodeType: 3, nodeValue: '[!TIP] ' };
+  const strong = { textContent: 'important' };
+  const link = { textContent: 'docs' };
+  const paragraph = {
+    tagName: 'P', firstChild: marker, children: [marker, strong, link],
+    get textContent() { return this.children.map((child) => child.nodeValue ?? child.textContent).join(''); },
+    remove() { throw new Error('formatted paragraph must not be removed'); },
+  };
+  const labels = [];
+  const quote = {
+    firstElementChild: paragraph,
+    classList: { add(...names) { labels.push(...names); } },
+    prepend(label) { labels.push(label); },
+  };
+  decorateMarkdownAlert(quote, { createElement: () => ({}) });
+  assert.equal(marker.nodeValue, '');
+  assert.deepEqual(paragraph.children.slice(1), [strong, link]);
+  assert.deepEqual(labels.slice(0, 2), ['mdAlert', 'mdAlert-tip']);
+  assert.equal(labels[2].textContent, 'Tip');
 });
 
 test('markdown decoration highlights only supported code within budget and marks shell commands', () => {

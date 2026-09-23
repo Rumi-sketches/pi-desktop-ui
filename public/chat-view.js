@@ -1,5 +1,21 @@
 import { withSessionKey } from './transport.js';
 
+export function decorateMarkdownAlert(quote, documentRef) {
+  const first = quote.firstElementChild;
+  const marker = first?.firstChild;
+  if (first?.tagName !== 'P' || marker?.nodeType !== 3) return;
+  const match = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:[ \t]*\n?)?/i.exec(marker.nodeValue ?? '');
+  if (!match) return;
+  const kind = match[1].toLowerCase();
+  quote.classList.add('mdAlert', `mdAlert-${kind}`);
+  marker.nodeValue = marker.nodeValue.slice(match[0].length);
+  const label = documentRef.createElement('strong');
+  label.className = 'mdAlertLabel';
+  label.textContent = match[1][0] + match[1].slice(1).toLowerCase();
+  quote.prepend(label);
+  if (!first.textContent.trim()) first.remove();
+}
+
 const CHAT_URI_PATTERN = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file|ms-settings):|[a-z]:%5c|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
 const ICON_COPY = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
@@ -151,21 +167,7 @@ export function createChatView({
   }
 
   function enhanceMarkdownStructure(div) {
-    const alertPattern = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i;
-    for (const quote of all('blockquote', div)) {
-      const first = quote.firstElementChild;
-      if (!first) continue;
-      const match = alertPattern.exec(first.textContent ?? '');
-      if (!match) continue;
-      const kind = match[1].toLowerCase();
-      quote.classList.add('mdAlert', `mdAlert-${kind}`);
-      first.textContent = (first.textContent ?? '').slice(match[0].length);
-      const label = documentRef.createElement('strong');
-      label.className = 'mdAlertLabel';
-      label.textContent = match[1][0] + match[1].slice(1).toLowerCase();
-      quote.prepend(label);
-      if (!first.textContent) first.remove();
-    }
+    for (const quote of all('blockquote', div)) decorateMarkdownAlert(quote, documentRef);
   }
 
   function renderMarkdown(div, { decorate = true } = {}) {
