@@ -1282,6 +1282,8 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .toolGroupCount { font-weight: var(--w-semi); }
 .toolGroupPreview { display: flex; flex-wrap: wrap; gap: .3rem; }
 .toolGroupPreview span { padding: .15rem .4rem; border-radius: var(--r-2); background: var(--panel-3); color: var(--tool-nm); font: 11px var(--font-mono); }
+.toolGroupThought { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-style: italic; }
+.toolGroupThought[hidden] { display: none; }
 .toolGroupCalls { padding-bottom: .5rem; }
 
 /* Model-requested input is a first-class transcript block. It is rendered from

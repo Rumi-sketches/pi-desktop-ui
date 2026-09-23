@@ -714,8 +714,13 @@ export function createChatView({
   }
 
   function updateToolGroup(group) {
-    const cards = [...group.querySelector('.toolGroupCalls').children];
+    const entries = [...group.querySelector('.toolGroupCalls').children];
+    const cards = entries.filter((entry) => entry.classList.contains('toolCard'));
     group.querySelector('.toolGroupCount').textContent = `${cards.length} tool calls`;
+    const thoughts = entries.filter((entry) => entry.classList.contains('thinking'));
+    const latest = group.querySelector('.toolGroupThought');
+    latest.textContent = thoughts.length ? thoughts[thoughts.length - 1].textContent.trim() : '';
+    latest.hidden = !latest.textContent;
     const counts = new Map();
     for (const card of cards) {
       const name = card.querySelector('.nm').textContent || 'tool';
@@ -730,17 +735,35 @@ export function createChatView({
     }
   }
 
+  function appendGroupedThinking(body, text = '') {
+    const thought = bubble('thinking', text, body);
+    const trailingMeta = thought.previousElementSibling?.classList.contains('msgMeta')
+      ? thought.previousElementSibling : null;
+    const group = trailingMeta?.previousElementSibling ?? thought.previousElementSibling;
+    if (group?.classList.contains('toolGroup')) {
+      const calls = group.querySelector('.toolGroupCalls');
+      if (trailingMeta) calls.appendChild(trailingMeta);
+      calls.appendChild(thought);
+      updateToolGroup(group);
+    }
+    return thought;
+  }
+
   function appendToolCard(body, card) {
     const previous = body.lastElementChild;
-    if (previous?.classList.contains('toolGroup')) {
-      previous.querySelector('.toolGroupCalls').appendChild(card);
-      updateToolGroup(previous);
+    const trailingMeta = previous?.classList.contains('msgMeta') ? previous : null;
+    const existingGroup = trailingMeta?.previousElementSibling ?? previous;
+    if (existingGroup?.classList.contains('toolGroup')) {
+      const calls = existingGroup.querySelector('.toolGroupCalls');
+      if (trailingMeta) calls.appendChild(trailingMeta);
+      calls.appendChild(card);
+      updateToolGroup(existingGroup);
       return;
     }
     body.appendChild(card);
-    const cards = [];
-    for (let node = card; node?.classList.contains('toolCard'); node = node.previousElementSibling) cards.unshift(node);
-    if (cards.length !== 4) return;
+    const nodes = [];
+    for (let node = card; node && (node.classList.contains('toolCard') || node.classList.contains('thinking') || node.classList.contains('msgMeta')); node = node.previousElementSibling) nodes.unshift(node);
+    if (nodes.filter((node) => node.classList.contains('toolCard')).length !== 4) return;
     const group = documentRef.createElement('details');
     group.className = 'toolGroup';
     const summary = documentRef.createElement('summary');
@@ -748,12 +771,14 @@ export function createChatView({
     count.className = 'toolGroupCount';
     const preview = documentRef.createElement('span');
     preview.className = 'toolGroupPreview';
-    summary.append(count, preview);
+    const thought = documentRef.createElement('span');
+    thought.className = 'toolGroupThought';
+    summary.append(count, preview, thought);
     const calls = documentRef.createElement('div');
     calls.className = 'toolGroupCalls';
     group.append(summary, calls);
-    body.insertBefore(group, cards[0]);
-    group.querySelector('.toolGroupCalls').append(...cards);
+    body.insertBefore(group, nodes[0]);
+    group.querySelector('.toolGroupCalls').append(...nodes);
     updateToolGroup(group);
   }
 
@@ -908,7 +933,7 @@ export function createChatView({
             lastText = skillInvocationElement(block);
             body.appendChild(lastText);
           } else if (block.type === 'thinking') {
-            bubble('thinking', block.text ?? '', body);
+            appendGroupedThinking(body, block.text ?? '');
           } else if (block.type === 'tool') {
             renderTool({ ...block, status: 'start' });
             if (block.status === 'end') renderTool({ ...block, status: 'end' });
@@ -979,7 +1004,7 @@ export function createChatView({
           currentAssistant = bubble('assistant', segment.text ?? '', currentTurn);
         } else if (segment.type === 'thinking') {
           currentAssistant = null;
-          currentThinking = bubble('thinking', segment.text ?? '', currentTurn);
+          currentThinking = appendGroupedThinking(currentTurn, segment.text ?? '');
         } else if (segment.type === 'tool' && segment.tool) {
           currentAssistant = currentThinking = null;
           renderTool({ ...segment.tool, status: 'start' });
@@ -1012,14 +1037,17 @@ export function createChatView({
         }
         appendMarkdown(currentAssistant, event.delta);
         return true;
-      case 'thinking':
+      case 'thinking': {
         finalizeStreamingMarkdown();
         flushAssistantMeta(chatState);
         currentAssistant = null;
         if (!currentTurn) currentTurn = newTurn('pi');
-        if (!currentThinking) currentThinking = bubble('thinking', '', currentTurn);
+        if (!currentThinking) currentThinking = appendGroupedThinking(currentTurn);
         appendText(currentThinking, event.delta);
+        const thinkingGroup = currentThinking.closest('.toolGroup');
+        if (thinkingGroup) updateToolGroup(thinkingGroup);
         return true;
+      }
       case 'tool':
         finalizeStreamingMarkdown();
         currentThinking = currentAssistant = null;

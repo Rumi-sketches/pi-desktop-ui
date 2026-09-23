@@ -488,6 +488,44 @@ test('four consecutive tool calls collapse into a group with individual expandab
   assert.equal(view.document.chat.querySelectorAll('.toolCard').length, 6);
 });
 
+test('thoughts join tool groups and only assistant text breaks the sequence', () => {
+  const view = fixture();
+  for (let index = 0; index < 4; index++) {
+    view.controller.applyStreamEvent({ kind: 'thinking', delta: `Step ${index}` }, view.state);
+    view.controller.applyStreamEvent({ kind: 'tool', id: `step-${index}`, name: 'read', status: 'start', args: {} }, view.state);
+  }
+  const group = view.document.chat.querySelector('.toolGroup');
+  assert.equal(group.querySelectorAll('.toolCard').length, 4);
+  assert.equal(group.querySelectorAll('.thinking').length, 4);
+  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Step 3');
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: 'Working' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: ' more' }, view.state);
+  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Working more');
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'step-4', name: 'edit', status: 'start', args: {} }, view.state);
+  assert.equal(group.querySelectorAll('.toolCard').length, 5);
+  view.controller.applyStreamEvent({ kind: 'text', delta: 'Result' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'step-5', name: 'bash', status: 'start', args: {} }, view.state);
+  assert.equal(group.querySelectorAll('.toolCard').length, 5);
+});
+
+test('persisted assistant messages group across timestamps and thoughts', () => {
+  const view = fixture();
+  const messages = Array.from({ length: 5 }, (_, index) => ({
+    role: 'assistant', timestamp: '2026-09-23T19:25:00Z',
+    blocks: [
+      { type: 'thinking', text: `Checking step ${index}` },
+      { type: 'tool', id: `history-${index}`, name: 'edit', status: 'end', output: 'done' },
+    ],
+  }));
+  messages.push({ role: 'assistant', timestamp: '2026-09-23T19:26:00Z', blocks: [{ type: 'text', text: 'Finished.' }] });
+  view.controller.renderHistory({ key: 'test', messages, replace: true });
+  const group = view.document.chat.querySelector('.toolGroup');
+  assert.equal(group.querySelectorAll('.toolCard').length, 5);
+  assert.equal(group.querySelectorAll('.thinking').length, 5);
+  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Checking step 4');
+  assert.equal(view.document.chat.querySelector('.msg.assistant').dataset.raw, 'Finished.');
+});
+
 test('live mutations follow the reader only when already at the bottom', () => {
   const view = fixture();
   view.document.chatWrap.scrollHeight = 100;
