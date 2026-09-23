@@ -301,6 +301,14 @@ const chatView = createChatView({
   onToolEvent: taskFromTool,
 });
 chatView.start();
+const chatScroller = $('chatWrap');
+const jumpToBottom = $('jumpToBottom');
+const updateJumpToBottom = () => {
+  jumpToBottom.classList.toggle('hide', chatScroller.scrollHeight - chatScroller.scrollTop - chatScroller.clientHeight < 90);
+};
+chatScroller.addEventListener('scroll', updateJumpToBottom);
+new ResizeObserver(updateJumpToBottom).observe($('chat'));
+jumpToBottom.addEventListener('click', () => chatScroller.scrollTo({ top: chatScroller.scrollHeight, behavior: 'smooth' }));
 window.addEventListener('pagehide', () => chatView.dispose());
 // A chat is identified by its session file path, so it has to be escaped before
 // it can travel inside a URL path.

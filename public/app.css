@@ -724,7 +724,10 @@ body.diff-open #statsDd, body.diff-open #ctxBar { display: none; }
 
 /* ---------- chat ---------- */
 #chatView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-#chatWrap { flex: 1; overflow-y: auto; overflow-x: clip; position: relative; background-color: var(--bg); }
+#chatScrollArea { flex: 1; min-height: 0; position: relative; display: flex; }
+#chatWrap { flex: 1; min-height: 0; overflow-y: auto; overflow-x: clip; position: relative; background-color: var(--bg); }
+#jumpToBottom { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 2; width: 34px; height: 34px; border: 1px solid var(--line-2); border-radius: 50%; background: var(--panel-2); color: var(--txt); cursor: pointer; box-shadow: 0 2px 8px #0003; }
+#jumpToBottom:hover { background: var(--panel-3); }
 #chat { max-width: 900px; margin: 0 auto; padding: 1.1rem 1.2rem 1.6rem; display: flex; flex-direction: column; gap: 1.05rem; position: relative; transition: max-width .18s; }
 /* with the sidebar closed the text gets even more room */
 body.sb-closed #chat { max-width: 1100px; }

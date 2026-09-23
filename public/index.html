@@ -258,7 +258,10 @@
 
   <!-- chat view -->
   <div id="chatView">
-    <div id="chatWrap"><div id="chat"></div></div>
+    <div id="chatScrollArea">
+      <div id="chatWrap"><div id="chat"></div></div>
+      <button type="button" id="jumpToBottom" class="hide" aria-label="Jump to latest message" title="Jump to latest message">↓</button>
+    </div>
     <div id="composerWrap">
       <div id="responseSpinner" class="hide" role="status" aria-live="polite">
         <span class="responseSpinnerRing" aria-hidden="true"></span>
