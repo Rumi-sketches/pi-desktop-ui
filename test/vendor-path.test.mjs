@@ -29,6 +29,21 @@ test("the provider icon module is a served page asset", async () => {
   assert.match(body.toString("utf8"), /export function providerIcon/);
 });
 
+test("project tab activity is available as a browser module", async () => {
+  const route = PAGE_ROUTES.find(([method, pathname]) => method === "GET" && pathname === "/project-tab-activity.js");
+  assert.ok(route);
+  let status;
+  let body;
+  const res = {
+    writeHead(code) { status = code; },
+    end(value) { body = value; },
+  };
+  const handler = /** @type {(bag: any) => Promise<void>} */ (route[2]);
+  await handler({ res, url: new URL("http://localhost/project-tab-activity.js") });
+  assert.equal(status, 200);
+  assert.match(body.toString("utf8"), /export function createProjectTabActivity/);
+});
+
 test("vendorFilePath: an allowed asset resolves inside node_modules", () => {
   assert.equal(vendorFilePath("/vendor/marked/lib/marked.esm.js"), path.join(VENDOR_ROOT, "marked/lib/marked.esm.js"));
   assert.equal(

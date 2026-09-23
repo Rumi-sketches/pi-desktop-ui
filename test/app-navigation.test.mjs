@@ -122,6 +122,11 @@ test('opening a restored local draft resolves its server context before committi
       return { key: 'saved-key', cwd: body.cwd };
     },
     sessionPath: () => { throw new Error('a local draft must not use the persisted-session route'); },
+    projectTabActivity: { rekey(oldKey, newKey) {
+      assert.equal(oldKey, 'draft-key');
+      assert.equal(newKey, 'saved-key');
+      order.push('activity-rekey');
+    } },
     showChatResource(key) { order.push('show'); shown = key; },
     async loadOpenChat(ticket) { order.push('load'); loaded = ticket; },
   });
@@ -136,7 +141,7 @@ test('opening a restored local draft resolves its server context before committi
   assert.deepEqual(rekeyed, { oldKey: 'draft-key', newKey: 'saved-key' });
   assert.equal(shown, 'saved-key');
   assert.equal(loaded.selection.resourceId, 'saved-key');
-  assert.deepEqual(order, ['begin', 'post', 'rekey', 'commit', 'show', 'load']);
+  assert.deepEqual(order, ['begin', 'post', 'rekey', 'activity-rekey', 'commit', 'show', 'load']);
 });
 
 test('bootstrap resolves a restored local draft before opening any stream', async () => {

@@ -24,6 +24,7 @@ import { createAgentInputs } from './agent-inputs.js';
 import { createSettingsView } from './settings-view.js';
 import { createTerminalView } from './terminal-view.js';
 import { createChatView } from './chat-view.js';
+import { createProjectTabActivity } from './project-tab-activity.js';
 
 // During a development hot reload the page can briefly outlive the server that
 // learned the new icon route. Never expose the browser's broken-image glyph:
@@ -264,6 +265,8 @@ async function api(url, opts, {
       if (oldKey && oldKey !== d.key && uiState.chats.has(oldKey)) {
         parkChatView(oldKey);
         uiState.rekeyChat(oldKey, d.key);
+        projectTabActivity.rekey(oldKey, d.key);
+        renderProjTabs();
         renderedChatKey = null;
       }
       showChatResource(d.key, { reconnect: d.key !== oldKey, park: false });
@@ -803,8 +806,9 @@ function handleEvent(ev, ownerKey) {
       // of run for a key we never saw start (a context re-keyed mid-turn, a
       // window on another chat, a leftover from before this page loaded) is
       // noise, and it used to pop up as a toast out of nowhere.
-      const wasRunning = runningKeys.has(ev.key);
-      if (ev.running) runningKeys.add(ev.key); else runningKeys.delete(ev.key);
+      const viewed = ev.key === activeChatKey() && document.visibilityState === 'visible' && document.hasFocus();
+      const wasRunning = projectTabActivity.recordRunning(ev.key, ev.running, viewed);
+      renderProjTabs();
       if (ev.key !== activeChatKey()) {
         updateSessionRunningState(ev.key, ev.running);
         if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true, {
@@ -832,7 +836,8 @@ function handleEvent(ev, ownerKey) {
       if (ev.key !== ownerKey) {
         parkChatView(ownerKey);
         uiState.rekeyChat(ownerKey, ev.key);
-        if (runningKeys.delete(ownerKey)) runningKeys.add(ev.key);
+        projectTabActivity.rekey(ownerKey, ev.key);
+        renderProjTabs();
         transport.rekeyDetailed(ownerKey, ev.key);
         showChatResource(ev.key, { reconnect: false, park: false });
       } else {
@@ -887,7 +892,8 @@ function handleEvent(ev, ownerKey) {
       const old = ownerKey;
       parkChatView(old);
       uiState.rekeyChat(old, ev.key);
-      if (runningKeys.delete(old)) runningKeys.add(ev.key);
+      projectTabActivity.rekey(old, ev.key);
+      renderProjTabs();
       transport.rekeyDetailed(old, ev.key);
       showChatResource(ev.key, { reconnect: false, park: false });
       applyQueueChange(ev.queuedPrompts ?? [], ev.key);
@@ -1252,7 +1258,10 @@ $('sidebarResize').addEventListener('dblclick', () => setSidebarWidth(230));
 
 /* ---------------- sessions ---------------- */
 let allSessions = [];
-const runningKeys = new Set();   // chats currently working (also in other tabs)
+const projectTabActivity = createProjectTabActivity({
+  cwdForKey: (key) => sessionForKey(key)?.cwd ?? uiState.chats.get(key)?.cwd,
+});
+const runningKeys = projectTabActivity.runningKeys; // also used by sidebar rows
 // Chat lists sort on `modified`, an ISO string: parsed once and compared as a
 // number, which is what subtracting two Dates was already doing.
 const modifiedAt = (s) => new Date(s.modified).getTime();
@@ -1284,8 +1293,7 @@ async function loadSessions() {
     const res = uiState.applySessionsPayload(raw);
     allSessions = res.sessions;
     if (!uiState.selection) selectCurrentChatState(renderedChatKey ?? res.current);
-    runningKeys.clear();
-    for (const k of res.running ?? []) runningKeys.add(k);
+    projectTabActivity.replaceRunning(res.running ?? []);
     renderSessions();
     renderProjTabs();
     if (!uiState.selection) {
@@ -1696,7 +1704,10 @@ async function openSession(s, { tabId = uiState.activeTabId } = {}) {
     return false;
   }
   const key = r.key ?? s.path;
-  if (key !== s.path) uiState.rekeyChat(s.path, key);
+  if (key !== s.path) {
+    uiState.rekeyChat(s.path, key);
+    projectTabActivity.rekey(s.path, key);
+  }
   let activeTicket = ticket;
   if (s.local) {
     activeTicket = navigation.commit({ tabId, view: VIEW_CHAT, resourceId: key }, ticket);
@@ -1727,9 +1738,16 @@ async function openChatNotification(key) {
 // synchronization starts afterwards and is split by owner: session listing is
 // global, history/state belong to the chat, files/Git to its project. Global
 // model and command catalogs are intentionally absent from ordinary switches.
+function markActiveChatViewed() {
+  const key = activeChatKey();
+  if (key && document.visibilityState === 'visible' && document.hasFocus() && projectTabActivity.viewed(key)) renderProjTabs();
+}
+window.addEventListener('focus', markActiveChatViewed);
+document.addEventListener('visibilitychange', markActiveChatViewed);
 async function loadOpenChat(ticket) {
   if (!navigation.isCurrent(ticket)) return;
   const key = activeChatKey();
+  markActiveChatViewed();
   await navigationSync.synchronize(ticket, uiState.chatState(key).cwd);
 }
 // A project tab pins the folder: a chat started while it is active is born in
@@ -1960,8 +1978,14 @@ function renderProjTabs() {
   const mkTab = (label, cwd) => {
     const t = document.createElement('button');
     t.type = 'button';
-    t.className = 'projTab' + ((cwd ?? null) === active ? ' on' : '');
-    t.title = cwd || 'All chats, whatever the project';
+    const status = projectTabActivity.status(cwd);
+    t.className = 'projTab' + ((cwd ?? null) === active ? ' on' : '') + (status === 'idle' ? '' : ' ' + status);
+    t.title = `${cwd || 'All chats, whatever the project'}${status === 'working' ? ' · Chat working' : status === 'unseen' ? ' · Response to view' : ''}`;
+    t.setAttribute('aria-label', `${label}${status === 'working' ? ', chat working' : status === 'unseen' ? ', response to view' : ''}`);
+    const indicator = document.createElement('span');
+    indicator.className = 'activity';
+    indicator.setAttribute('aria-hidden', 'true');
+    t.appendChild(indicator);
     const nm = document.createElement('span');
     nm.className = 'nm';
     nm.textContent = label;

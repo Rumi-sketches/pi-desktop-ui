@@ -272,6 +272,7 @@ const PAGE_ASSET_TYPES = {
   "/navigation.js": "text/javascript; charset=utf-8",
   "/transport.js": "text/javascript; charset=utf-8",
   "/provider-icons.js": "text/javascript; charset=utf-8",
+  "/project-tab-activity.js": "text/javascript; charset=utf-8",
   "/app.css": "text/css; charset=utf-8",
 };
 

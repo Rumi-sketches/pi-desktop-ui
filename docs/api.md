@@ -32,8 +32,9 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
   sanitized `500` path above; atomic UI state stores keep their prior confirmed
   file and in-memory value.
 - **Static routes** are not part of this API: `GET /` serves the page;
-  `PAGE_ROUTES` in `src/http/http.mjs` lists its browser modules, stylesheet and
-  icons; `GET /vendor/*` serves the allowed local browser libraries. Static paths
+  `PAGE_ROUTES` in `src/http/http.mjs` lists its browser modules (including
+  `GET /project-tab-activity.js`), stylesheet and icons; `GET /vendor/*` serves
+  the allowed local browser libraries. Static paths
   answer their declared content type, or `404` when a path is not whitelisted.
 
 ## Chat

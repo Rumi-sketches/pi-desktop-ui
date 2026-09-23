@@ -276,6 +276,7 @@ const PAGE_ASSETS = {
   "/navigation.js": { file: "navigation.js", type: "text/javascript; charset=utf-8" },
   "/transport.js": { file: "transport.js", type: "text/javascript; charset=utf-8" },
   "/provider-icons.js": { file: "provider-icons.js", type: "text/javascript; charset=utf-8" },
+  "/project-tab-activity.js": { file: "project-tab-activity.js", type: "text/javascript; charset=utf-8" },
   "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
   // The app mark, for the tab and for whatever pins the page. `/favicon.ico`
   // is not in the HTML: browsers ask for it on their own, and answering 404 to

@@ -239,20 +239,27 @@ input, textarea, select { font: inherit; color: inherit; }
 #projAddDd { flex: none; }
 .projTab {
   flex: none; display: inline-flex; align-items: center; gap: .45rem; max-width: 190px;
-  padding: .26rem .5rem .26rem .65rem; border-radius: var(--r-2); min-width: 0;
+  padding: .26rem .55rem; border: 1px solid var(--line); border-radius: var(--r-pill); min-width: 0;
   color: var(--txt-dim); font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
+  background: var(--panel-2);
 }
 .projTab .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.projTab:hover { background: var(--sunken); color: var(--txt); }
+.projTab:hover { background: var(--panel-3); color: var(--txt); }
 .projTab[draggable="true"] { cursor: grab; }
 .projTab.dragging { opacity: .45; cursor: grabbing; }
 .projTab.drop-before { box-shadow: -2px 0 0 var(--teal); }
 .projTab.drop-after { box-shadow: 2px 0 0 var(--teal); }
-.projTab.on { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--txt); font-weight: var(--w-semi); }
-/* the dot is the only accent in the strip: it says which project is live */
-.projTab.on::before {
-  content: ''; flex: none; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--teal);
+.projTab.on { background: var(--teal-dim); border-color: var(--accent-line); color: var(--txt); font-weight: var(--w-semi); }
+/* The indicator is reserved in every tab to avoid shifting names as status changes.
+   Selection is expressed by the pill, never by the activity indicator. */
+.projTab .activity { flex: none; width: 15px; height: 15px; border-radius: 50%; }
+.projTab.working .activity {
+  border: 2px solid var(--accent-line); border-top-color: var(--teal);
+  animation: projTabSpin 1.2s linear infinite;
 }
+.projTab.unseen .activity { background: radial-gradient(circle, var(--teal) 0 5px, transparent 5px); }
+@keyframes projTabSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .projTab.working .activity { animation: none; border-style: dashed; } }
 .projTab .x {
   width: 16px; height: 16px; border-radius: var(--r-1); display: grid; place-items: center;
   font-size: 11px; line-height: 1; color: var(--faint); flex: none;
