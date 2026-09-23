@@ -155,7 +155,7 @@ function fixture({ deferNetwork = false } = {}) {
     applyPlatformCapabilities() {},
     applyChatArchiving(value) { chatArchiving = value; },
     getChatArchiving: () => chatArchiving,
-    async loadSessions() {}, async refreshUsage() {}, async selectModel() {}, async loadModels() {},
+    async loadSessions() {}, async refreshUsage() {}, async loadModels() {},
     applyTheme() {}, applyAccent() {}, applyLogoStyle() {},
     themes: [{ id: 'paseo', name: 'Paseo', cols: ['#fff'] }],
     accents: [{ id: '', name: 'Default', col: '' }],

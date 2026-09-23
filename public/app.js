@@ -2554,7 +2554,6 @@ const settingsController = createSettingsView({
   setChatNotifications: (enabled) => localStorage.setItem(CHAT_NOTIFICATION_KEY, String(enabled)),
   loadSessions,
   refreshUsage,
-  selectModel,
   loadModels,
   applyTheme,
   applyAccent,

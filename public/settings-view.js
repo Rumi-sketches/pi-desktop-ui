@@ -14,7 +14,6 @@ import { providerIconHtml } from './provider-icons.js';
  * @property {() => boolean} getChatNotifications
  * @property {(enabled: boolean) => void} setChatNotifications
  * @property {() => Promise<any>} loadSessions
- * @property {(provider: string, id: string) => Promise<any>} selectModel
  * @property {(force?: boolean) => Promise<any>} refreshUsage
  * @property {(options?: { force?: boolean }) => Promise<any>} loadModels
  * @property {(id: string) => void} applyTheme
@@ -71,7 +70,6 @@ export function createSettingsView({
     bindFileActions: bindBootstrapFileActions,
   } = agentInputs;
 
-  let started = false;
   let requestGeneration = 0;
   let abortController = null;
   let showPromise = null;
@@ -999,18 +997,7 @@ async function renderSettings() {
 
 }
 
-  function start() {
-    if (started) return;
-    started = true;
-  }
-
-  function stop() {
-    if (!started) return;
-    started = false;
-  }
-
   async function show() {
-    start();
     if (showPromise) return showPromise;
     abortController?.abort();
     abortController = new AbortController();
@@ -1029,7 +1016,6 @@ async function renderSettings() {
     abortController?.abort();
     abortController = null;
     showPromise = null;
-    stop();
   }
 
   return { show, hide };
