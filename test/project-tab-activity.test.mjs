@@ -16,9 +16,12 @@ test('selection alone shows no activity; running animates and unseen waits for i
   assert.equal(activity.status('C:/repo/b'), 'idle');
   activity.recordRunning('chat-a', false);
   assert.equal(activity.status('C:/repo/a'), 'unseen');
+  assert.equal(activity.hasUnseen('chat-a'), true);
+  assert.equal(activity.hasUnseen('chat-b'), false);
   activity.viewed('chat-b'); // a different chat in the same selected project
   assert.equal(activity.status('C:/repo/a'), 'unseen');
   activity.viewed('chat-a');
+  assert.equal(activity.hasUnseen('chat-a'), false);
   assert.equal(activity.status('C:/repo/a'), 'idle');
 });
 

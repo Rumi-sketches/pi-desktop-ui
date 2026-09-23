@@ -7,6 +7,7 @@ import { createDraftStorage } from '../public/draft-storage.js';
 import { createUiState, projectTabId, VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS } from '../public/ui-state.js';
 import { createNavigationController } from '../public/navigation.js';
 import { createTransport } from '../public/transport.js';
+import { createProjectTabActivity } from '../public/project-tab-activity.js';
 
 const [source, indexSource, cssSource] = await Promise.all([
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
@@ -635,6 +636,35 @@ test('background completion updates its running dot without rebuilding the sideb
   const globalBranch = handler.slice(handler.indexOf("if (ev.scope === 'global')"), handler.indexOf("  // A closing EventSource"));
   assert.match(globalBranch, /updateSessionRunningState\(ev\.key, ev\.running\)/);
   assert.doesNotMatch(globalBranch, /renderSessions\(\)/);
+});
+
+test('a finished background chat marks its own sidebar title until viewed', () => {
+  const activity = createProjectTabActivity({ cwdForKey: () => 'project' });
+  let dot = null;
+  const title = { querySelector: () => ({}), insertBefore(next) { dot = next; } };
+  const row = { dataset: { sessionKey: 'chat-a' }, querySelector(selector) {
+    if (selector === '.title') return title;
+    if (selector === '.unseenDot') return dot;
+    return null;
+  } };
+  const context = vm.createContext({
+    projectTabActivity: activity,
+    $$: () => [row],
+    document: { createElement: () => ({ remove() { dot = null; } }) },
+  });
+  vm.runInContext(appFunction('updateSessionUnseenState'), context);
+  activity.recordRunning('chat-a', true);
+  activity.recordRunning('chat-a', false);
+  context.updateSessionUnseenState('chat-a');
+  assert.equal(dot.className, 'unseenDot');
+  assert.equal(dot.title, 'Response to view');
+  context.updateSessionUnseenState('chat-a');
+  assert.ok(dot, 'refreshing the row does not add another dot');
+  activity.viewed('chat-a');
+  context.updateSessionUnseenState('chat-a');
+  assert.equal(dot, null);
+  assert.match(appFunction('sessionItemEl'), /unseen \? '<span class="unseenDot"/);
+  assert.match(cssSource, /\.sessionItem \.unseenDot \{ background: var\(--teal\); \}/);
 });
 
 test('composer layout work remains coalesced while typing', () => {

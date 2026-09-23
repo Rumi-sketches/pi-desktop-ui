@@ -27,6 +27,8 @@ export function createProjectTabActivity({ cwdForKey }) {
       return wasRunning;
     },
     /** @param {string} key */
+    hasUnseen(key) { return unseenKeys.has(key); },
+    /** @param {string} key */
     viewed(key) { return unseenKeys.delete(key); },
     /** @param {string} oldKey @param {string} newKey */
     rekey(oldKey, newKey) {

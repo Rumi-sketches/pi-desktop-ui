@@ -808,6 +808,7 @@ function handleEvent(ev, ownerKey) {
       // noise, and it used to pop up as a toast out of nowhere.
       const viewed = ev.key === activeChatKey() && document.visibilityState === 'visible' && document.hasFocus();
       const wasRunning = projectTabActivity.recordRunning(ev.key, ev.running, viewed);
+      updateSessionUnseenState(ev.key);
       renderProjTabs();
       if (ev.key !== activeChatKey()) {
         updateSessionRunningState(ev.key, ev.running);
@@ -1454,6 +1455,7 @@ function sessionItemEl(s) {
   // truncated first message; the other two cover a payload without it.
   const label = sessionLabel(s) || '(empty)';
   const running = runningKeys.has(s.path);
+  const unseen = projectTabActivity.hasUnseen(s.path);
   const hasDraft = Boolean(chatCache.draftRecord(s.path).draft.trim());
   // one line only: title and date. Model, project, message count and status
   // badges stay in the payload but out of sight; the per-row actions (favorite,
@@ -1462,7 +1464,7 @@ function sessionItemEl(s) {
     ${chatArchiving ? `<button class="doneBtn${done ? ' on' : ''}" title="${done ? 'Move back to active' : 'Mark as done'}">${done ? '↺' : '✓'}</button>` : ''}
     <button class="fav${s.favorite ? ' on' : ''}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">${s.favorite ? '♥' : '♡'}</button>
     </div>`;
-  div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}<span class="lbl"></span>
+  div.innerHTML = `${actions}<div class="title">${hasDraft ? '<span class="draftDot" title="Unsent draft"></span>' : ''}${running ? '<span class="runDot"></span>' : ''}${unseen ? '<span class="unseenDot" title="Response to view"></span>' : ''}<span class="lbl"></span>
     <span class="date">${fmtDate(s.modified)}</span></div>`;
   div.querySelector('.lbl').textContent = label;
   /** @type {HTMLElement|null} */
@@ -1648,6 +1650,21 @@ function updateSessionRunningState(key, running) {
   }
   return found;
 }
+function updateSessionUnseenState(key) {
+  for (const row of $$('.sessionItem')) {
+    if (row.dataset.sessionKey !== key) continue;
+    const title = row.querySelector('.title');
+    const dot = row.querySelector('.unseenDot');
+    if (projectTabActivity.hasUnseen(key) && !dot) {
+      const next = document.createElement('span');
+      next.className = 'unseenDot';
+      next.title = 'Response to view';
+      title?.insertBefore(next, title.querySelector('.lbl'));
+    } else if (!projectTabActivity.hasUnseen(key)) {
+      dot?.remove();
+    }
+  }
+}
 function renderSessions() {
   renderContextHeader();
   const groupBy = sessionGroup;
@@ -1740,7 +1757,10 @@ async function openChatNotification(key) {
 // model and command catalogs are intentionally absent from ordinary switches.
 function markActiveChatViewed() {
   const key = activeChatKey();
-  if (key && document.visibilityState === 'visible' && document.hasFocus() && projectTabActivity.viewed(key)) renderProjTabs();
+  if (key && document.visibilityState === 'visible' && document.hasFocus() && projectTabActivity.viewed(key)) {
+    updateSessionUnseenState(key);
+    renderProjTabs();
+  }
 }
 window.addEventListener('focus', markActiveChatViewed);
 document.addEventListener('visibilitychange', markActiveChatViewed);
