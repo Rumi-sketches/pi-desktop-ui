@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readAttachmentFiles, composeAttachments } from '../public/attachments.js';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { createChatCache } from '../public/chat-cache.js';
 import { createDraftStorage } from '../public/draft-storage.js';
-import { createUiState, projectTabId, VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS } from '../public/ui-state.js';
+import { createUiState, projectTabId, VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS, VIEW_DEBATE } from '../public/ui-state.js';
 import { createNavigationController } from '../public/navigation.js';
 import { createTransport } from '../public/transport.js';
 import { createProjectTabActivity } from '../public/project-tab-activity.js';
@@ -247,7 +248,7 @@ function setup() {
   uiState.registerProject('b');
   const screen = { key: null, history: '' };
   const context = vm.createContext({
-    uiState, projectTabId, VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS,
+    uiState, projectTabId, VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS, VIEW_DEBATE,
     allSessions: ['a', 'b'].map((key) => ({ path: key, cwd: key })),
     projState: { tabs: ['a', 'b'] }, renderedChatKey: null,
     isNavigationSelectionAvailable: () => true,
@@ -308,8 +309,10 @@ test('non-chat views park scroll before hiding and returning to the same key res
   const cache = uiState.chatCache;
   Object.assign(context, {
     chatCache: cache,
+    $: () => ({ classList: { toggle() {} } }),
     renderContextHeader() {}, renderSessions() {},
     terminalView: { render() {}, show() {} },
+    debateView: { hide() {}, refreshList() {} },
     transport: { closeDetailed() {} },
     parkChatView(key) { cache.saveView(key, { scrollTop: visible ? 173 : 0, snapshot: {} }); },
     restoreChatView(key) { restored = visible ? cache.peek(key).view.scrollTop : 0; cache.takeSnapshot(key); },
@@ -400,7 +403,7 @@ function fileSetup() {
     }
   }
   Object.assign(state.context, {
-    FileReader: Reader, chatCache: state.uiState.chatCache,
+    FileReader: Reader, readAttachmentFiles, chatCache: state.uiState.chatCache,
     activeChatKey: () => state.uiState.selection.resourceId,
     renderAttachments() {}, toast() {}, pending: [], TEXT_EXT: /txt$/,
   });
@@ -693,7 +696,7 @@ test('a delayed enqueue acknowledgement cannot resurrect a delivered ghost', asy
   let acknowledge;
   const response = new Promise((resolve) => { acknowledge = resolve; });
   const context = vm.createContext({
-    uiState, chatCache: uiState.chatCache, composerSubmitting: false,
+    uiState, composeAttachments, chatCache: uiState.chatCache, composerSubmitting: false,
     closeCmdMenu() {}, activeChatKey: () => 'a', input: { value: 'redirect' }, pending: [],
     chatView: { capturePromptAnchor: () => null, insertAcceptedUserTurn() {} },
     setComposerSubmitting() {}, clearAcceptedComposer() {},
@@ -717,7 +720,7 @@ test('a delayed prompt acknowledgement cannot restart an already completed respo
   const response = new Promise((resolve) => { acknowledge = resolve; });
   const turns = [];
   const context = vm.createContext({
-    uiState, chatCache: uiState.chatCache, composerSubmitting: false,
+    uiState, composeAttachments, chatCache: uiState.chatCache, composerSubmitting: false,
     closeCmdMenu() {}, activeChatKey: () => 'a', renderedChatKey: 'a', input: { value: 'request' }, pending: [],
     chatView: {
       capturePromptAnchor: () => null,

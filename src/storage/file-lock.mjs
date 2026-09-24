@@ -50,7 +50,9 @@ export async function withFileLock(file, operation) {
         } catch (reclaimError) {
           if (reclaimError.code !== "EEXIST" && reclaimError.code !== "ENOENT") throw reclaimError;
         }
-        if (Date.now() >= deadline) throw new Error(`timed out waiting for storage lock: ${path.basename(file)}`);
+        if (Date.now() >= deadline) {
+          throw Object.assign(new Error(`timed out waiting for storage lock: ${path.basename(file)}`), { code: 'STORAGE_LOCK_TIMEOUT' });
+        }
         await pause();
       }
     }

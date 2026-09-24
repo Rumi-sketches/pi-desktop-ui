@@ -13,7 +13,7 @@ import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { pickFolder, openFolder, openPath, openTerminal, typeInTerminal, platformCapabilities } from "../platform/platform.mjs";
 import { terminateTerminalsForChat } from "../terminals/terminals.mjs";
-import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError, sendPreviewHtml } from "../http/http.mjs";
+import { isNonEmptyString, jsonBody, openSseStream, send, sendBytes, sendError, sendPreviewHtml, sseSend, sseWrite, SSE_PING, SSE_PING_MS } from "../http/http.mjs";
 import { titleLookup } from "./titles.mjs";
 import {
   SESSIONS_DIR,
@@ -70,6 +70,90 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { PromptQueueError, normalizePromptInput, queuedExtensionCommand } from "./prompt-queue.mjs";
 import { gitBranches, gitStatus, switchGitBranch } from "../project/git.mjs";
 import { previewFromBranch, previewKind } from "./chat-previews.mjs";
+
+import { debates } from './debates.mjs';
+import { assertDebateId, DebateError, parseDebateConfig } from '../../public/debate-contract.js';
+
+// ---- debates: resource-scoped, never resolved through the active chat -------
+async function debateRequest(res, operation) {
+  try { return await operation(); }
+  catch (error) {
+    if (res.headersSent) { sseSend(res, { kind: 'unavailable' }); res.end(); return; }
+    if (error instanceof DebateError) return sendError(res, error.status, error.code, error.message);
+    throw error;
+  }
+}
+
+export async function handleCreateDebate({ req, res }) {
+  return debateRequest(res, async () => {
+    const body = await jsonBody(req);
+    const config = parseDebateConfig(body);
+    try { config.cwd = await resolveDir(config.cwd); }
+    catch { throw new DebateError('invalid_project_folder', 'Choose an existing project folder.'); }
+    send(res, 201, await debates.create(config, body.attachments));
+  });
+}
+export async function handleListDebates({ res, url }) {
+  return debateRequest(res, async () => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    res.once('close', abort);
+    try {
+      const page = await debates.list({ before: url.searchParams.get('before'), cwd: url.searchParams.get('cwd'), signal: controller.signal });
+      if (!res.destroyed) send(res, 200, page);
+    } catch (error) { if (!controller.signal.aborted) throw error; }
+    finally { res.off('close', abort); }
+  });
+}
+export async function handleGetDebate({ res, params }) {
+  return debateRequest(res, async () => send(res, 200, await debates.snapshot(assertDebateId(params.id))));
+}
+export async function handleStartDebate({ res, params }) {
+  return debateRequest(res, async () => send(res, 202, await debates.start(assertDebateId(params.id))));
+}
+export async function handleContinueDebate({ req, res, params }) {
+  return debateRequest(res, async () => {
+    const body = await jsonBody(req);
+    send(res, 202, await debates.continueDebate(assertDebateId(params.id), body, body?.attachments));
+  });
+}
+export async function handleStopDebate({ res, params }) {
+  return debateRequest(res, async () => send(res, 200, await debates.stop(assertDebateId(params.id))));
+}
+export async function handleDebateHistory({ res, params, url }) {
+  return debateRequest(res, async () => {
+    const cursor = url.searchParams.get('before');
+    send(res, 200, await debates.history(assertDebateId(params.id), { before: cursor === null ? null : Number(cursor), finals: url.searchParams.get('finals') === '1' }));
+  });
+}
+export async function handleDebateEvents({ res, params }) {
+  return debateRequest(res, async () => {
+    const id = assertDebateId(params.id);
+    await debates.snapshot(id);
+    if (res.destroyed) return;
+    openSseStream(res);
+    const detach = await debates.watch(id, (event) => {
+      if (event.kind === 'closed') res.end();
+      else sseSend(res, event);
+    });
+    if (res.destroyed || res.writableEnded) { detach(); return; }
+    const ping = setInterval(() => sseWrite(res, SSE_PING), SSE_PING_MS);
+    // A second app instance sees saved progress without owning its execution.
+    let polling = false;
+    const refresh = setInterval(async () => {
+      if (polling || res.destroyed || debates.isActive(id)) return;
+      polling = true;
+      try {
+        const debate = await debates.snapshot(id);
+        sseSend(res, { kind: 'snapshot', debate });
+      }
+      catch { sseSend(res, { kind: 'unavailable' }); }
+      finally { polling = false; }
+    }, 2000);
+    ping.unref(); refresh.unref();
+    res.once('close', () => { detach(); clearInterval(ping); clearInterval(refresh); });
+  });
+}
 
 // ---- the event stream ------------------------------------------------------
 export async function handleEvents({ req, res, sessionKey }) {

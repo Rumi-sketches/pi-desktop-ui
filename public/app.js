@@ -7,6 +7,7 @@ import {
   VIEW_CHAT,
   VIEW_SETTINGS,
   VIEW_TERMINAL,
+  VIEW_DEBATE,
   createUiState,
   normalizeSearchPayload,
   projectTabId,
@@ -23,6 +24,8 @@ import { providerIconHtml } from './provider-icons.js';
 import { createAgentInputs } from './agent-inputs.js';
 import { createSettingsView } from './settings-view.js';
 import { createTerminalView } from './terminal-view.js';
+import { createDebateView } from './debate-view.js';
+import { readAttachmentFiles, composeAttachments } from './attachments.js';
 import { createChatView } from './chat-view.js';
 import { createProjectTabActivity } from './project-tab-activity.js';
 
@@ -831,6 +834,8 @@ function handleEvent(ev, ownerKey) {
       }
     } else if (ev.kind === 'sessions') {
       loadSessions();
+    } else if (ev.kind === 'debates') {
+      debateView.refreshList();
     } else if (ev.kind === 'terminals') {
       terminalView.load();   // a terminal was created, died or was closed (here or elsewhere)
     }
@@ -1961,6 +1966,7 @@ uiState.setActiveTab(projectTabId(initialProjectCwd));
 const projName = (cwd) => (cwd || '').split(/[\\/]/).filter(Boolean).pop() || cwd;
 function isNavigationSelectionAvailable(selection) {
   if (selection.view === VIEW_SETTINGS) return true;
+  if (selection.view === VIEW_DEBATE) return debateView.has(selection.resourceId);
   if (selection.view === VIEW_CHAT) {
     return selection.resourceId === renderedChatKey || sidebarSessions().some((s) => s.path === selection.resourceId);
   }
@@ -2450,6 +2456,20 @@ const terminalView = createTerminalView({
 });
 terminalView.start();
 
+const debateView = createDebateView({
+  state: uiState,
+  getCwd: () => activeProjectCwd() || activeChatState().cwd,
+  getModels: () => uiState.global.models,
+  select: (debate) => {
+    const project = activeProjectCwd();
+    const tabId = debate && project && !sameCwd(project, debate.config.cwd) ? projectTabId(null) : uiState.activeTabId;
+    navigation.transition({ tabId, view: VIEW_DEBATE, resourceId: debate?.id ?? null });
+  },
+  toast,
+});
+debateView.start();
+window.addEventListener('pagehide', () => debateView.dispose());
+
 function renderContextHeader(selection = uiState.selection) {
   const selectedChat = selection?.view === VIEW_CHAT ? uiState.chats.get(selection.resourceId) : null;
   const chatSession = selection?.view === VIEW_CHAT
@@ -2461,6 +2481,8 @@ function renderContextHeader(selection = uiState.selection) {
   $('mainHeader').dataset.view = selection?.view ?? VIEW_CHAT;
   document.querySelector('.crumb').classList.toggle('hide', !chatHeader);
   terminalView.renderHeader(selection);
+  $('debateHeader').classList.toggle('hide', selection?.view !== VIEW_DEBATE);
+  $('debateHeader').textContent = selection?.resourceId ? 'Debate' : 'New debate';
 
   if (!chatHeader) return;
   const parts = chatHeader.cwd.split(/[\\/]/).filter(Boolean);
@@ -2638,7 +2660,10 @@ function showSettings() {
   navigation.settings();
 }
 function renderNavigationSelection(selection) {
+  $('sidebar').classList.toggle('mode-debates', selection.view === VIEW_DEBATE);
+  $('navDebates').classList.toggle('on', selection.view === VIEW_DEBATE);
   if (selection.view !== VIEW_SETTINGS) settingsController.hide();
+  if (selection.view !== VIEW_DEBATE) debateView.hide();
   renderContextHeader(selection);
   if (selection.view === VIEW_CHAT) {
     // Navigation commits before openSession starts HTTP. This call parks the
@@ -2659,6 +2684,20 @@ function renderNavigationSelection(selection) {
   terminalView.render();
   if (selection.view === VIEW_TERMINAL) terminalView.show(selection.resourceId);
   else if (selection.view === VIEW_SETTINGS) renderSettingsView();
+  else if (selection.view === VIEW_DEBATE) {
+    $('chatView').classList.add('hide');
+    $('settingsView').classList.add('hide');
+    terminalView.hide();
+    $('navChat').classList.remove('on');
+    $('navSettings').classList.remove('on');
+    $('diffClose').click();
+    $('tasksClose').click();
+    $('navDiff').classList.add('hide');
+    $('navTasks').classList.add('hide');
+    $('sidebar').classList.remove('mode-settings');
+    debateView.show(selection.resourceId);
+  }
+  debateView.refreshList();
 }
 function renderCachedChatState() {
   renderContextHeader();
@@ -2696,6 +2735,7 @@ function renderSettingsView() {
 }
 
 $('navChat').addEventListener('click', showChat);
+$('navDebates').addEventListener('click', () => debateView.openSection());
 $('navSettings').addEventListener('click', showSettings);
 
 
@@ -2703,7 +2743,6 @@ $('navSettings').addEventListener('click', showSettings);
 
 /* ---------------- attachments (picker + paste + drag&drop) ---------------- */
 let pending = [];
-const TEXT_EXT = /\.(txt|md|markdown|json|ya?ml|toml|ini|cfg|conf|csv|tsv|log|html?|css|scss|jsx?|tsx?|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|php|sh|bat|ps1|sql|xml|svg|vue|svelte|env|gitignore|dockerfile)$/i;
 function renderAttachments() {
   const el = $('attachments');
   el.innerHTML = '';
@@ -2741,22 +2780,7 @@ function addFiles(files, ownerKey = activeChatKey() ?? renderedChatKey) {
       renderAttachments();
     }
   };
-  for (const file of files) {
-    if (!file) continue;
-    if (file.type.startsWith('image/')) {
-      const r = reader();
-      r.onload = () => {
-        const url = String(r.result);
-        append({ kind: 'image', name: file.name || 'image', url, data: url.split(',')[1], mimeType: file.type });
-      };
-      r.readAsDataURL(file);
-    } else if (file.type.startsWith('text/') || TEXT_EXT.test(file.name) || !file.type) {
-      if (file.size > 512 * 1024) { toast(`${file.name}: too large (max 512 KB)`); continue; }
-      const r = reader();
-      r.onload = () => append({ kind: 'file', name: file.name, text: String(r.result) });
-      r.readAsText(file);
-    } else toast(`${file.name}: unsupported type`);
-  }
+  readAttachmentFiles(files, { reader, append, report: toast });
 }
 $('attachBtn').addEventListener('click', () => $('fileInput').click());
 $('fileInput').addEventListener('change', (e) => { addFiles([...e.target.files]); e.target.value = ''; });
@@ -2777,6 +2801,10 @@ window.addEventListener('drop', (e) => {
   dropOff();
   if (!e.dataTransfer?.files?.length) return;
   e.preventDefault();
+  if (uiState.selection?.view === VIEW_DEBATE) {
+    debateView.addFiles([...e.dataTransfer.files]);
+    return;
+  }
   showChat();
   addFiles([...e.dataTransfer.files]);
   $('input').focus();
@@ -2917,13 +2945,7 @@ async function submitPrompt(queueType = null) {
   storeComposerDraft(key, draft);
   entry.composer.attachments = pending;
 
-  const images = attachments
-    .filter((attachment) => attachment.kind === 'image')
-    .map((attachment) => ({ data: attachment.data, mimeType: attachment.mimeType }));
-  let payload = text;
-  for (const attachment of attachments.filter((item) => item.kind === 'file')) {
-    payload += `\n\n--- attached file: ${attachment.name} ---\n\`\`\`\n${attachment.text}\n\`\`\``;
-  }
+  const { text: payload, images } = composeAttachments(text, attachments);
   const anchor = chatView.capturePromptAnchor();
   setComposerSubmitting(true);
   try {
@@ -3084,6 +3106,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
   // Ctrl+Enter: send the message from anywhere on the page
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'Enter') {
+    if (uiState.selection?.view === VIEW_DEBATE) { e.preventDefault(); debateView.submit(); return; }
     if (input.value.trim() || pending.length) { e.preventDefault(); $('composer').requestSubmit(); }
     return;
   }
@@ -3094,6 +3117,7 @@ document.addEventListener('keydown', (e) => {
   // Shift+letter types a capital letter, Ctrl+letter does not: only the browser
   // binding has to keep its hands off the keyboard while you write.
   if (typing && !IS_ELECTRON) return;
+  if (uiState.selection?.view === VIEW_DEBATE && ['m', 'e'].includes(e.key.toLowerCase())) { e.preventDefault(); return; }
   switch (e.key.toLowerCase()) {
     case 'm': e.preventDefault(); cycleModel(); break;          // cycle models
     case 'e': e.preventDefault(); cycleThinking(); break;       // cycle effort
@@ -3284,12 +3308,14 @@ async function loadInitialChat() {
   await Promise.all([loadModels(), loadCommands(), loadRecentCwds()]);
   await loadSessions();
   await terminalView.load();
+  await debateView.loadList();
   await Promise.all([
     refreshChat(),
     loadFiles(),
     refreshGit(),
     refreshUsage(),
   ]);
+  await debateView.restoreSelection();
 })();
 // safety net: if SSE dies the sidebar must never go stale
 setInterval(() => {

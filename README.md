@@ -58,6 +58,49 @@ The activity label shows how long the current response has been running. Its tim
 - Edit global agent inputs from Settings and project inputs from the chat header. You can restore every file to its pre-edit state.
 - Choose which tools, providers and models appear in the app.
 
+### Explore an idea with two agents
+
+Select **Debates** beside Chat and Settings, then **+** in its sidebar. Enter a prompt, choose
+a model and supported effort for A and B, and set the rounds. Four rounds means four responses
+per agent, including the independent opening and final answer. Starting sends the prompt and
+attachments to both selected providers and uses their quota.
+
+Both agents write their opening independently. A then receives B1; B receives A1 and A2 together.
+Subsequent responses alternate. Before its last response, each agent is asked for a complete,
+self-contained answer incorporating every still-valid proposal and correction, not just a recap
+of changes. B sees A's final answer before writing its own.
+
+The transcript streams in one column, with model, effort and cycle shown on each response.
+**Conclusions only** shows the current cycle's final responses;
+**Older responses** pages through longer discussions. **Stop** interrupts active calls;
+**Resume** continues from the last saved response. Switching views or reloading the page does not
+stop the server-side run. Restarting the app does, and never resumes it automatically.
+
+After a cycle completes, **Continue the conversation** accepts a new prompt, attachments and
+an independently chosen round count. Both agents keep their own prior conversation and file
+readings. The previous final answers are included as context for the new independent openings.
+**Resume** instead recovers an unfinished cycle without changing its prompt or round count.
+
+Agents can explore the selected folder with **read, grep, find and ls**. They cannot write files,
+run shell commands or load extensions. Direct paths and symlinks outside the project are refused;
+choose a project folder separate from Pi's configuration. Project instructions can be inspected
+through these read-only tools but are not loaded automatically as system instructions.
+
+Attach text/code files (up to 512 KB each) and PNG, JPEG, GIF or WebP images using the file picker,
+paste or drag-and-drop. Both models must support images to accept image attachments. Unsupported
+binary formats such as PDF are not accepted, as in the normal chat composer. Attachment drafts stay
+in memory and do not survive a page reload; submitted inputs are saved with their cycle.
+
+The agents receive only A/B labels and each other's answer text, not model identities or tool
+results from the peer. Automatic retries and context summaries remain disabled. Provider context
+and output limits still apply; a truncated answer is not forwarded. An interrupted, unsaved call
+may consume quota again when resumed.
+
+Checkpoints are stored locally under `~/.pi/agent/web-ui-debates`, separately from regular chats.
+If the desktop and browser servers are open together, only the instance that started a debate
+can stop it while it is running; the other can read saved progress. Debate usage is not currently
+included in the session-file analytics.
+
 ### Inspect usage and files
 
 - See current context size, context percentage, processed tokens and cumulative cost for each chat.

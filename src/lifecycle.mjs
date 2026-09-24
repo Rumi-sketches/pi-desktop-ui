@@ -15,6 +15,7 @@
  * was a lot of machinery for the secondary way of running the app.
  */
 import { PRODUCT_ID } from "../product.mjs";
+import { debates } from './chat/debates.mjs';
 import { jsonBody, send, sendError } from "./http/http.mjs";
 import { disposeAllContexts, runningContextKeys } from "./chat/contexts.mjs";
 import { closeAllTerminals, countLiveTerminals } from "./terminals/terminals.mjs";
@@ -53,6 +54,7 @@ function afterResponse(res, fn) {
 // Idempotent: calling it twice, or before a successful start, is a no-op.
 export async function stopServer() {
   restartHandler = null;
+  await debates.dispose();
   await disposeAllContexts();
   // The terminals die with the server, exactly like the agent sessions above:
   // without this a quit leaves one orphan powershell.exe per open terminal,
@@ -99,7 +101,7 @@ const CLI_RESTART_HINT = `restart ${PRODUCT_ID} to apply`;
 
 /** @returns {WorkInProgress} */
 export function workInProgress() {
-  const agents = runningContextKeys().length;
+  const agents = runningContextKeys().length + debates.count();
   const terminals = countLiveTerminals();
   return { agents, terminals, busy: agents + terminals > 0 };
 }
@@ -115,7 +117,7 @@ const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
  */
 export function describeWork(work) {
   const parts = [];
-  if (work.agents > 0) parts.push(`${plural(work.agents, "chat")} still running`);
+  if (work.agents > 0) parts.push(`${plural(work.agents, "agent run")} still running`);
   if (work.terminals > 0) parts.push(`${plural(work.terminals, "terminal")} open`);
   return parts.join(" and ");
 }

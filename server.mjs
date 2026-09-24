@@ -22,6 +22,7 @@
  *   `src/lifecycle.mjs` stopping: signals, /api/shutdown, /api/restart
  */
 import http from "node:http";
+import { debates } from './src/chat/debates.mjs';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCT_ID } from "./product.mjs";
@@ -54,6 +55,14 @@ import {
   workInProgress,
 } from "./src/lifecycle.mjs";
 import {
+  handleCreateDebate,
+  handleListDebates,
+  handleGetDebate,
+  handleStartDebate,
+  handleContinueDebate,
+  handleStopDebate,
+  handleDebateHistory,
+  handleDebateEvents,
   handleAbort,
   handleActivateRecentSession,
   handleActivateSession,
@@ -135,6 +144,8 @@ import {
 const ROUTES = [
   // the page and its assets (see PAGE_ROUTES in src/http/http.mjs)
   ...PAGE_ROUTES,
+  ["GET", "/api/debates", handleListDebates],
+  ["POST", "/api/debates", handleCreateDebate],
   ["GET", "/api/events", handleEvents],
   ["GET", "/api/state", handleGetState],
   ["GET", "/api/models", handleGetModels],
@@ -201,6 +212,12 @@ const ROUTES = [
 // Routes whose path carries data: a `:name` segment matches any single segment
 // and reaches the handler in `rq.params`. Tried in order, after the exact table.
 const PARAM_ROUTES = [
+  ["GET", "/api/debates/:id", handleGetDebate],
+  ["POST", "/api/debates/:id/start", handleStartDebate],
+  ["POST", "/api/debates/:id/continue", handleContinueDebate],
+  ["POST", "/api/debates/:id/stop", handleStopDebate],
+  ["GET", "/api/debates/:id/history", handleDebateHistory],
+  ["GET", "/api/debates/:id/events", handleDebateEvents],
   ["POST", "/api/sessions/:id/activate", handleActivateSession],
   ["POST", "/api/sessions/:id/fork", handleForkSession],
   ["DELETE", "/api/queued-prompts/:id", handleDeleteQueuedPrompt],
@@ -300,6 +317,7 @@ function listen(httpServer, port, host) {
 export async function startServer(options = {}) {
   if (isServerRunning()) throw new Error("the server is already running in this process");
   setRestartHandler(options.onRestart);
+  debates.reopen();
 
   await Promise.all([loadSessionState(), loadPreferences(), loadNetwork()]);
   await runFirstRunArchiving();

@@ -59,6 +59,55 @@ against the route table in `server.mjs` (`ROUTES` and `PARAM_ROUTES`) by
 | `GET /api/files` *[s]* | – | `{ files: [{ path, changes }] }` touched by this chat | – |
 | `GET /api/files/diff` *[s]* | `?path=…` | `{ path, write, hunks[] }`, secrets redacted | `404` file not tracked by this chat |
 
+## Debates
+
+Debates are independent resources; they never resolve through the selected chat.
+A configuration is `{ prompt, cwd, rounds, A: { provider, model, effort }, B: { provider, model, effort } }`.
+Rounds must be a safe integer of at least two and include the opening and conclusion.
+The folder is the root of read-only exploration (`read`, `grep`, `find`, `ls`); tool paths are
+resolved against it and outside-project paths are rejected. Extensions and automatic instruction
+discovery remain disabled. Participants may include a presentation `name` (default: model ID).
+
+A public snapshot contains `{ id, title, config, revision, status, cycle, completed, totalCompleted,
+attachments[], ownedElsewhere, error, live[] }`. `config.prompt` and `config.rounds` describe the
+current cycle; `title` retains the original prompt. `completed` counts current-cycle responses;
+`totalCompleted` counts all cycles. Attachment metadata contains `{ kind, name, bytes }`, not content.
+Statuses are `ready`, `running`, `stopping`, `interrupted`, `failed`, and `completed`.
+Live entries contain `{ key, text, activity }`. SDK history, thinking signatures and provider error bodies
+stay on the server. Model identities are visible to the user, not added to peer messages.
+
+| Route | Request | Response | Errors |
+| --- | --- | --- | --- |
+| `POST /api/debates` | Configuration plus optional `attachments[]`: text files `{ kind: "file", name, text }`, images `{ kind: "image", name, mimeType, data }` with base64 data | `201` saved `ready` snapshot; no model call | `400` invalid configuration, rounds, folder or attachment · `413` text attachment over 512 KB or input over 32 MB · `409` unavailable model, unsupported effort or image input |
+| `GET /api/debates` | Optional `?cwd=…&before=<id>` | `{ debates[], before }`, newest first, at most 20 records and 200 checkpoint reads per page; `before` is the next cursor or `null` | `400` invalid cursor · `409` invalid checkpoint |
+| `GET /api/debates/:id` | Debate ID | Public snapshot | `400` invalid ID · `404` missing debate · `409` invalid checkpoint |
+| `POST /api/debates/:id/start` | Empty object | `202` snapshot after claiming execution and saving its running state; also resumes interrupted/failed debates | `404` missing debate · `409` busy/completed debate, unavailable model, unsupported effort or checkpoint conflict |
+| `POST /api/debates/:id/continue` | `{ prompt, rounds, previousCycle, attachments? }`; `previousCycle` must match the completed current cycle | `202` after saving and starting a new cycle with both agents' prior histories; the same model/effort pair and project are retained | `400` invalid input · `409` busy/incomplete cycle, stale cycle token or unsupported model input · `413` attachments over limits |
+| `POST /api/debates/:id/stop` | Empty object | Snapshot after aborting and draining active calls; already stopped is unchanged | `404` missing debate · `409` owned by another app instance |
+| `GET /api/debates/:id/history` | Optional `?before=<exclusive ordinal>` or `?finals=1` | `{ turns: [{ key, cycle, index, text, final, model, prompt }], before }`; at most 20 responses across cycles, or only the current cycle's two conclusions. `model` contains provider/model/name/effort for display. `prompt` is that cycle's user prompt, without attachment contents | `400` invalid ID/cursor · `404` missing debate |
+| `GET /api/debates/:id/events` | Debate ID | SSE: initial/reconnection `{ kind: "snapshot", debate }`, then `{ kind: "text", cycle, key, offset, delta }`, `{ kind: "activity", cycle, key, activity }` and checkpoint snapshots. Offsets count JavaScript string units. A viewer of another server instance receives saved snapshots on a two-second poll, not live tokens. | `400` invalid ID · `404` missing debate |
+
+Every response is saved before it is passed to the peer. Only successful text responses count;
+truncation, errors and aborts stop execution. The two independent opening responses are checkpointed
+separately. A reconnect replaces the live buffer; it never restarts execution. Completed history is
+fetched separately and paginated. Global `{ kind: "debates" }` events invalidate the sidebar list.
+
+Debates use isolated in-memory SDK sessions with a fixed read-only tool allowlist, scoped paths,
+no discovery, no automatic retries and no compaction. Private checkpoints include each agent's
+intermediate tool calls/results so reconstruction preserves its own observations. Only the final
+text answer is delivered to the peer. Each new cycle sends its input and attachments independently
+to both agents, with the previous peer conclusion as context. Local labels A1/B1 restart per cycle;
+`cycle` distinguishes them in history and live events.
+
+Authoritative checkpoints live under `~/.pi/agent/web-ui-debates`. Version 1 text-only records are
+read as a single cycle and converted to version 2 on the next explicit mutation. Existing data is
+not rewritten during listing or loading.
+A separate execution lock prevents two server processes from running one record. Another instance
+can read saved progress but must direct control actions to the owner. After owner exit, incomplete
+work is reported as interrupted and resumes only on an explicit start. A provider call interrupted
+before its result was saved may be charged again on resume. Atomic replacement protects against
+partial application writes; it is not a guarantee against power loss.
+
 ## Sessions and folders
 
 | Route | Request | Response | Errors |
@@ -142,4 +191,4 @@ it with `DELETE`: an exited console stays readable.
 | Route | Request | Response | Errors |
 | --- | --- | --- | --- |
 | `POST /api/shutdown` | `{ force? }` | `{ ok, stopping: true }`, then the server exits gracefully | `409` `work_in_progress` — see `/api/restart` |
-| `POST /api/restart` | `{ force? }` | embedded (Electron): `{ ok, restarting: true }` and the host restarts the server in place. From the CLI: `{ ok, stopping: true, restarting: false, message }` and the server stops for good | `409` `work_in_progress` when the stop would interrupt something: chats mid-turn or open terminals. The error carries `agents` and `terminals` (how many of each) and the call is repeated with `{ force: true }` once the user confirms |
+| `POST /api/restart` | `{ force? }` | embedded (Electron): `{ ok, restarting: true }` and the host restarts the server in place. From the CLI: `{ ok, stopping: true, restarting: false, message }` and the server stops for good | `409` `work_in_progress` when the stop would interrupt something: chats mid-turn, active debates or open terminals. The error carries `agents` and `terminals` (how many of each) and the call is repeated with `{ force: true }` once the user confirms |

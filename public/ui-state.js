@@ -1,11 +1,13 @@
 import { createChatCache } from "./chat-cache.js";
+import { parseDebateSnapshot } from './debate-contract.js';
 
 export const ALL_TAB_ID = "all";
 export const VIEW_CHAT = "chat";
 export const VIEW_TERMINAL = "terminal";
 export const VIEW_SETTINGS = "settings";
+export const VIEW_DEBATE = 'debate';
 
-const VIEW_TYPES = new Set([VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS]);
+const VIEW_TYPES = new Set([VIEW_CHAT, VIEW_TERMINAL, VIEW_SETTINGS, VIEW_DEBATE]);
 const TERMINAL_KINDS = new Set(["pi", "shell"]);
 const SESSION_STATUSES = new Set(["active", "done", "reopened"]);
 const QUEUE_TYPES = new Set(["steer", "followUp"]);
@@ -380,6 +382,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
   const projectData = new Map();
   const chats = new Map();
   const terminals = new Map();
+  const debates = new Map();
   const pendingChat = newChatState();
   let activeTabId = ALL_TAB_ID;
   let selection = null;
@@ -465,17 +468,18 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     }
     const tabId = string(candidate.tabId, "selection.tabId");
     const view = string(candidate.view, "selection.view");
-    if (!VIEW_TYPES.has(view)) invalid("selection.view", "must be chat, terminal or settings");
+    if (!VIEW_TYPES.has(view)) invalid("selection.view", "must be chat, terminal, debate or settings");
     const project = projects.get(tabId);
     if (!project) invalid("selection.tabId", "does not identify an open project tab");
 
-    if (view === VIEW_SETTINGS) {
+    if (view === VIEW_SETTINGS || (view === VIEW_DEBATE && candidate.resourceId === null)) {
       if (candidate.resourceId !== null) invalid("selection.resourceId", "must be null for settings");
       return { tabId, view, resourceId: null };
     }
 
     const resourceId = string(candidate.resourceId, "selection.resourceId");
-    const resource = view === VIEW_CHAT ? chats.get(resourceId) : terminals.get(resourceId);
+    const resources = { [VIEW_CHAT]: chats, [VIEW_TERMINAL]: terminals, [VIEW_DEBATE]: debates };
+    const resource = resources[view].get(resourceId);
     if (!resource) invalid("selection.resourceId", `does not identify a ${view}`);
     if (project.cwd !== null && (!resource.cwd || !sameProject(resource.cwd, project.cwd))) {
       invalid("selection.resourceId", `does not belong to tab ${tabId}`);
@@ -592,6 +596,14 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     return payload;
   }
 
+  function applyDebatePayload(value) {
+    const debate = parseDebateSnapshot(value);
+    const current = debates.get(debate.id);
+    if (current && current.revision > debate.revision) return current;
+    debates.set(debate.id, { ...debate, cwd: debate.config.cwd });
+    return debate;
+  }
+
   function applyTerminalsPayload(value) {
     const payload = normalizeTerminalsPayload(value);
     terminals.clear();
@@ -608,6 +620,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     projectData,
     chats,
     terminals,
+    debates,
     pendingChat,
     chatCache,
     get activeTabId() { return activeTabId; },
@@ -632,5 +645,6 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     applyCommandsPayload,
     applySessionsPayload,
     applyTerminalsPayload,
+    applyDebatePayload,
   };
 }
