@@ -308,6 +308,11 @@ const PAGE_ASSETS = {
   "/provider-icons.js": { file: "provider-icons.js", type: "text/javascript; charset=utf-8" },
   "/project-tab-activity.js": { file: "project-tab-activity.js", type: "text/javascript; charset=utf-8" },
   "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+  ...Object.fromEntries([
+    "file-text", "terminal-2", "edit", "file-plus", "search", "folder", "world", "tool",
+  ].map((name) => [`/tool-icons/${name}.svg`, {
+    file: `tool-icons/${name}.svg`, type: "image/svg+xml",
+  }])),
   // The app mark, for the tab and for whatever pins the page. `/favicon.ico`
   // is not in the HTML: browsers ask for it on their own, and answering 404 to
   // a request nobody made is still a 404 in the console.

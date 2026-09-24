@@ -476,16 +476,31 @@ test('four consecutive tool calls collapse into a group with individual expandab
   assert.equal(group.open, undefined);
   assert.equal(group.querySelectorAll('.toolCard').length, 5);
   assert.equal(group.querySelector('.toolGroupCount').textContent, '5 tool calls');
-  assert.equal(group.querySelector('.toolGroupPreview').textContent, 'read ×2bash ×2edit ×1');
+  assert.equal(group.querySelector('.toolGroupPreview').textContent, '2 reads2 shell commands1 edit');
+  assert.deepEqual(group.querySelectorAll('.toolIcon').map((icon) => icon.dataset.kind),
+    ['read', 'read', 'bash', 'edit', 'bash']);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'call-0', name: 'read', status: 'preview' }, view.state);
+  assert.equal(group.open, undefined);
   const head = group.querySelector('.toolHead');
   await head.emit('click');
   assert.equal(head.getAttribute('aria-expanded'), 'true');
   view.controller.applyStreamEvent({ kind: 'tool', id: 'call-4', name: 'bash', status: 'end', isError: true, output: 'failed' }, view.state);
-  assert.equal(group.open, true);
+  assert.equal(group.open, undefined);
+  assert.equal(group.querySelectorAll('.toolHead').at(-1).getAttribute('aria-expanded'), 'true');
   view.controller.applyStreamEvent({ kind: 'text', delta: 'Next step' }, view.state);
   view.controller.applyStreamEvent({ kind: 'tool', id: 'call-5', name: 'read', status: 'start', args: {} }, view.state);
   assert.equal(group.querySelectorAll('.toolCard').length, 5);
   assert.equal(view.document.chat.querySelectorAll('.toolCard').length, 6);
+});
+
+test('expanded tool rows use distinct icons with a generic fallback', () => {
+  const view = fixture();
+  for (const [index, name] of ['read', 'bash', 'edit', 'write', 'grep', 'custom_tool'].entries()) {
+    view.controller.applyStreamEvent({ kind: 'tool', id: `icon-${index}`, name, status: 'start', args: {} }, view.state);
+  }
+  const group = view.document.chat.querySelector('.toolGroup');
+  assert.deepEqual(group.querySelectorAll('.toolIcon').map((icon) => icon.dataset.kind),
+    ['read', 'bash', 'edit', 'write', 'search', 'other']);
 });
 
 test('thoughts join tool groups and only assistant text breaks the sequence', () => {
@@ -503,6 +518,13 @@ test('thoughts join tool groups and only assistant text breaks the sequence', ()
   assert.equal(group.querySelector('.toolGroupThought').textContent, 'Working more');
   view.controller.applyStreamEvent({ kind: 'tool', id: 'step-4', name: 'edit', status: 'start', args: {} }, view.state);
   assert.equal(group.querySelectorAll('.toolCard').length, 5);
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: '**Checking\n repository state first**' }, view.state);
+  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Checking repository state first');
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: ' **Planning preview cleanup**' }, view.state);
+  assert.equal(group.querySelector('.toolGroupThought').textContent,
+    'Checking repository state first Planning preview cleanup');
+  assert.equal(group.querySelectorAll('.thinking').at(-1).textContent,
+    'Checking\n repository state first Planning preview cleanup');
   view.controller.applyStreamEvent({ kind: 'text', delta: 'Result' }, view.state);
   view.controller.applyStreamEvent({ kind: 'tool', id: 'step-5', name: 'bash', status: 'start', args: {} }, view.state);
   assert.equal(group.querySelectorAll('.toolCard').length, 5);

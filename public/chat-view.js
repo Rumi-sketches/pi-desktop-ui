@@ -453,10 +453,6 @@ export function createChatView({
     if (!markdownFlushTimer) markdownFlushTimer = setTimeout(() => flushPendingMarkdown(), MARKDOWN_FLUSH_MS);
   }
 
-  function appendText(div, delta) {
-    mutateTranscript(() => { div.textContent += delta; });
-  }
-
   function formResult(output) {
     try {
       const parsed = JSON.parse(output ?? '');
@@ -713,13 +709,31 @@ export function createChatView({
     return lines.length > 1 ? `${lines.length} lines · ${preview}` : preview;
   }
 
+  const toolIconKinds = {
+    read: 'read', bash: 'bash', edit: 'edit', write: 'write',
+    grep: 'search', find: 'search', ls: 'folder',
+    web: 'web', search: 'search', fetch: 'web',
+  };
+  const toolCountLabels = {
+    read: ['read', 'reads'], bash: ['shell command', 'shell commands'],
+    edit: ['edit', 'edits'], write: ['write', 'writes'],
+    grep: ['search', 'searches'], find: ['search', 'searches'],
+    ls: ['listing', 'listings'],
+  };
+
+  function toolCountLabel(name, count) {
+    const labels = toolCountLabels[name];
+    return `${count} ${labels ? labels[count === 1 ? 0 : 1] : name}`;
+  }
+
   function updateToolGroup(group) {
     const entries = [...group.querySelector('.toolGroupCalls').children];
     const cards = entries.filter((entry) => entry.classList.contains('toolCard'));
     group.querySelector('.toolGroupCount').textContent = `${cards.length} tool calls`;
     const thoughts = entries.filter((entry) => entry.classList.contains('thinking'));
     const latest = group.querySelector('.toolGroupThought');
-    latest.textContent = thoughts.length ? thoughts[thoughts.length - 1].textContent.trim() : '';
+    const thoughtText = thoughts.length ? thoughts[thoughts.length - 1].textContent.trim() : '';
+    latest.textContent = thoughtText.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
     latest.hidden = !latest.textContent;
     const counts = new Map();
     for (const card of cards) {
@@ -730,13 +744,14 @@ export function createChatView({
     preview.replaceChildren();
     for (const [name, count] of counts) {
       const pill = documentRef.createElement('span');
-      pill.textContent = `${name} ×${count}`;
+      pill.textContent = toolCountLabel(name, count);
       preview.appendChild(pill);
     }
   }
 
   function appendGroupedThinking(body, text = '') {
-    const thought = bubble('thinking', text, body);
+    const thought = bubble('thinking', text.replace(/\*\*/g, ''), body);
+    thought.dataset.rawText = text;
     const trailingMeta = thought.previousElementSibling?.classList.contains('msgMeta')
       ? thought.previousElementSibling : null;
     const group = trailingMeta?.previousElementSibling ?? thought.previousElementSibling;
@@ -813,10 +828,17 @@ export function createChatView({
         addCopyButtons(card);
       }
       const query = (selector) => card.querySelector(selector);
+      if (event.name && !query('.toolIcon')) {
+        query('.nm').textContent = event.name;
+        const icon = documentRef.createElement('span');
+        icon.className = 'toolIcon';
+        icon.dataset.kind = toolIconKinds[event.name] ?? 'other';
+        icon.setAttribute('aria-hidden', 'true');
+        query('.nm').parentNode.insertBefore(icon, query('.nm'));
+      }
       if (event.status === 'preview') {
         showChatPreview(card, event, getKey(), documentRef, (url) => windowRef.fetch(url));
       } else if (event.status === 'start') {
-        query('.nm').textContent = event.name;
         query('.sm').textContent = event.summary || '';
         query('.sm').title = event.summary || '';
         query('.args').textContent = typeof event.args === 'string' ? event.args : JSON.stringify(event.args ?? {}, null, 2);
@@ -834,14 +856,11 @@ export function createChatView({
         query('.out').textContent = event.output || '(no output)';
         if (event.previewReady) showChatPreview(card, event, getKey(), documentRef, (url) => windowRef.fetch(url));
         if (event.isError) {
-          const group = card.closest('.toolGroup');
-          if (group) group.open = true;
           card.classList.add('open');
           query('.toolHead').setAttribute('aria-expanded', 'true');
         }
       }
       const group = card.closest('.toolGroup');
-      if (group && (event.status === 'preview' || event.previewReady)) group.open = true;
       if (group && event.status === 'start') updateToolGroup(group);
       return card;
     });
@@ -1043,7 +1062,8 @@ export function createChatView({
         currentAssistant = null;
         if (!currentTurn) currentTurn = newTurn('pi');
         if (!currentThinking) currentThinking = appendGroupedThinking(currentTurn);
-        appendText(currentThinking, event.delta);
+        currentThinking.dataset.rawText = (currentThinking.dataset.rawText ?? '') + event.delta;
+        mutateTranscript(() => { currentThinking.textContent = currentThinking.dataset.rawText.replace(/\*\*/g, ''); });
         const thinkingGroup = currentThinking.closest('.toolGroup');
         if (thinkingGroup) updateToolGroup(thinkingGroup);
         return true;

@@ -114,6 +114,15 @@ describe("routes that keep working", () => {
     assert.equal(body, "");
   });
 
+  test("tool icons are served from the fixed asset list", async () => {
+    const icon = await fetch(`${origin}/tool-icons/file-text.svg`);
+    assert.equal(icon.status, 200);
+    assert.equal(icon.headers.get('content-type'), 'image/svg+xml');
+    assert.match(await icon.text(), /<svg/);
+    const unknown = await fetch(`${origin}/tool-icons/unknown.svg`);
+    assert.equal(unknown.status, 404);
+  });
+
   test("the vendor sub-tree is a prefix route: unknown verb, 405", async () => {
     const { status, allow } = await request("POST", "/vendor/marked/lib/marked.esm.js");
     assert.equal(status, 405);
