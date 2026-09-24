@@ -602,6 +602,7 @@ async function renderSettings() {
           <div class="modelsToolbar">
             <div class="search"><input id="modelSearch" type="search" placeholder="Search models…" aria-label="Search models"></div>
             <label class="chip"><input type="checkbox" id="onlyReason"> with reasoning only</label>
+            <button class="btn outline" id="toggleAllModels" type="button"></button>
             <span class="sys" id="modelCount"></span>
           </div>
           <div class="modelGrid" id="modelGrid"></div>
@@ -917,6 +918,10 @@ async function renderSettings() {
       (!$('onlyReason').checked || m.reasoning)
       && (!q || `${m.id} ${m.name ?? ''}`.toLowerCase().includes(q)));
     $('modelCount').textContent = `${models.length} models`;
+    const authed = providerModels(selectedProvider).filter((m) => m.authed);
+    $('toggleAllModels').disabled = authed.length === 0 || saving;
+    $('toggleAllModels').textContent = authed.length && authed.every(active)
+      ? 'Deselect all models' : 'Select all models';
     $('modelGrid').innerHTML = models.map((m) => `
       <label class="modelCard ${active(m) && m.authed ? 'sel' : ''}">
         <input type="checkbox" data-model="${esc(keyFor(m))}" ${active(m) && m.authed ? 'checked' : ''} ${m.authed ? '' : 'disabled'}>
@@ -971,6 +976,13 @@ async function renderSettings() {
       patterns.push(...providerModels(id).filter((m) => m.authed).map(keyFor));
     }
     saveEnabled(e.target.checked ? [...patterns, key] : patterns.filter((p) => p !== key));
+  });
+  $('toggleAllModels').addEventListener('click', () => {
+    const models = providerModels(selectedProvider).filter((m) => m.authed);
+    if (!models.length || saving) return;
+    const patterns = explicitPatterns().filter((p) => p !== `${selectedProvider}/*`
+      && !p.startsWith(`${selectedProvider}/`));
+    saveEnabled(models.every(active) ? patterns : [...patterns, `${selectedProvider}/*`]);
   });
   $('providerSearch').addEventListener('input', drawProviders);
   $('refreshCatalog').addEventListener('click', async () => {

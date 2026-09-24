@@ -101,7 +101,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (char) => (
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
 }[char]));
 
-function fixture({ deferNetwork = false } = {}) {
+function fixture({ deferNetwork = false, modelCatalog = false } = {}) {
   const document = new FakeDocument();
   const calls = [];
   const networkResolvers = [];
@@ -118,7 +118,9 @@ function fixture({ deferNetwork = false } = {}) {
     '/api/config': {
       platform: { os: 'win32', openTextFile: true }, paths: { agentDir: '/agent' },
       current: null, thinkingLevel: 'off', thinkingLevels: ['off'], cwd: '/project', sessionFile: null,
-      providers: [], tools: [], models: [], options: {}, rawModels: {},
+      providers: modelCatalog ? [{ id: 'sample', models: 2, configured: true }] : [], tools: [],
+      models: modelCatalog ? ['first', 'second'].map((id) => ({ provider: 'sample', id, authed: true, name: id })) : [],
+      options: modelCatalog ? { enabledModels: ['sample/first'] } : {}, rawModels: {},
     },
     '/api/usage/config': { openai: {}, anthropic: {}, kimi: {} },
     '/api/agent-bootstrap': { files: [], tools: [], commands: [], toolsMode: 'pi-default', effectivePrompt: '' },
@@ -275,6 +277,23 @@ test('settings switches keep click and keyboard activation on their own endpoint
           { lunaTitleFallback: true }, { lunaTitleFallback: true }, { lunaTitleFallback: true },
         ]);
     } finally { globalThis.setTimeout = originalSetTimeout; }
+  });
+});
+
+test('select all toggles every model for the current provider', async () => {
+  await withBrowserGlobals(async (installDocument) => {
+    const state = fixture({ modelCatalog: true });
+    installDocument(state.document);
+    state.setSaveResult({ value: ['sample/*'] });
+    await state.controller.show();
+    const button = state.document.getElementById('toggleAllModels');
+    assert.equal(button.textContent, 'Select all models');
+    await button.emit('click');
+    assert.deepEqual(state.calls.filter((call) => call.url === '/api/settings' && call.kind === 'post')[0].body,
+      { key: 'enabledModels', value: ['sample/*'] });
+    assert.equal(button.textContent, 'Deselect all models');
+    await button.emit('click');
+    assert.match(state.document.getElementById('enabledMsg').textContent, /At least one model/);
   });
 });
 
