@@ -44,6 +44,7 @@ function statePayload(overrides = {}) {
       context: { tokens: 15, contextWindow: 1000, percent: 1.5 },
     },
     streaming: false,
+    runStartedAt: null,
     awaitingInput: false,
     queuedPrompts: [],
     platform: {
@@ -281,6 +282,20 @@ test("state refresh preserves a known first-text phase but starts unknown active
   assert.equal(ui.chatState(CHAT_A).responsePhase, RESPONSE_WAITING);
 });
 
+test("state refresh restores the server run start and clears it only when idle", () => {
+  const ui = createUiState();
+  const startedAt = Date.parse("2026-09-26T11:12:00.000Z");
+
+  ui.applyStatePayload(statePayload({ streaming: true, runStartedAt: startedAt }));
+  assert.equal(ui.chatState(CHAT_A).responseStartedAt, startedAt);
+
+  ui.applyStatePayload(statePayload({ streaming: true, runStartedAt: startedAt }));
+  assert.equal(ui.chatState(CHAT_A).responseStartedAt, startedAt);
+
+  ui.applyStatePayload(statePayload({ streaming: false, runStartedAt: null }));
+  assert.equal(ui.chatState(CHAT_A).responseStartedAt, null);
+});
+
 test("state keeps an open turn distinct from a model waiting on a form", () => {
   const ui = createUiState();
   const payload = ui.applyStatePayload(statePayload({ streaming: true, awaitingInput: true }));
@@ -309,6 +324,15 @@ test("each response starts a fresh elapsed timer", () => {
   assert.ok(state.responseStartedAt > 1);
   assert.equal(state.responseActivityLabel, null);
   assert.equal(state.pendingAssistantMeta, null);
+});
+
+test("a response can start from the server's authoritative timestamp", () => {
+  const ui = createUiState();
+  const startedAt = Date.parse("2026-09-26T11:12:00.000Z");
+
+  ui.startResponse(CHAT_A, startedAt);
+
+  assert.equal(ui.chatState(CHAT_A).responseStartedAt, startedAt);
 });
 
 test("queued prompt normalizer rejects invalid identity fields and strips attachment data", () => {

@@ -461,6 +461,32 @@ test('agent task starts a fresh record after completion but keeps an active repl
   assert.equal(uiState.chatState('b').agentTask, null);
 });
 
+test('replayed running status keeps the authoritative elapsed timer', () => {
+  const { context, uiState } = setup();
+  const state = uiState.chatState('a');
+  Object.assign(context, {
+    activeChatKey: () => 'a',
+    activeChatState: () => state,
+    chatView: { clearSegments() {} },
+    renderComposerState() {},
+  });
+  vm.runInContext(appFunction('setRunning'), context);
+
+  context.setRunning(true, { newResponse: true, startedAt: 100 });
+  state.responseActivityLabel = 'Solving';
+  state.pendingAssistantMeta = { timestamp: 'keep' };
+  context.setRunning(true, { newResponse: true, startedAt: 100 });
+
+  assert.equal(state.responseStartedAt, 100);
+  assert.equal(state.responseActivityLabel, 'Solving');
+  assert.deepEqual(state.pendingAssistantMeta, { timestamp: 'keep' });
+
+  context.setRunning(true, { newResponse: true, startedAt: 200 });
+  assert.equal(state.responseStartedAt, 200);
+  assert.equal(state.responseActivityLabel, null);
+  assert.equal(state.pendingAssistantMeta, null);
+});
+
 test('changing a draft folder selects a distinct chat in a compatible tab', async () => {
   const { context, uiState, screen } = setup();
   uiState.chatCache.setDraft('a', 'keep in a');

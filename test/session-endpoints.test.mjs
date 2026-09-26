@@ -545,6 +545,30 @@ describe("the session routes", () => {
 });
 
 describe("the transcript route", () => {
+  test("only agent_settled closes a run across retries and continuations", async () => {
+    const { agentRunTransition } = await import("../src/chat/contexts.mjs");
+    const ctx = {
+      promptStarting: true,
+      running: false,
+      runStartedAt: 100,
+      lastActive: 0,
+    };
+
+    assert.deepEqual(agentRunTransition(ctx, { type: "agent_start" }, 110), {
+      status: "running",
+      runStartedAt: 100,
+    });
+    assert.equal(agentRunTransition(ctx, { type: "agent_end", willRetry: true }, 120), null);
+    assert.equal(agentRunTransition(ctx, { type: "agent_start" }, 130), null);
+    assert.equal(ctx.running, true);
+    assert.equal(ctx.runStartedAt, 100);
+
+    assert.deepEqual(agentRunTransition(ctx, { type: "agent_settled" }, 140), { status: "idle" });
+    assert.equal(ctx.running, false);
+    assert.equal(ctx.runStartedAt, null);
+    assert.equal(ctx.lastActive, 140);
+  });
+
   test("persisted skill instructions stay server-side and arguments are separate", async () => {
     const { status, body } = await getJson(`/api/history?s=${encodeURIComponent(transcriptFile)}`);
     assert.equal(status, 200);
@@ -730,6 +754,7 @@ describe("the cancellable prompt routes", () => {
     const key = encodeURIComponent(bootContext.key);
     const imageData = Buffer.from("api-image").toString("base64");
     bootContext.promptStarting = true;
+    bootContext.runStartedAt = 123_456;
     try {
       const first = await postJson(`/api/prompt?s=${key}`, {
         text: "same",
@@ -744,6 +769,7 @@ describe("the cancellable prompt routes", () => {
 
       const state = await getJson(`/api/state?s=${key}`);
       assert.equal(state.status, 200);
+      assert.equal(state.body.runStartedAt, 123_456);
       assert.deepEqual(state.body.queuedPrompts.map((item) => item.id), [first.body.queued.id, second.body.queued.id]);
       assert.equal(JSON.stringify(state.body.queuedPrompts).includes(imageData), false);
 
@@ -756,6 +782,7 @@ describe("the cancellable prompt routes", () => {
       assert.deepEqual(bootContext.promptQueue.publicItems().map((item) => item.id), [second.body.queued.id]);
     } finally {
       bootContext.promptStarting = false;
+      bootContext.runStartedAt = null;
       bootContext.promptQueue.clear("test_cleanup");
     }
   });

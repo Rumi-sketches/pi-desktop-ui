@@ -186,6 +186,7 @@ export async function handleEvents({ req, res, sessionKey }) {
  * @property {object} metrics canonical session totals, per-model attribution,
  *   optional Session work difference and nullable SDK context usage.
  * @property {boolean} streaming whether a turn is running right now.
+ * @property {number|null} runStartedAt epoch milliseconds for the current run.
  * @property {boolean} awaitingInput whether that turn is paused on an interactive form.
  * @property {Array<{id: string, type: "steer"|"followUp", text: string,
  *   attachments: Array<{mimeType: string, bytes: number}>, bytes: number}>} queuedPrompts
@@ -210,6 +211,7 @@ export async function handleGetState({ res, sessionKey }) {
     totals,
     metrics: ctx.metrics,
     streaming: contextIsBusy(ctx),
+    runStartedAt: Number.isFinite(ctx.runStartedAt) ? ctx.runStartedAt : null,
     awaitingInput: contextAwaitingInput(ctx),
     queuedPrompts: ctx.promptQueue.publicItems(),
     // the UI hides the native buttons this machine cannot honour
@@ -851,6 +853,7 @@ export async function handleGetHistory({ res, sessionKey, url }) {
     // whatever is streaming right now, so re-entering a busy chat shows it
     live: ctx.running ? ctx.live : [],
     streaming: ctx.running || session.isStreaming,
+    runStartedAt: Number.isFinite(ctx.runStartedAt) ? ctx.runStartedAt : null,
     awaitingInput: contextAwaitingInput(ctx),
   });
 }
@@ -940,6 +943,7 @@ export async function handlePrompt({ req, res, sessionKey }) {
   // Claim the run before refreshing bootstrap resources: a concurrent send is
   // queued instead of racing a second reload/first prompt into this context.
   ctx.promptStarting = true;
+  ctx.runStartedAt = Date.now();
   try {
     await prepareFirstPrompt(ctx);
     // Writing in a done chat brings it back to life as "reopened". Confirm the
@@ -950,6 +954,7 @@ export async function handlePrompt({ req, res, sessionKey }) {
     }
   } catch (error) {
     ctx.promptStarting = false;
+    ctx.runStartedAt = null;
     throw error;
   }
 
@@ -963,7 +968,10 @@ export async function handlePrompt({ req, res, sessionKey }) {
       ctx.promptQueue.clear("error");
       broadcast(ctx, { kind: "error", message: String(err) });
     })
-    .finally(() => { ctx.promptStarting = false; });
+    .finally(() => {
+      ctx.promptStarting = false;
+      if (!ctx.running) ctx.runStartedAt = null;
+    });
   return send(res, 202, { ok: true, key: ctx.key });
 }
 

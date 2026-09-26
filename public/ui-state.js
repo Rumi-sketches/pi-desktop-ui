@@ -188,6 +188,7 @@ export function normalizeStatePayload(value) {
     totals: totals(source.totals, "state payload.totals"),
     metrics: normalizeChatMetrics(source.metrics, "state payload.metrics"),
     streaming: boolean(source.streaming, "state payload.streaming"),
+    runStartedAt: nullableNonNegativeNumber(source.runStartedAt, "state payload.runStartedAt"),
     awaitingInput: boolean(source.awaitingInput, "state payload.awaitingInput"),
     queuedPrompts: normalizeQueuedPrompts(source.queuedPrompts, "state payload.queuedPrompts"),
     platform: platform(source.platform, "state payload.platform"),
@@ -529,6 +530,7 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
       awaitingInput: payload.awaitingInput,
       queuedPrompts: payload.queuedPrompts,
       responsePhase,
+      responseStartedAt: payload.streaming ? payload.runStartedAt : null,
       metrics: payload.metrics,
     });
     return payload;
@@ -546,9 +548,9 @@ export function createUiState({ chatCache = createChatCache() } = {}) {
     return queuedPrompts;
   }
 
-  function startResponse(key) {
+  function startResponse(key, startedAt = Date.now()) {
     const target = chatState(key);
-    target.responseStartedAt = Date.now();
+    target.responseStartedAt = startedAt;
     target.responseActivityLabel = null;
     target.pendingAssistantMeta = null;
     target.streaming = true;

@@ -616,12 +616,18 @@ setInterval(() => {
   if (state.awaitingInput) return;
   if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
 }, 1000);
-function setRunning(on, { newResponse = false } = {}) {
+function setRunning(on, { newResponse = false, startedAt = null } = {}) {
   const key = activeChatKey() ?? renderedChatKey;
   const state = activeChatState();
   if (on) {
-    if (key && (newResponse || !state.streaming)) uiState.startResponse(key);
-    else state.streaming = true;
+    const canonicalStart = Number.isFinite(startedAt) ? startedAt : null;
+    const sameResponse = canonicalStart !== null && state.responseStartedAt === canonicalStart;
+    if (key && ((newResponse && !sameResponse) || !state.streaming)) {
+      uiState.startResponse(key, canonicalStart ?? Date.now());
+    } else {
+      state.streaming = true;
+      if (canonicalStart !== null) state.responseStartedAt = canonicalStart;
+    }
   } else if (key) {
     uiState.finishResponse(key);
   } else {
@@ -858,7 +864,7 @@ function handleEvent(ev, ownerKey) {
         showChatResource(ev.key, { reconnect: false });
       }
       applyQueueChange(ev.queuedPrompts ?? [], activeChatKey());
-      setRunning(!!ev.running);
+      setRunning(!!ev.running, { startedAt: ev.runStartedAt });
       setAwaitingInput(!!ev.awaitingInput, activeChatKey());
       if (ev.running && !activeChatState().agentTask) setAgentTask(true, activeChatState().turnModel, activeChatKey());
       break;
@@ -899,7 +905,10 @@ function handleEvent(ev, ownerKey) {
         setAgentTask(false, null, ownerKey);
         refreshGit({ force: true }); // the visible agent may have changed Git
       }
-      setRunning(ev.status === 'running', { newResponse: ev.status === 'running' }); break;
+      setRunning(ev.status === 'running', {
+        newResponse: ev.status === 'running',
+        startedAt: ev.runStartedAt,
+      }); break;
     case 'rekey': {
       // The draft became a persisted session, but remains the same chat. Park
       // its live DOM/composer first, then move the whole cache entry atomically.
@@ -2249,11 +2258,12 @@ async function loadHistory({
   const owner = uiState.chatState(key);
   if (res.streaming) {
     owner.streaming = true;
+    if (Number.isFinite(res.runStartedAt)) owner.responseStartedAt = res.runStartedAt;
     owner.responsePhase = (res.live ?? []).some((segment) => segment.type === 'text' && segment.text)
       ? RESPONSE_TEXT
       : RESPONSE_WAITING;
   }
-  setRunning(!!res.streaming);
+  setRunning(!!res.streaming, { startedAt: res.runStartedAt });
   setAwaitingInput(!!res.awaitingInput, key);
   chatView.renderQueuedPrompts(owner.queuedPrompts);
   if (res.streaming && !owner.agentTask) setAgentTask(true, res.turnModel, key);

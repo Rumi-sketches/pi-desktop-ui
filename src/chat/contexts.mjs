@@ -86,6 +86,26 @@ export function contextAwaitingInput(ctx) {
     segment.type === "tool" && segment.tool.name === "request_form" && segment.tool.status !== "end");
 }
 
+// AgentSession can emit several agent_start/agent_end pairs inside one
+// prompt() call (automatic retries, compaction and queued continuations).
+// agent_settled is the only boundary that closes the whole user-visible run.
+export function agentRunTransition(ctx, event, now = Date.now()) {
+  if (event.type === "agent_start") {
+    ctx.promptStarting = false;
+    if (ctx.running) return null;
+    ctx.running = true;
+    if (!Number.isFinite(ctx.runStartedAt)) ctx.runStartedAt = now;
+    return { status: "running", runStartedAt: ctx.runStartedAt };
+  }
+  if (event.type !== "agent_settled") return null;
+  ctx.promptStarting = false;
+  if (!ctx.running && !Number.isFinite(ctx.runStartedAt)) return null;
+  ctx.running = false;
+  ctx.lastActive = now;
+  ctx.runStartedAt = null;
+  return { status: "idle" };
+}
+
 // A tab subscribing to a chat: it joins the context's own audience and the
 // global one (running badges, session list), gets told what it attached to, and
 // is kept alive by a ping — a chat can stay quiet for minutes, and without
@@ -99,6 +119,7 @@ export function attachEventClient(ctx, res) {
     key: ctx.key,
     cwd: ctx.cwd,
     running: ctx.promptStarting || ctx.running || ctx.session.isStreaming,
+    runStartedAt: Number.isFinite(ctx.runStartedAt) ? ctx.runStartedAt : null,
     awaitingInput: contextAwaitingInput(ctx),
     queuedPrompts: ctx.promptQueue.publicItems(),
   });
@@ -520,19 +541,20 @@ function wireSession(ctx) {
       refreshSessionMetrics(ctx);
       broadcastUsage(ctx);
     } else if (event.type === "agent_start") {
-      ctx.promptStarting = false;
-      ctx.running = true;
+      const transition = agentRunTransition(ctx, event);
+      if (!transition) return;
       ctx.live = [];
       // which model is answering this turn (it can change mid-chat): the UI
       // labels the assistant turn with it instead of a generic "pi"
       const m = ctx.session.model;
       ctx.turnModel = m ? { provider: m.provider, id: m.id, name: m.name ?? m.id } : null;
-      broadcast(ctx, { kind: "status", status: "running", model: ctx.turnModel });
+      broadcast(ctx, { kind: "status", ...transition, model: ctx.turnModel });
       broadcastGlobal({ kind: "running", key: ctx.key, running: true });
-    } else if (event.type === "agent_end") {
-      ctx.running = false;
-      ctx.lastActive = Date.now();
-      broadcast(ctx, { kind: "status", status: "idle" });
+    } else if (event.type === "agent_settled") {
+      const transition = agentRunTransition(ctx, event);
+      if (!transition) return;
+      ctx.turnModel = null;
+      broadcast(ctx, { kind: "status", ...transition });
       broadcastGlobal({ kind: "running", key: ctx.key, running: false, cwd: ctx.cwd });
     } else if (event.type === "auto_retry_end" && !event.success && event.finalError) {
       // the SDK swallows the failure internally after giving up (e.g. an OAuth
@@ -656,6 +678,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     clients: new Set(),
     live: [],
     running: false,
+    runStartedAt: null,
     lastActive: Date.now(),
     commandsCache: null, // { at, data } — slash commands for /api/commands
     promptStarting: false,
