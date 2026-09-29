@@ -40,6 +40,18 @@ test('viewed finishes stay idle, and a new run resets a pending response', () =>
   assert.equal(activity.status(null), 'idle');
 });
 
+test('a form pause clears activity without marking the chat finished or unread', () => {
+  const { activity } = fixture();
+  activity.recordRunning('chat-a', true);
+  assert.equal(activity.recordRunning('chat-a', false, false, true), true);
+  assert.equal(activity.status('C:/repo/a'), 'idle');
+  assert.equal(activity.hasUnseen('chat-a'), false);
+  activity.recordRunning('chat-a', true);
+  assert.equal(activity.status('C:/repo/a'), 'working');
+  activity.recordRunning('chat-a', false);
+  assert.equal(activity.status('C:/repo/a'), 'unseen');
+});
+
 test('multiple chats aggregate by project with running taking precedence', () => {
   const { activity } = fixture();
   activity.recordRunning('chat-a', true);

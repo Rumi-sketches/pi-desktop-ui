@@ -8,10 +8,12 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 
 const MAX_FIELDS = 12;
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const MAX_CUSTOM_CHARS = 4096;
 const OPTION_TYPES = new Set(["select", "radio", "multiselect"]);
 const TEXT_TYPES = new Set(["text", "email", "url", "tel", "date", "textarea"]);
 const FIELD_TYPES = new Set([...TEXT_TYPES, ...OPTION_TYPES, "number", "checkbox"]);
 const FIELD_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+export const FORM_OUTCOME_TYPE = "pi-desktop-ui:form-outcome";
 
 const formOptionSchema = Type.Object({
   value: Type.String({ minLength: 1, maxLength: 200 }),
@@ -103,6 +105,14 @@ function responseBytes(values) {
   return Buffer.byteLength(JSON.stringify(values), "utf8");
 }
 
+function customChoice(raw, fieldId) {
+  if (!plainObject(raw) || Object.keys(raw).some((key) => key !== "custom")
+      || typeof raw.custom !== "string" || raw.custom.length > MAX_CUSTOM_CHARS) {
+    throw new Error(`${fieldId} needs a valid custom answer`);
+  }
+  return raw.custom.trim();
+}
+
 /** Validate and canonicalize values before they cross back into model context. */
 export function normalizeFormResponse(form, input) {
   if (!plainObject(input)) throw new Error("form values must be an object");
@@ -118,12 +128,16 @@ export function normalizeFormResponse(form, input) {
       continue;
     }
     if (field.type === "multiselect") {
-      if (raw !== undefined && (!Array.isArray(raw) || raw.some((value) => typeof value !== "string"))) {
+      const selected = plainObject(raw) ? raw.selected : raw;
+      if (selected !== undefined && (!Array.isArray(selected) || selected.some((value) => typeof value !== "string"))) {
         throw new Error(`${field.id} must be a list of option values`);
       }
+      const custom = plainObject(raw) ? customChoice({ custom: raw.custom }, field.id) : "";
+      if (plainObject(raw) && (Object.keys(raw).some((key) => key !== "selected" && key !== "custom")
+          || !Array.isArray(raw.selected))) throw new Error(`${field.id} needs valid selected options`);
       const allowed = new Set(field.options.map((option) => option.value));
-      values[field.id] = [...new Set(raw ?? [])];
-      if (values[field.id].some((value) => !allowed.has(value))) throw new Error(`${field.id} contains an invalid option`);
+      if ((selected ?? []).some((value) => !allowed.has(value))) throw new Error(`${field.id} contains an invalid option`);
+      values[field.id] = [...new Set([...(selected ?? []), ...(custom ? [custom] : [])])];
       if (field.required && values[field.id].length === 0) throw new Error(`${field.id} is required`);
       continue;
     }
@@ -138,10 +152,12 @@ export function normalizeFormResponse(form, input) {
       }
       continue;
     }
-    if (raw !== undefined && typeof raw !== "string") throw new Error(`${field.id} must be text`);
-    const value = raw ?? "";
+    if (raw !== undefined && typeof raw !== "string" && !(OPTION_TYPES.has(field.type) && plainObject(raw))) {
+      throw new Error(`${field.id} must be text`);
+    }
+    const value = plainObject(raw) ? customChoice(raw, field.id) : raw ?? "";
     if (field.required && !value.trim()) throw new Error(`${field.id} is required`);
-    if (OPTION_TYPES.has(field.type) && value) {
+    if (OPTION_TYPES.has(field.type) && value && !plainObject(raw)) {
       const allowed = new Set(field.options.map((option) => option.value));
       if (!allowed.has(value)) throw new Error(`${field.id} contains an invalid option`);
     }
@@ -167,12 +183,14 @@ export class InteractiveFormBroker {
       signal?.addEventListener("abort", abort, { once: true });
       this.pending.set(toolCallId, {
         form,
-        settle: (values) => {
+        settle: (status, values) => {
           signal?.removeEventListener("abort", abort);
           this.pending.delete(toolCallId);
+          const outcome = status === "submitted" ? { status, values } : { status };
           resolve({
-            content: [{ type: "text", text: JSON.stringify({ status: "submitted", values }) }],
-            details: { status: "submitted", values },
+            content: [{ type: "text", text: JSON.stringify(outcome) }],
+            details: outcome,
+            ...(status !== "submitted" ? { terminate: true } : {}),
           });
         },
       });
@@ -183,13 +201,82 @@ export class InteractiveFormBroker {
     const request = this.pending.get(toolCallId);
     if (!request) return null;
     const values = normalizeFormResponse(request.form, input);
-    request.settle(values);
+    request.settle("submitted", values);
     return values;
+  }
+
+  skip(toolCallId) {
+    const request = this.pending.get(toolCallId);
+    if (!request) return false;
+    request.settle("skipped");
+    return true;
+  }
+
+  interruptAll() {
+    for (const request of [...this.pending.values()]) request.settle("interrupted");
+  }
+
+  has(toolCallId) {
+    return this.pending.has(toolCallId);
   }
 
   get waiting() {
     return this.pending.size > 0;
   }
+}
+
+// The SDK persists the assistant tool call before executing it. A process exit
+// drops the waiting promise but leaves that call in the session branch. A
+// clean shutdown also records an aborted tool result and assistant message.
+// A later user turn or a real tool result closes the recovery window.
+export function formStateFromBranch(branch) {
+  const outcomes = new Map();
+  let batch = [];
+  for (const entry of branch) {
+    if (entry.type === "message") {
+      const message = entry.message;
+      if (message?.role === "user") batch = [];
+      else if (message?.role === "assistant") {
+        const calls = Array.isArray(message.content)
+          ? message.content.filter((part) => part?.type === "toolCall") : [];
+        if (calls.length) {
+          batch = calls.map((call) => ({ id: call.id, name: call.name, args: call.arguments, result: null }));
+        } else if (batch.length && message.stopReason !== "aborted") batch = [];
+      } else if (message?.role === "toolResult") {
+        const call = batch.find((item) => item.id === message.toolCallId);
+        if (call) call.result = message;
+      }
+    } else if (entry.type === "custom_message" && entry.customType === FORM_OUTCOME_TYPE) {
+      const { toolCallId, status, values } = entry.details ?? {};
+      if (typeof toolCallId === "string" && (status === "submitted" || status === "skipped")) {
+        outcomes.set(toolCallId, { status, ...(status === "submitted" ? { values } : {}) });
+        batch = [];
+      }
+    } else if (entry.type === "custom_message") {
+      batch = [];
+    }
+  }
+  const interrupted = (call) => call.name === "request_form" && call.result?.content?.length === 1
+    && (call.result.content[0]?.text === "form request aborted"
+      || call.result.details?.status === "interrupted");
+  const incomplete = (call) => !call.result || interrupted(call);
+  const index = batch.findIndex(incomplete);
+  const call = batch[index];
+  let pending = null;
+  if (call?.name === "request_form" && !outcomes.has(call.id)) {
+    try {
+      pending = {
+        id: call.id,
+        form: normalizeFormRequest(call.args),
+        abortedResult: !!call.result,
+        followingCalls: batch.slice(index + 1).filter((later) => !later.result)
+          .map(({ id, name }) => ({ id, name })),
+      };
+    } catch {
+      // A malformed persisted form cannot be answered in the UI.
+    }
+  }
+  return { pending, outcomes };
 }
 
 export function createInteractiveFormTool(broker) {
@@ -201,6 +288,7 @@ export function createInteractiveFormTool(broker) {
     promptGuidelines: [
       "Use request_form when several related answers or constrained choices are needed; ask a short question in normal text when one free-form answer is enough.",
       "Keep forms focused, use stable descriptive field ids, and put all independent questions in one form.",
+      "Choice fields always allow a custom written answer, so present options as suggestions rather than an exhaustive list.",
     ],
     parameters: formSchema,
     executionMode: "sequential",

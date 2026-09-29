@@ -1375,10 +1375,74 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .formSubmit { min-width: 92px; }
 .interactiveForm.submitted { border-color: var(--accent-line); }
 .interactiveForm.submitted .formStatus { background: var(--teal-dim); color: var(--teal); }
+.interactiveForm.skipped .formStatus { background: var(--panel-3); color: var(--txt-dim); }
 .interactiveForm.formError .formStatus { background: var(--danger-bg); color: var(--crit); }
 .interactiveForm .formFields:disabled { opacity: .72; }
 .interactiveForm .formFields:disabled .formOption,
 .interactiveForm .formFields:disabled .formBoolean { cursor: default; }
+
+/* The pending question stays beside the composer. Completed forms return to the transcript. */
+#formDock { width: min(100%, 1000px); margin: 0 auto; }
+#formDock:not(:empty) { margin-bottom: .65rem; }
+.formTranscriptAnchor { margin: .55rem 0; padding: .25rem .7rem; border-left: 2px solid var(--teal); color: var(--txt-dim); font-size: var(--fs-sm); }
+.interactiveForm.isDocked {
+  display: grid; grid-template-columns: minmax(210px, .82fr) minmax(0, 1.3fr);
+  max-height: min(64dvh, 650px); margin: 0; overflow: hidden;
+  border-color: var(--line-2); box-shadow: var(--elev-3);
+}
+.isDocked .formHead { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0; padding: 1.1rem; border-right: 1px solid var(--line); border-bottom: 0; }
+.isDocked .formNav { order: -1; display: flex; gap: .35rem; align-items: center; position: relative; margin-bottom: 1.15rem; }
+.formNav[hidden], .formQuestionMenu[hidden], .formField[hidden], .formActions[hidden], .formBack[hidden] { display: none; }
+.formQuestionCount, .formStepArrow {
+  min-height: 30px; border: 1px solid var(--line-2); border-radius: var(--r-2);
+  background: var(--card-bg); color: var(--txt-dim);
+}
+.formQuestionCount { padding: .25rem .55rem; font-size: var(--fs-sm); font-weight: var(--w-semi); }
+.formStepArrow { width: 30px; font-size: 18px; line-height: 1; }
+.formQuestionCount:hover, .formStepArrow:hover { background: var(--panel-3); color: var(--txt); }
+.formQuestionCount:focus-visible, .formStepArrow:focus-visible, .formQuestionItem:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.formQuestionMenu {
+  position: absolute; top: calc(100% + .4rem); left: 0; z-index: 5; width: min(320px, 75vw);
+  max-height: min(260px, 40dvh); overflow-y: auto;
+  padding: .3rem; border: 1px solid var(--line-2); border-radius: var(--r-3);
+  background: var(--panel-2); box-shadow: var(--elev-3);
+}
+.formQuestionItem { display: block; width: 100%; padding: .5rem .6rem; border: 0; border-radius: var(--r-2); background: none; color: var(--txt); text-align: left; font-size: var(--fs-sm); }
+.formQuestionItem:hover, .formQuestionItem.current { background: var(--teal-dim); }
+.formQuestionItem.answered::after { content: '✓'; float: right; color: var(--teal); }
+.isDocked .formContext { color: var(--teal); font-size: .72rem; font-weight: var(--w-semi); }
+.isDocked .formHead h3 { margin: .5rem 0 .25rem; font-size: 1.2rem; letter-spacing: -.02em; }
+.isDocked .formHead p { margin: 0; font-size: .8rem; }
+.isDocked .formProgress { display: flex; gap: 4px; margin-top: auto; padding-top: 1rem; }
+.formProgress span { width: 22px; height: 3px; border-radius: 2px; background: var(--line-2); }
+.formProgress span.active { background: var(--teal); }
+.formProgress span.done { background: var(--ok); }
+.isDocked .formStatus { align-self: flex-start; margin-top: .8rem; }
+.isDocked .modelForm { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 1rem 1.1rem; }
+.isDocked .formFields { display: block; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.isDocked .formLabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.isDocked .formHint { display: none; }
+.isDocked .formOptions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.isDocked .formOption { background: var(--card-bg); }
+.isDocked .formOption:has(input:checked) { background: var(--teal-dim); border-color: var(--accent-line); }
+.formCustomLabel { display: block; margin: .75rem 0 .35rem; color: var(--txt-dim); font-size: .75rem; font-weight: var(--w-med); }
+.formCustomInput { width: 100%; min-height: 56px; max-height: 130px; resize: vertical; padding: .55rem .65rem; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--card-bg); color: var(--txt); line-height: 1.4; }
+.formCustomInput:focus { outline: none; border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-dim); }
+.formValidation { min-height: 1.2rem; margin-top: .3rem; color: var(--crit); font-size: .72rem; }
+.isDocked .formActions { display: flex; flex: none; gap: .5rem; align-items: center; margin-top: .25rem; }
+.isDocked .formSubmit { margin-left: auto; }
+.interactiveForm:not(.isDocked) .formContext, .interactiveForm:not(.isDocked) .formProgress { display: none; }
+@media (max-width: 900px) {
+  .interactiveForm.isDocked { grid-template-columns: 1fr; }
+  .isDocked .formHead { border-right: 0; border-bottom: 1px solid var(--line); }
+  .isDocked .formProgress { margin-top: 0; padding-top: .6rem; }
+}
+@media (max-width: 520px) {
+  .interactiveForm.isDocked { max-height: 65dvh; }
+  .isDocked .formOptions { grid-template-columns: 1fr; }
+  .isDocked .formHead, .isDocked .modelForm { padding: .8rem; }
+  .isDocked .formNav { margin-bottom: .6rem; }
+}
 
 
 /* ---------- lightbox immagini ---------- */

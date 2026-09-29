@@ -239,6 +239,7 @@ class FakeElement {
 
 class FakeDocument {
   constructor() {
+    this.root = new FakeElement('div');
     this.chat = new FakeElement('main');
     this.chat.id = 'chat';
     this.chatWrap = new FakeElement('div');
@@ -246,17 +247,21 @@ class FakeDocument {
     this.chatWrap.clientHeight = 100;
     this.chatWrap.scrollHeight = 100;
     this.chatWrap.appendChild(this.chat);
+    this.formDock = new FakeElement('div');
+    this.formDock.id = 'formDock';
+    this.root.append(this.chatWrap, this.formDock);
   }
   getElementById(id) {
     if (id === 'chat') return this.chat;
     if (id === 'chatWrap') return this.chatWrap;
-    const all = [this.chatWrap, ...this.chatWrap.querySelectorAll('[id]')];
+    if (id === 'formDock') return this.formDock;
+    const all = [this.root, ...this.root.querySelectorAll('[id]')];
     return all.find((element) => element.id === id) ?? null;
   }
   createElement(tagName) { return new FakeElement(tagName); }
   createTextNode(value) { const node = new FakeElement('#text'); node.textContent = value; return node; }
   createDocumentFragment() { return new FakeElement('#fragment'); }
-  querySelectorAll(selector) { return this.chatWrap.querySelectorAll(selector); }
+  querySelectorAll(selector) { return this.root.querySelectorAll(selector); }
 }
 
 /**
@@ -267,6 +272,7 @@ class FakeDocument {
  *   requestHistoryPage?: (before: number, key: string) => Promise<any>,
  *   isActiveKey?: (key: string) => boolean,
  *   hljs?: any,
+ *   localStorage?: any,
  * }} [options]
  */
 function fixture({
@@ -276,6 +282,7 @@ function fixture({
   requestHistoryPage = async () => ({ messages: [], before: null, start: 0 }),
   isActiveKey = () => true,
   hljs = null,
+  localStorage = null,
 } = {}) {
   const document = new FakeDocument();
   const cache = createChatCache();
@@ -291,6 +298,7 @@ function fixture({
   const sanitizeOptions = [];
   let parseCalls = 0;
   const window = {
+    ...(localStorage ? { localStorage } : {}),
     sessionStorage: {
       values: new Map(),
       getItem(name) { return this.values.get(name) ?? null; },
@@ -368,8 +376,8 @@ test('interactive form pauses and resumes one turn without duplicating the card'
     args: { title: 'Details', fields: [{ id: 'name', label: 'Name', type: 'text', required: true }] },
   };
   view.controller.applyStreamEvent(event, view.state);
-  const form = view.document.chat.querySelector('.modelForm');
-  const input = view.document.chat.querySelector('[data-form-field]');
+  const form = view.document.formDock.querySelector('.modelForm');
+  const input = view.document.formDock.querySelector('[data-form-field]');
   input.value = 'Studio';
   await form.emit('input');
   await form.emit('submit');
@@ -377,9 +385,186 @@ test('interactive form pauses and resumes one turn without duplicating the card'
 
   assert.deepEqual(submitted, [{ values: { name: 'Studio' } }]);
   assert.equal(view.document.chat.querySelectorAll('.interactiveForm').length, 1);
+  assert.equal(view.document.formDock.children.length, 0);
   assert.equal(view.document.chat.querySelector('.formStatus').textContent, 'Submitted');
   assert.equal(view.awaiting[0], true);
   assert.equal(view.awaiting.at(-1), false);
+});
+
+test('a pending form can be skipped without answers and releases its dock', async () => {
+  const requests = [];
+  const view = fixture({ post: async (url, body) => {
+    requests.push({ url, body });
+    return { ok: true };
+  } });
+  const tool = {
+    id: 'form-skip', name: 'request_form',
+    args: { title: 'Optional question', fields: [{ id: 'answer', label: 'Answer', type: 'text', required: true }] },
+  };
+  // An interrupted form reconstructed from history is still actionable.
+  view.controller.renderHistory({
+    key: view.key,
+    messages: [{ role: 'assistant', blocks: [{ type: 'tool', ...tool, status: 'start' }] }],
+    replace: true,
+  });
+  const card = view.document.formDock.querySelector('.interactiveForm');
+  assert.ok(card);
+  await card.querySelector('.formSkip').emit('click');
+  assert.deepEqual(requests, [{ url: '/api/forms/form-skip/skip', body: {} }]);
+  assert.equal(view.document.formDock.children.length, 0);
+  assert.equal(card.querySelector('.formStatus').textContent, 'Skipped');
+  assert.equal(view.awaiting.at(-1), false);
+});
+
+test('an early form response conflict keeps the question retryable', async () => {
+  const view = fixture({ post: async () => ({ error: 'not ready', code: 'form_not_pending' }) });
+  view.controller.applyStreamEvent({
+    kind: 'tool', id: 'form-race', name: 'request_form', status: 'start',
+    args: { title: 'Question', fields: [{ id: 'answer', label: 'Answer', type: 'text' }] },
+  }, view.state);
+  const card = view.document.formDock.querySelector('.interactiveForm');
+  await card.querySelector('.formSkip').emit('click');
+  assert.equal(card.classList.contains('pending'), true);
+  assert.equal(card.querySelector('.formSkip').disabled, false);
+  assert.equal(view.awaiting.at(-1), true);
+});
+
+test('skipping a live form keeps the composer paused until the turn settles', async () => {
+  const view = fixture({ post: async () => ({ ok: true }) });
+  view.state.streaming = true;
+  view.controller.applyStreamEvent({
+    kind: 'tool', id: 'form-live-skip', name: 'request_form', status: 'start',
+    args: { title: 'Question', fields: [{ id: 'answer', label: 'Answer', type: 'text' }] },
+  }, view.state);
+  const card = view.document.formDock.querySelector('.interactiveForm');
+  await card.querySelector('.formSkip').emit('click');
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'form-live-skip', name: 'request_form',
+    status: 'end', output: JSON.stringify({ status: 'skipped' }) }, view.state);
+  assert.equal(view.awaiting.at(-1), true);
+  assert.equal(card.querySelector('.formStatus').textContent, 'Skipped');
+});
+
+test('answers typed into an interrupted form survive a fresh desktop view', async () => {
+  const storage = {
+    values: new Map(),
+    getItem(name) { return this.values.get(name) ?? null; },
+    setItem(name, value) { this.values.set(name, value); },
+  };
+  const tool = {
+    id: 'form-reopen', name: 'request_form',
+    args: { title: 'Question', fields: [{ id: 'color', label: 'Color', type: 'text', required: true }] },
+  };
+  const first = fixture({ localStorage: storage });
+  first.controller.renderHistory({ key: first.key, messages: [{ role: 'assistant', blocks: [{ type: 'tool', ...tool, status: 'start' }] }], replace: true });
+  const answer = first.document.formDock.querySelector('[data-form-field]');
+  answer.value = 'blue';
+  await first.document.formDock.querySelector('.modelForm').emit('input', { target: answer });
+
+  const reopened = fixture({ localStorage: storage });
+  reopened.controller.renderHistory({ key: reopened.key, messages: [{ role: 'assistant', blocks: [{ type: 'tool', ...tool, status: 'start' }] }], replace: true });
+  assert.equal(reopened.document.formDock.querySelector('[data-form-field]').value, 'blue');
+});
+
+test('docked questions keep custom answers, navigation and chat snapshots', async () => {
+  const submitted = [];
+  const view = fixture({ post: async (_url, body) => {
+    submitted.push(body);
+    return { values: { platform: 'Linux', features: ['sync', 'Local export'], note: 'Keep it local' } };
+  } });
+  const event = {
+    kind: 'tool', id: 'form-choices', name: 'request_form', status: 'start',
+    args: { title: 'Project choices', fields: [
+      { id: 'platform', label: 'Platform', type: 'radio', required: true, options: [{ value: 'web', label: 'Web' }] },
+      { id: 'features', label: 'Features', type: 'multiselect', required: true, options: [{ value: 'sync', label: 'Sync' }] },
+      { id: 'note', label: 'Final note', type: 'text', required: true },
+    ] },
+  };
+  view.controller.applyStreamEvent(event, view.state);
+  const card = view.document.formDock.querySelector('.interactiveForm');
+  const form = card.querySelector('.modelForm');
+  assert.equal(card.querySelector('.formQuestionCount').textContent, '1 of 3 ▾');
+  assert.equal(view.document.chat.querySelectorAll('.formTranscriptAnchor').length, 1);
+
+  const platformCustom = card.querySelectorAll('[data-form-custom]').find((item) => item.dataset.formCustom === 'platform');
+  platformCustom.value = 'Linux';
+  await form.emit('input', { target: platformCustom });
+  await form.emit('submit');
+  assert.equal(card.querySelector('.formQuestionCount').textContent, '2 of 3 ▾');
+
+  view.controller.park(view.key);
+  assert.equal(view.document.formDock.children.length, 0);
+  view.controller.restore(view.key);
+  assert.equal(view.document.formDock.querySelector('.interactiveForm'), card);
+  assert.equal(card.querySelector('.formQuestionCount').textContent, '2 of 3 ▾');
+
+  const sync = card.querySelectorAll('[data-form-field]').find((item) => item.dataset.formField === 'features');
+  sync.checked = true;
+  await form.emit('change', { target: sync });
+  const featuresCustom = card.querySelectorAll('[data-form-custom]').find((item) => item.dataset.formCustom === 'features');
+  featuresCustom.value = 'Local export';
+  await form.emit('input', { target: featuresCustom });
+  await form.emit('submit');
+  const note = card.querySelectorAll('[data-form-field]').find((item) => item.dataset.formField === 'note');
+  note.value = 'Keep it local';
+  await form.emit('input', { target: note });
+  await form.emit('submit');
+
+  assert.deepEqual(submitted, [{ values: {
+    platform: { custom: 'Linux' },
+    features: { selected: ['sync'], custom: 'Local export' },
+    note: 'Keep it local',
+  } }]);
+  assert.equal(view.document.formDock.children.length, 0);
+  assert.equal(view.document.chat.querySelector('.interactiveForm'), card);
+  assert.equal(card.querySelector('.formStatus').textContent, 'Submitted');
+});
+
+test('history puts only a still-pending form beside the composer', () => {
+  const tool = {
+    id: 'form-history', name: 'request_form',
+    args: { title: 'Details', fields: [{ id: 'name', label: 'Name', type: 'text', required: true }] },
+  };
+  const pending = fixture();
+  pending.controller.renderHistory({ key: pending.key, messages: [], live: [{ type: 'tool', tool: { ...tool, status: 'start' } }], replace: true });
+  assert.equal(pending.document.formDock.querySelector('.interactiveForm')?.classList.contains('isDocked'), true);
+  assert.equal(pending.document.chat.querySelectorAll('.formTranscriptAnchor').length, 1);
+
+  const completed = fixture();
+  completed.controller.renderHistory({
+    key: completed.key,
+    messages: [{ role: 'assistant', blocks: [{ type: 'tool', ...tool, status: 'end',
+      output: JSON.stringify({ status: 'submitted', values: { name: 'Studio' } }),
+    }] }],
+    replace: true,
+  });
+  assert.equal(completed.document.formDock.children.length, 0);
+  assert.equal(completed.document.chat.querySelector('.interactiveForm')?.classList.contains('submitted'), true);
+});
+
+test('question count menu switches steps without losing a draft answer', async () => {
+  const view = fixture();
+  view.controller.applyStreamEvent({
+    kind: 'tool', id: 'form-menu', name: 'request_form', status: 'start',
+    args: { title: 'Choices', fields: [
+      { id: 'first', label: 'First?', type: 'radio', options: [{ value: 'yes', label: 'Yes' }] },
+      { id: 'second', label: 'Second?', type: 'text' },
+      { id: 'third', label: 'Third?', type: 'text' },
+    ] },
+  }, view.state);
+  const card = view.document.formDock.querySelector('.interactiveForm');
+  const custom = card.querySelector('[data-form-custom]');
+  custom.value = 'Something else';
+  await card.querySelector('.modelForm').emit('input', { target: custom });
+  const count = card.querySelector('.formQuestionCount');
+  await count.emit('click');
+  const menu = card.querySelector('.formQuestionMenu');
+  assert.equal(menu.hidden, false);
+  await menu.emit('click', { target: menu.children[2] });
+  assert.equal(count.textContent, '3 of 3 ▾');
+  await count.emit('click');
+  await menu.emit('click', { target: menu.children[0] });
+  assert.equal(custom.value, 'Something else');
+  assert.equal(count.textContent, '1 of 3 ▾');
 });
 
 test('parking and restoring a chat preserves its DOM snapshot and scroll', () => {

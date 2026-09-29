@@ -70,6 +70,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { PromptQueueError, normalizePromptInput, queuedExtensionCommand } from "./prompt-queue.mjs";
 import { gitBranches, gitStatus, switchGitBranch } from "../project/git.mjs";
 import { previewFromBranch, previewKind } from "./chat-previews.mjs";
+import { FORM_OUTCOME_TYPE, formStateFromBranch, normalizeFormResponse } from "./interactive-forms.mjs";
 
 import { debates } from './debates.mjs';
 import { assertDebateId, DebateError, parseDebateConfig } from '../../public/debate-contract.js';
@@ -741,8 +742,11 @@ export async function handleGetHistory({ res, sessionKey, url }) {
   // the id used for forking, their timestamps mark persisted completion and
   // let history reconstruct the same run duration shown during streaming.
   let messageEntries = [];
+  let formOutcomes = new Map();
   try {
-    messageEntries = (session.sessionManager?.getBranch?.() ?? [])
+    const branch = session.sessionManager?.getBranch?.() ?? [];
+    formOutcomes = formStateFromBranch(branch).outcomes;
+    messageEntries = branch
       .filter((e) => e.type === "message" && (e.message?.role === "user" || e.message?.role === "assistant"));
   } catch {
     /* entry metadata is best-effort: history still renders without it */
@@ -802,6 +806,10 @@ export async function handleGetHistory({ res, sessionKey, url }) {
           if (c.type === "thinking") return c.thinking ? { type: "thinking", text: c.thinking } : null;
           if (c.type === "toolCall") {
             const r = toolResults.get(c.id);
+            const outcome = c.name === "request_form" ? formOutcomes.get(c.id) : null;
+            const pendingForm = c.name === "request_form" && (ctx.recoveredForm?.id === c.id
+              || ctx.formBroker.has(c.id) || ctx.live.some((segment) =>
+                segment.type === "tool" && segment.tool.id === c.id && segment.tool.status !== "end"));
             return {
               type: "tool",
               id: c.id,
@@ -809,9 +817,9 @@ export async function handleGetHistory({ res, sessionKey, url }) {
               args: previewKind(c.name) ? {} : sanitizeArgs(c.arguments),
               summary: previewKind(c.name) ? "Chat preview" : summarizeTool(c.name, c.arguments),
               // no result stored → the tool never finished (aborted turn)
-              status: r ? "end" : "start",
-              output: r?.output ?? "",
-              isError: r?.isError ?? false,
+              status: c.name === "request_form" ? pendingForm ? "start" : "end" : r ? "end" : "start",
+              output: pendingForm ? "" : outcome ? JSON.stringify(outcome) : r?.output ?? "",
+              isError: pendingForm || outcome ? false : c.name === "request_form" && !r ? true : r?.isError ?? false,
               previewReady: !!r && !r.isError && !!previewKind(c.name),
             };
           }
@@ -909,6 +917,9 @@ const contextIsBusy = (ctx) => ctx.promptStarting || ctx.running || ctx.session.
 export async function handlePrompt({ req, res, sessionKey }) {
   const ctx = await useContext(sessionKey);
   const { session } = ctx;
+  if (ctx.recoveredForm) {
+    return sendError(res, 409, "form_pending", "Answer or skip the pending form first");
+  }
   let input;
   try {
     input = normalizePromptInput(await jsonBody(req));
@@ -988,20 +999,135 @@ export async function handleDeleteQueuedPrompt({ res, sessionKey, params }) {
 export async function handleSubmitForm({ req, res, sessionKey, params }) {
   const ctx = await useContext(sessionKey);
   const body = await jsonBody(req);
-  try {
-    const submitted = ctx.formBroker.submit(params.id, body?.values);
-    if (!submitted) {
-      return sendError(res, 409, "form_not_pending", "this form is no longer waiting for a response");
+  if (ctx.formBroker.has(params.id)) {
+    try {
+      const submitted = ctx.formBroker.submit(params.id, body?.values);
+      return send(res, 200, { ok: true, key: ctx.key, values: submitted });
+    } catch (error) {
+      return sendError(res, 400, "invalid_form_response", String(error.message ?? error));
     }
-    return send(res, 200, { ok: true, key: ctx.key, values: submitted });
+  }
+  if (ctx.recoveredForm?.id !== params.id || ctx.promptStarting) {
+    return sendError(res, 409, "form_not_pending", "this form is no longer waiting for a response");
+  }
+  let submitted;
+  try {
+    submitted = normalizeFormResponse(ctx.recoveredForm.form, body?.values);
   } catch (error) {
     return sendError(res, 400, "invalid_form_response", String(error.message ?? error));
   }
+  const pending = ctx.recoveredForm;
+  const abortedResult = pending.abortedResult;
+  // Claim the request synchronously before the new run starts. A second
+  // response or ordinary prompt must not race this handoff to the SDK.
+  ctx.recoveredForm = null;
+  ctx.promptStarting = true;
+  ctx.runStartedAt = Date.now();
+  try {
+    if (!abortedResult) {
+      // Restore the missing half of the persisted tool exchange in both the
+      // session file and the agent's current context. Providers require a tool
+      // result after an assistant tool call; a new user turn alone is invalid.
+      appendRecoveredToolResult(ctx, params.id, "request_form",
+        JSON.stringify({ status: "submitted", values: submitted }), { status: "submitted", values: submitted });
+    }
+    closeUnexecutedCalls(ctx, pending);
+  } catch (error) {
+    ctx.recoveredForm = pending;
+    ctx.promptStarting = false;
+    ctx.runStartedAt = null;
+    throw error;
+  }
+  const message = {
+    customType: FORM_OUTCOME_TYPE,
+    content: [{ type: "text", text: abortedResult
+      ? `The user answered the interrupted request_form (${params.id}): ${JSON.stringify(submitted)}. Continue using these answers.`
+      : "The pending form has been answered. Continue from its tool result." }],
+    display: false,
+    details: { toolCallId: params.id, status: "submitted", values: submitted },
+  };
+  ctx.session.sendCustomMessage(message, { triggerTurn: true })
+    .catch((error) => broadcast(ctx, { kind: "error", message: String(error) }))
+    .finally(() => {
+      ctx.promptStarting = false;
+      if (!ctx.running) ctx.runStartedAt = null;
+    });
+  broadcast(ctx, { kind: "tool", id: params.id, name: "request_form", status: "end",
+    output: JSON.stringify({ status: "submitted", values: submitted }) });
+  return send(res, 200, { ok: true, key: ctx.key, values: submitted });
+}
+
+function appendRecoveredToolResult(ctx, id, name, text, details, isError = false) {
+  const result = {
+    role: "toolResult",
+    toolCallId: id,
+    toolName: name,
+    content: [{ type: "text", text }],
+    details,
+    isError,
+    timestamp: Date.now(),
+  };
+  ctx.session.sessionManager.appendMessage(result);
+  ctx.session.agent.state.messages.push(result);
+}
+
+function closeUnexecutedCalls(ctx, pending) {
+  for (const call of pending.followingCalls) {
+    appendRecoveredToolResult(ctx, call.id, call.name,
+      "Tool call was not executed because the app stopped while waiting for a form response.", {}, true);
+  }
+}
+
+export async function handleSkipForm({ res, sessionKey, params }) {
+  const ctx = await useContext(sessionKey);
+  if (ctx.recoveredForm?.id === params.id && !ctx.promptStarting) {
+    const pending = ctx.recoveredForm;
+    const abortedResult = pending.abortedResult;
+    ctx.recoveredForm = null;
+    try {
+      if (!abortedResult) {
+        appendRecoveredToolResult(ctx, params.id, "request_form",
+          JSON.stringify({ status: "skipped" }), { status: "skipped" });
+      }
+      closeUnexecutedCalls(ctx, pending);
+    } catch (error) {
+      ctx.recoveredForm = pending;
+      throw error;
+    }
+    await ctx.session.sendCustomMessage({
+      customType: FORM_OUTCOME_TYPE,
+      content: [{ type: "text", text: `The user skipped the interrupted request_form (${params.id}) without answering it.` }],
+      display: false,
+      details: { toolCallId: params.id, status: "skipped" },
+    });
+  } else if (ctx.formBroker.has(params.id) && !ctx.formSkipRequested) {
+    // Terminate the tool batch without a follow-up model call. The queue must
+    // be empty before the SDK resumes from the waiting tool.
+    ctx.promptQueue.clear("aborted");
+    ctx.formSkipRequested = true;
+    ctx.formBroker.skip(params.id);
+  } else {
+    return sendError(res, 409, "form_not_pending", "this form is no longer waiting for a response");
+  }
+  broadcast(ctx, { kind: "tool", id: params.id, name: "request_form", status: "end",
+    output: JSON.stringify({ status: "skipped" }) });
+  broadcastGlobal({ kind: "running", key: ctx.key, running: false, cwd: ctx.cwd, paused: true });
+  return send(res, 200, { ok: true, key: ctx.key });
 }
 
 export async function handleAbort({ res, sessionKey }) {
   const ctx = await useContext(sessionKey);
+  if (ctx.recoveredForm) {
+    return handleSkipForm({ res, sessionKey, params: { id: ctx.recoveredForm.id } });
+  }
+  const formId = [...ctx.formBroker.pending.keys()][0] ?? null;
   ctx.promptQueue.clear("aborted");
-  await ctx.session.abort();
+  if (formId) {
+    ctx.formSkipRequested = true;
+    ctx.formBroker.skip(formId);
+    await ctx.session.waitForIdle();
+  } else {
+    await ctx.session.abort();
+  }
   return send(res, 200, { ok: true });
 }

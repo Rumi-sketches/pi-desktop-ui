@@ -667,6 +667,27 @@ test('background completion updates its running dot without rebuilding the sideb
   assert.doesNotMatch(globalBranch, /renderSessions\(\)/);
 });
 
+test('a paused form clears the selected chat dot without a completion notification', () => {
+  const activity = createProjectTabActivity({ cwdForKey: () => 'project' });
+  activity.recordRunning('chat-a', true);
+  const updates = [];
+  const context = vm.createContext({
+    projectTabActivity: activity,
+    activeChatKey: () => 'chat-a',
+    document: { visibilityState: 'visible', hasFocus: () => true },
+    updateSessionUnseenState() {},
+    updateSessionRunningState: (key, running) => updates.push([key, running]),
+    renderProjTabs() {},
+    getChatNotifications: () => true,
+    win: { desktopWindow: { notifyChatFinished() { assert.fail('form pause notified completion'); } } },
+  });
+  vm.runInContext(appFunction('handleEvent'), context);
+  context.handleEvent({ scope: 'global', kind: 'running', key: 'chat-a', running: false, paused: true });
+  assert.deepEqual(updates, [['chat-a', false]]);
+  assert.equal(activity.status('project'), 'idle');
+  assert.equal(activity.hasUnseen('chat-a'), false);
+});
+
 test('a finished background chat marks its own sidebar title until viewed', () => {
   const activity = createProjectTabActivity({ cwdForKey: () => 'project' });
   let dot = null;
@@ -714,6 +735,38 @@ test('active composer exposes the approved actions and pauses its persistent act
   assert.match(source, /task closes only on agent_end/);
   assert.doesNotMatch(appFunction('handleEvent'), /case 'error':[\s\S]*closeResponseSpinner/);
   assert.match(cssSource, /\.queuedPrompt\s*\{[^}]*grid-template-columns/s);
+});
+
+test('the composer offers neither send nor queue actions while a form awaits input', () => {
+  const visible = new Map();
+  const context = vm.createContext({
+    $: (id) => ({ classList: { toggle: (_name, hide) => visible.set(id, hide) } }),
+    input: { placeholder: '' },
+  });
+  vm.runInContext(appFunction('renderComposerState'), context);
+  context.renderComposerState({ streaming: true, awaitingInput: true, agentTask: null });
+  assert.equal(visible.get('composer'), true);
+  assert.equal(visible.get('sendBtn'), true);
+  assert.equal(visible.get('queueActions'), true);
+  context.renderComposerState({ streaming: false, awaitingInput: false, agentTask: null });
+  assert.equal(visible.get('composer'), false);
+  assert.equal(visible.get('sendBtn'), false);
+});
+
+test('an idle event releases the composer after a live form is skipped', () => {
+  const state = { awaitingInput: true, responseStartedAt: null, pendingAssistantMeta: null };
+  const context = vm.createContext({
+    activeChatKey: () => 'chat-a',
+    activeChatState: () => state,
+    chatView: { finalizeStreamingMarkdown() {}, flushAssistantMeta() {} },
+    setAgentTask() {},
+    refreshGit() {},
+    setRunning() {},
+    setAwaitingInput: (on) => { state.awaitingInput = on; },
+  });
+  vm.runInContext(appFunction('handleEvent'), context);
+  context.handleEvent({ kind: 'status', status: 'idle' }, 'chat-a');
+  assert.equal(state.awaitingInput, false);
 });
 
 test('a delayed enqueue acknowledgement cannot resurrect a delivered ghost', async () => {

@@ -574,8 +574,11 @@ function renderComposerState(chatState = activeChatState()) {
   // While a form awaits input the agent is idle: pause the activity UI.
   const modelActive = activityRunning && !chatState.awaitingInput;
   $('runState').classList.toggle('on', modelActive);
-  $('sendBtn').classList.toggle('hide', running);
-  $('queueActions').classList.toggle('hide', !running);
+  // The form owns input while it is pending. A queued steer/follow-up cannot
+  // answer it, and the form's skip action can end the turn without an answer.
+  $('composer').classList.toggle('hide', chatState.awaitingInput);
+  $('sendBtn').classList.toggle('hide', running || chatState.awaitingInput);
+  $('queueActions').classList.toggle('hide', !running || chatState.awaitingInput);
   // The activity timer covers the whole agent run, not only the wait for the
   // first text token. agent_end is the authoritative point at which it stops.
   $('responseSpinner').classList.toggle('hide', !modelActive);
@@ -824,17 +827,17 @@ function handleEvent(ev, ownerKey) {
       // window on another chat, a leftover from before this page loaded) is
       // noise, and it used to pop up as a toast out of nowhere.
       const viewed = ev.key === activeChatKey() && document.visibilityState === 'visible' && document.hasFocus();
-      const wasRunning = projectTabActivity.recordRunning(ev.key, ev.running, viewed);
+      const wasRunning = projectTabActivity.recordRunning(ev.key, ev.running, viewed, !!ev.paused);
       updateSessionUnseenState(ev.key);
+      updateSessionRunningState(ev.key, ev.running);
       renderProjTabs();
       if (ev.key !== activeChatKey()) {
-        updateSessionRunningState(ev.key, ev.running);
-        if (!ev.running && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true, {
+        if (!ev.running && !ev.paused && wasRunning) toast('Chat finished: ' + chatLabel(ev.key), true, {
           actionLabel: 'Open chat',
           onAction: () => openChatNotification(ev.key),
         });
       }
-      if (!ev.running && wasRunning && getChatNotifications()) {
+      if (!ev.running && !ev.paused && wasRunning && getChatNotifications()) {
         const title = sessionForKey(ev.key)?.title;
         if (title) win.desktopWindow?.notifyChatFinished(ev.key, title.replace(/\s+/g, ' ').trim().slice(0, 100));
       }
@@ -908,7 +911,9 @@ function handleEvent(ev, ownerKey) {
       setRunning(ev.status === 'running', {
         newResponse: ev.status === 'running',
         startedAt: ev.runStartedAt,
-      }); break;
+      });
+      if (ev.status !== 'running') setAwaitingInput(false, ownerKey);
+      break;
     case 'rekey': {
       // The draft became a persisted session, but remains the same chat. Park
       // its live DOM/composer first, then move the whole cache entry atomically.

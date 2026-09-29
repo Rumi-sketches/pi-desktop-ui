@@ -14,15 +14,15 @@ export function createProjectTabActivity({ cwdForKey }) {
       runningKeys.clear();
       for (const key of keys) runningKeys.add(key);
     },
-    /** @param {string} key @param {boolean} running @param {boolean} viewed */
-    recordRunning(key, running, viewed = false) {
+    /** @param {string} key @param {boolean} running @param {boolean} viewed @param {boolean} paused */
+    recordRunning(key, running, viewed = false, paused = false) {
       const wasRunning = runningKeys.has(key);
       if (running) {
         runningKeys.add(key);
         unseenKeys.delete(key);
       } else {
         runningKeys.delete(key);
-        if (wasRunning && !viewed) unseenKeys.add(key);
+        if (wasRunning && !viewed && !paused) unseenKeys.add(key);
       }
       return wasRunning;
     },

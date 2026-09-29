@@ -95,6 +95,7 @@ import {
   handleSetSessionStatus,
   handleSetThinkingLevel,
   handleSubmitForm,
+  handleSkipForm,
   handleTypeCommand,
 } from "./src/chat/api-chat.mjs";
 import {
@@ -222,6 +223,7 @@ const PARAM_ROUTES = [
   ["POST", "/api/sessions/:id/fork", handleForkSession],
   ["DELETE", "/api/queued-prompts/:id", handleDeleteQueuedPrompt],
   ["POST", "/api/forms/:id/respond", handleSubmitForm],
+  ["POST", "/api/forms/:id/skip", handleSkipForm],
   ["DELETE", "/api/usage/credentials/:provider", handleDeleteUsageCredentials],
   ["GET", "/api/terminals/:id/stream", handleTerminalStream],
   ["POST", "/api/terminals/:id/input", handleTerminalInput],

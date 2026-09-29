@@ -1,0 +1,347 @@
+<!doctype html>
+<!-- PROTOTYPE: six bottom-of-chat question layouts, switchable with ?variant=A|B|C|D|E|F. No backend calls. -->
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prototipo · Domande dell'agente</title>
+  <style>
+    :root { color-scheme: light; font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; --ink:#292622; --muted:#80786e; --line:#e9dfd4; --paper:#fdfaf6; --side:#f9f4ed; --card:#fff; --accent:#ce7254; --accent-pale:#fcf0e9; --shadow:0 16px 46px #593d261a; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); }
+    button, textarea { font:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .app { height:100dvh; display:grid; grid-template-columns:242px minmax(0,1fr); grid-template-rows:38px minmax(0,1fr); }
+    .projectbar { grid-column:1/-1; background:#f6eee5; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; padding:0 12px; font-size:12px; }
+    .mark { width:24px; height:24px; display:grid; place-items:center; background:var(--accent); border-radius:7px; color:#fff; font:18px Georgia,serif; }
+    .projecttab { background:var(--paper); border:1px solid var(--line); border-bottom-color:var(--paper); padding:5px 13px; border-radius:8px 8px 0 0; align-self:end; }
+    .sidebar { background:var(--side); border-right:1px solid var(--line); padding:16px 11px; display:flex; flex-direction:column; gap:18px; min-width:0; }
+    .search { color:#a09486; background:#fff; border:1px solid var(--line); padding:9px 12px; border-radius:9px; }
+    .section-title { text-transform:uppercase; letter-spacing:.11em; color:#aa9b8c; font-size:10px; padding:0 9px 6px; font-weight:700; }
+    .side-item { padding:9px 11px; border-radius:9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#776e64; font-size:13px; }
+    .side-item.active { background:#f3e6d8; color:#3b3028; font-weight:600; }
+    .side-bottom { margin-top:auto; border-top:1px solid var(--line); padding-top:12px; }
+    .main { display:flex; flex-direction:column; min-width:0; min-height:0; }
+    .main-head { height:50px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; padding:0 24px; color:var(--muted); font-size:12px; }
+    .main-head strong { color:var(--ink); font-weight:600; }
+    .head-right { margin-left:auto; background:#f5ece1; padding:4px 9px; border-radius:7px; }
+    .chat-scroll { flex:1; min-height:0; overflow:auto; }
+    .chat { width:min(760px,calc(100% - 48px)); margin:0 auto; padding:34px 0 20px; }
+    .message { margin:0 0 22px; }
+    .message.user { display:flex; justify-content:flex-end; }
+    .user .bubble { background:#f2e9df; padding:11px 16px; border-radius:16px 16px 4px 16px; max-width:75%; }
+    .agent-head { display:flex; align-items:center; gap:7px; color:#64584f; font-size:12px; margin-bottom:7px; }
+    .agent-icon { width:21px; height:21px; background:var(--accent); color:white; display:grid; place-items:center; border-radius:6px; font:16px Georgia,serif; }
+    .agent-copy { max-width:660px; line-height:1.65; }
+    .tool-line { border-left:2px solid #d9c6b4; margin:18px 0 0 8px; padding:2px 0 2px 15px; font-size:12px; color:#9b897a; }
+    .bottom { flex:none; padding:0 24px 18px; background:linear-gradient(transparent 0%,var(--paper) 14%); }
+    .dock { width:min(760px,100%); margin:0 auto; }
+    .composer { border:1px solid var(--line); border-radius:15px; background:#fff; box-shadow:0 2px 7px #6b4c2811; padding:13px 16px 10px; min-height:80px; color:#aaa096; }
+    .composer-foot { display:flex; align-items:center; gap:14px; margin-top:16px; font-size:12px; color:#766e65; }
+    .composer-foot .send { margin-left:auto; background:var(--accent); color:#fff; border-radius:7px; padding:2px 7px; }
+    .composer.is-hidden { display:none; }
+    .question-panel { background:var(--card); border:1px solid #e4d7ca; box-shadow:var(--shadow); overflow:visible; }
+    .kicker { text-transform:uppercase; letter-spacing:.11em; color:var(--accent); font-size:10px; font-weight:700; }
+    .question-title { font-size:19px; line-height:1.3; letter-spacing:-.025em; font-weight:620; margin:8px 0 4px; }
+    .question-help { color:var(--muted); font-size:12.5px; margin:0; }
+    .question-nav { display:flex; align-items:center; gap:7px; position:relative; }
+    .nav-count, .nav-arrow { background:#fff; border:1px solid var(--line); color:#675c52; border-radius:8px; min-height:30px; }
+    .nav-count { padding:4px 10px; display:flex; align-items:center; gap:9px; white-space:nowrap; font-weight:600; }
+    .nav-arrow { width:31px; display:grid; place-items:center; font-size:18px; line-height:1; }
+    .nav-count:hover, .nav-arrow:hover { border-color:#d4b6a2; background:#fff9f5; }
+    .question-menu { position:absolute; right:0; bottom:calc(100% + 7px); width:min(340px,80vw); background:#fff; border:1px solid var(--line); border-radius:12px; padding:6px; box-shadow:0 12px 40px #513c2b25; z-index:30; }
+    .question-menu[hidden] { display:none; }
+    .question-menu button { display:flex; width:100%; align-items:center; gap:10px; border:0; background:transparent; border-radius:8px; padding:9px; text-align:left; color:var(--ink); }
+    .question-menu button:hover, .question-menu button.current { background:var(--accent-pale); }
+    .question-menu .menu-number { color:var(--accent); font-size:11px; font-weight:700; width:22px; }
+    .question-menu .menu-label { flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .question-menu .menu-state { color:#9b8c7f; font-size:11px; }
+    .options { display:grid; gap:8px; }
+    .option { display:flex; align-items:flex-start; gap:11px; padding:11px 13px; border:1px solid var(--line); border-radius:10px; background:#fff; transition:background .15s,border-color .15s,transform .15s; }
+    .option:hover { background:#fffaf7; border-color:#dcbca9; }
+    .option.selected { background:var(--accent-pale); border-color:#d9987f; }
+    .option input { width:16px; height:16px; margin:2px 0 0; accent-color:var(--accent); flex:none; }
+    .option strong { display:block; font-weight:600; font-size:13px; }
+    .option small { display:block; color:var(--muted); font-size:11.5px; line-height:1.35; margin-top:2px; }
+    .other-label { display:block; font-size:12px; color:#6f665d; font-weight:600; margin-bottom:6px; }
+    .other-input { resize:vertical; min-height:46px; max-height:110px; width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; color:var(--ink); background:#fff; line-height:1.4; }
+    .other-input::placeholder { color:#a69a8e; }
+    .other-input:focus { border-color:var(--accent); outline:none; box-shadow:0 0 0 3px #ce725421; }
+    .panel-actions { display:flex; align-items:center; gap:10px; }
+    .panel-actions .spacer { flex:1; }
+    .hint { color:#9b8c7e; font-size:11px; }
+    .primary, .secondary { border-radius:9px; padding:9px 14px; font-size:12.5px; font-weight:600; }
+    .primary { background:var(--accent); color:white; border:1px solid var(--accent); }
+    .primary:hover { background:#b96246; }
+    .secondary { background:#fff; border:1px solid var(--line); color:#6f6359; }
+    .secondary:hover { border-color:#d6b9a5; }
+    .primary:disabled { opacity:.45; cursor:not-allowed; }
+    .progress { display:flex; gap:4px; }
+    .progress span { width:21px; height:3px; border-radius:3px; background:#eadfd4; }
+    .progress span.active { background:var(--accent); }
+    .progress span.done { background:#89ac90; }
+    .validation { color:#b44734; font-size:11.5px; min-height:17px; }
+    .confirmation { background:#f0f7f0; color:#426f48; border:1px solid #cce1cf; border-radius:9px; padding:9px 12px; font-size:12px; margin-top:10px; }
+    .confirmation[hidden] { display:none; }
+
+    /* A: one card takes the composer position, with a clear step header. */
+    .variant-A .question-panel { border-radius:17px; padding:19px 20px 16px; }
+    .variant-A .panel-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+    .variant-A .question-title { margin-top:6px; }
+    .variant-A .options { margin-top:18px; grid-template-columns:1fr 1fr; }
+    .variant-A .other { margin-top:12px; }
+    .variant-A .panel-actions { border-top:1px solid #f0e8df; margin-top:15px; padding-top:14px; }
+
+    /* B: compact stacked response rows, visually attached to the composer. */
+    .variant-B .question-panel { border-radius:15px 15px 0 0; padding:0; border-bottom:0; box-shadow:none; }
+    .variant-B .panel-top { background:#f8f0e7; padding:14px 17px 12px; display:flex; justify-content:space-between; gap:12px; }
+    .variant-B .question-title { font-size:17px; margin:4px 0 3px; }
+    .variant-B .question-body { padding:12px 16px 15px; }
+    .variant-B .options { gap:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    .variant-B .option { border:0; border-radius:0; padding:8px 11px; }
+    .variant-B .option + .option { border-top:1px solid var(--line); }
+    .variant-B .option.selected { background:#fcf0e9; }
+    .variant-B .option small { display:none; }
+    .variant-B .other { margin-top:11px; }
+    .variant-B .other-input { min-height:42px; }
+    .variant-B .panel-actions { margin-top:12px; }
+    .variant-B .composer { border-radius:0 0 15px 15px; border-color:#e4d7ca; box-shadow:0 9px 28px #593d2611; min-height:56px; padding:10px 16px; font-size:12px; }
+    .variant-B .composer-foot { display:none; }
+    .variant-B .composer-text { color:#a9998b; }
+
+    /* C: a horizontal decision tray, with the answer area on the right. */
+    .variant-C .dock { width:min(1000px,100%); }
+    .variant-C .question-panel { border-radius:15px; display:grid; grid-template-columns:minmax(220px,.82fr) minmax(350px,1.3fr); }
+    .variant-C .panel-top { padding:22px 22px 18px; border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:flex-start; }
+    .variant-C .question-nav { order:-1; margin-bottom:19px; }
+    .variant-C .question-title { font-size:21px; margin-top:11px; }
+    .variant-C .question-help { margin-top:5px; }
+    .variant-C .progress { margin-top:auto; padding-top:20px; }
+    .variant-C .question-body { padding:20px; }
+    .variant-C .options { grid-template-columns:1fr 1fr; gap:7px; }
+    .variant-C .option { padding:9px 10px; }
+    .variant-C .option small { display:none; }
+    .variant-C .other { margin-top:11px; }
+    .variant-C .panel-actions { margin-top:12px; }
+    .variant-C .composer { margin-top:9px; min-height:49px; padding:13px 16px; font-size:12px; box-shadow:none; }
+    .variant-C .composer-foot { display:none; }
+
+    /* D: a visible stack for the remaining questions, with editorial answer rows. */
+    .variant-D .dock { width:min(720px,100%); }
+    .variant-D .question-panel { --d-ink:#233d50; --d-blue:#3d7397; --d-line:#cfdee8; position:relative; isolation:isolate; background:#fbfdff; color:var(--d-ink); border:1px solid var(--d-line); border-radius:13px; padding:18px 21px 16px; box-shadow:0 10px 28px #2846621d; }
+    .variant-D .question-panel::before, .variant-D .question-panel::after { content:""; position:absolute; z-index:-1; height:25px; border:1px solid var(--d-line); border-radius:10px 10px 0 0; pointer-events:none; }
+    .variant-D .question-panel::before { top:-13px; left:28px; right:28px; background:#e7f0f7; }
+    .variant-D .question-panel::after { top:-7px; left:14px; right:14px; background:#f1f7fb; }
+    .variant-D .panel-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; border-bottom:1px solid var(--d-line); padding-bottom:15px; }
+    .variant-D .kicker { color:var(--d-blue); text-transform:none; letter-spacing:0; font-size:12px; font-weight:600; }
+    .variant-D .question-title { font-size:22px; letter-spacing:-.035em; margin:5px 0 3px; }
+    .variant-D .question-help { color:#687f90; }
+    .variant-D .progress { margin-top:12px; gap:5px; }
+    .variant-D .progress span { width:27px; height:4px; background:#d9e6ee; }
+    .variant-D .progress span.active { background:var(--d-blue); }
+    .variant-D .progress span.done { background:#6da590; }
+    .variant-D .nav-count, .variant-D .nav-arrow { border-color:var(--d-line); color:var(--d-ink); border-radius:6px; background:#fff; }
+    .variant-D .question-body { padding-top:8px; }
+    .variant-D .options { gap:0; }
+    .variant-D .option { border:0; border-bottom:1px solid var(--d-line); border-radius:0; background:transparent; padding:10px 8px; align-items:center; }
+    .variant-D .option:hover { background:#edf5fa; }
+    .variant-D .option.selected { background:#e2f0f8; box-shadow:inset 3px 0 var(--d-blue); }
+    .variant-D .option input { accent-color:var(--d-blue); }
+    .variant-D .option strong { color:var(--d-ink); }
+    .variant-D .option small { color:#718696; }
+    .variant-D .other { margin-top:16px; }
+    .variant-D .other-label { color:var(--d-ink); }
+    .variant-D .other-input { border-color:var(--d-line); border-radius:6px; background:#fff; }
+    .variant-D .other-input:focus { border-color:var(--d-blue); box-shadow:0 0 0 3px #3d739723; }
+    .variant-D .panel-actions { margin-top:10px; }
+    .variant-D .primary { background:var(--d-blue); border-color:var(--d-blue); border-radius:6px; }
+    .variant-D .primary:hover { background:#315f7e; }
+    .variant-D .secondary { border-color:var(--d-line); color:var(--d-ink); border-radius:6px; }
+
+    /* E: the question is a chat bubble; answers are lightweight inline replies. */
+    .variant-E .question-panel { --e-teal:#257a70; width:min(700px,100%); margin:0 auto; border:0; background:transparent; box-shadow:none; }
+    .variant-E .panel-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; background:#e9f3f1; border:1px solid #cfe3df; border-radius:18px 18px 18px 5px; padding:14px 17px; }
+    .variant-E .kicker { color:var(--e-teal); text-transform:none; letter-spacing:0; font-size:12px; font-weight:650; }
+    .variant-E .question-title { margin:5px 0 3px; font-size:19px; }
+    .variant-E .question-help { color:#52716d; }
+    .variant-E .progress { margin-top:12px; }
+    .variant-E .progress span { background:#c4dcd6; }
+    .variant-E .progress span.active { background:var(--e-teal); }
+    .variant-E .nav-count, .variant-E .nav-arrow { color:#245c57; border-color:#bdd9d3; background:#f8fcfb; }
+    .variant-E .question-body { padding:14px 0 2px 24px; border-left:2px solid #cfe3df; margin-left:12px; }
+    .variant-E .options { display:flex; flex-wrap:wrap; gap:7px; }
+    .variant-E .option { position:relative; border:1px solid #c8ded9; border-radius:999px; padding:9px 15px; background:#fff; min-height:39px; }
+    .variant-E .option:hover { border-color:var(--e-teal); background:#f1f8f6; }
+    .variant-E .option.selected { background:var(--e-teal); border-color:var(--e-teal); }
+    .variant-E .option input { position:absolute; width:1px; height:1px; opacity:0; }
+    .variant-E .option:focus-within { outline:2px solid var(--e-teal); outline-offset:2px; }
+    .variant-E .option strong { font-weight:550; color:#20554f; }
+    .variant-E .option.selected strong { color:#fff; }
+    .variant-E .option small { display:none; }
+    .variant-E .other { margin-top:14px; }
+    .variant-E .other-label { color:#40615b; font-weight:500; }
+    .variant-E .other-input { border-color:#bddbd4; border-radius:16px; min-height:46px; }
+    .variant-E .other-input:focus { border-color:var(--e-teal); box-shadow:0 0 0 3px #257a7024; }
+    .variant-E .panel-actions { margin-top:10px; }
+    .variant-E .primary { background:var(--e-teal); border-color:var(--e-teal); border-radius:10px; }
+    .variant-E .primary:hover { background:#1d625a; }
+    .variant-E .composer { margin-top:10px; min-height:52px; padding:13px 16px; box-shadow:none; }
+    .variant-E .composer-foot { display:none; }
+
+    /* F: a quiet violet decision board; contrast and typography carry the focus. */
+    .variant-F .dock { width:min(1030px,100%); }
+    .variant-F .question-panel { --f-ink:#f6f2ff; --f-muted:#c9bedc; --f-line:#75698e; --f-lilac:#e7d7ff; background:#352c4d; border:1px solid #675b80; border-radius:17px; color:var(--f-ink); padding:19px 23px 18px; box-shadow:0 16px 36px #32234738; }
+    .variant-F .panel-top { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding-bottom:17px; }
+    .variant-F .kicker { display:none; }
+    .variant-F .question-title { font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif; font-size:26px; font-weight:620; margin:0 0 4px; }
+    .variant-F .question-help { color:var(--f-muted); }
+    .variant-F .progress { margin-top:15px; }
+    .variant-F .progress span { width:30px; height:4px; background:#6d6284; }
+    .variant-F .progress span.active { background:var(--f-lilac); }
+    .variant-F .progress span.done { background:#96c5b5; }
+    .variant-F .nav-count, .variant-F .nav-arrow { background:#4a3f64; border-color:var(--f-line); color:var(--f-ink); }
+    .variant-F .nav-count:hover, .variant-F .nav-arrow:hover { background:#594d74; }
+    .variant-F .question-menu { background:#403557; border-color:var(--f-line); }
+    .variant-F .question-menu button { color:var(--f-ink); }
+    .variant-F .question-menu button:hover, .variant-F .question-menu button.current { background:#5c4d79; }
+    .variant-F .question-menu .menu-number, .variant-F .question-menu .menu-state { color:var(--f-lilac); }
+    .variant-F .options { grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
+    .variant-F .option { min-height:72px; background:#443959; border-color:#706384; border-radius:8px; padding:11px; }
+    .variant-F .option:hover { background:#524568; border-color:#c5addf; }
+    .variant-F .option.selected { background:#eadcff; border-color:#eadcff; }
+    .variant-F .option input { appearance:none; width:16px; height:16px; border:2px solid #d8cde6; background:transparent; border-radius:50%; }
+    .variant-F .option input[type="checkbox"] { border-radius:4px; }
+    .variant-F .option input:checked { background:#e7d7ff; border-color:#e7d7ff; box-shadow:inset 0 0 0 3px #443959; }
+    .variant-F .option:focus-within { outline:2px solid var(--f-lilac); outline-offset:2px; }
+    .variant-F .option strong { color:var(--f-ink); }
+    .variant-F .option small { color:var(--f-muted); }
+    .variant-F .option.selected strong, .variant-F .option.selected small { color:#302641; }
+    .variant-F .other { margin-top:16px; }
+    .variant-F .other-label { color:var(--f-ink); }
+    .variant-F .other-input { background:#403656; border-color:var(--f-line); color:var(--f-ink); border-radius:8px; }
+    .variant-F .other-input::placeholder { color:#b7a9ca; }
+    .variant-F .other-input:focus { border-color:var(--f-lilac); box-shadow:0 0 0 3px #e7d7ff38; }
+    .variant-F .panel-actions { margin-top:11px; }
+    .variant-F .hint { color:var(--f-muted); }
+    .variant-F .primary { background:var(--f-lilac); border-color:var(--f-lilac); color:#302641; border-radius:8px; }
+    .variant-F .primary:hover { background:#f1e6ff; }
+    .variant-F .secondary { background:#443959; border-color:var(--f-line); color:var(--f-ink); border-radius:8px; }
+    .variant-F .validation { color:#ffb9a8; }
+    .variant-F .composer { margin-top:9px; min-height:47px; padding:12px 15px; box-shadow:none; }
+    .variant-F .composer-foot { display:none; }
+
+    .prototype-switcher { position:fixed; top:50%; right:13px; transform:translateY(-50%); z-index:80; display:flex; flex-direction:column; align-items:center; gap:3px; background:#292622; color:white; padding:7px 5px; border-radius:13px; box-shadow:0 10px 30px #19120d33; }
+    .prototype-switcher button { background:transparent; color:#ddd5ce; border:0; border-radius:8px; width:34px; height:34px; font-weight:700; }
+    .prototype-switcher button.active { background:var(--accent); color:white; }
+    .prototype-switcher button:hover { color:white; }
+    .prototype-switcher .divider { width:20px; height:1px; background:#635c55; margin:3px 0; }
+    .prototype-switcher .info { writing-mode:vertical-rl; transform:rotate(180deg); font-size:9px; letter-spacing:.06em; color:#bcb1a7; padding:6px 0; }
+    @media(max-width:950px) { .variant-C .question-panel { grid-template-columns:1fr; } .variant-C .panel-top { border-right:0; border-bottom:1px solid var(--line); padding:15px 18px; } .variant-C .question-nav { order:0; margin:0; } .variant-C .progress { display:none; } .variant-C .question-body { padding:14px 18px; } .variant-C .panel-top { flex-direction:row; align-items:flex-start; justify-content:space-between; } .variant-C .question-title { font-size:18px; margin:5px 0 3px; } .variant-F .options { grid-template-columns:1fr 1fr; } }
+    @media(max-width:700px) { .app { grid-template-columns:minmax(0,1fr); width:100%; overflow:hidden; } .sidebar, .main-head .head-right { display:none; } .main-head { padding:0 15px; overflow:hidden; white-space:nowrap; } .chat { width:calc(100% - 30px); padding-top:24px; } .bottom { min-width:0; padding:0 12px 51px; } .variant-A .options, .variant-C .options, .variant-F .options { grid-template-columns:1fr; } .variant-A .question-panel, .variant-D .question-panel, .variant-F .question-panel { padding:15px; } .variant-A .panel-top, .variant-B .panel-top, .variant-C .panel-top, .variant-D .panel-top, .variant-E .panel-top, .variant-F .panel-top { flex-direction:column-reverse; } .question-heading { min-width:0; } .variant-A .question-nav, .variant-B .question-nav, .variant-C .question-nav, .variant-D .question-nav, .variant-E .question-nav, .variant-F .question-nav { align-self:flex-end; margin:0 0 8px; } .variant-D .question-title, .variant-F .question-title { font-size:19px; } .question-title { font-size:17px; } .option small { display:none; } .variant-F .option { min-height:43px; } .variant-E .question-body { padding-left:14px; margin-left:10px; } .prototype-switcher { top:auto; bottom:10px; right:10px; transform:none; flex-direction:row; padding:4px; } .prototype-switcher .info, .prototype-switcher .divider { display:none; } .prototype-switcher button { width:30px; height:30px; } .hint { display:none; } }
+    @media(prefers-reduced-motion:reduce) { *, *::before, *::after { transition-duration:0s!important; animation-duration:0s!important; } }
+    @media(max-height:690px) { .chat { padding-top:16px; } .message { margin-bottom:14px; } .question-title { font-size:17px; } .variant-A .question-panel { padding:13px 16px; } .variant-A .options { margin-top:11px; } .option { padding:8px 10px; } }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <div class="projectbar"><span class="mark">π</span><span class="projecttab">pi-desktop-ui</span></div>
+    <aside class="sidebar" aria-hidden="true">
+      <div class="search">⌕ &nbsp; Cerca chat</div>
+      <div><div class="section-title">Chat</div><div class="side-item active">Interfaccia per le domande</div><div class="side-item">Rifinire la schermata modelli</div><div class="side-item">Note sul rilascio</div></div>
+      <div class="side-bottom"><div class="side-item">◉ &nbsp; Chat</div><div class="side-item">◷ &nbsp; Background</div><div class="side-item">⚙ &nbsp; Settings</div></div>
+    </aside>
+    <main class="main">
+      <div class="main-head"><strong>pi-desktop-ui</strong><span>/</span><span>Interfaccia per le domande</span><span class="head-right">In attesa di risposta</span></div>
+      <div class="chat-scroll" id="chatScroll"><div class="chat">
+        <div class="message user"><div class="bubble">Vorrei migliorare il flusso delle domande. Fammi scegliere la direzione.</div></div>
+        <div class="message"><div class="agent-head"><span class="agent-icon">π</span><strong>Assistant</strong></div><div class="agent-copy">Ho tre dettagli da chiarire prima di proseguire. Puoi scegliere tra le proposte o scrivere una risposta tua per ciascuna domanda.</div><div class="tool-line">◉ &nbsp; request_form · In attesa delle tue risposte</div></div>
+      </div></div>
+      <div class="bottom"><div class="dock">
+        <section class="question-panel" aria-label="Domande dell'agente">
+          <div class="panel-top"><div class="question-heading"><div class="kicker">L'agente ti chiede</div><h1 class="question-title" id="questionTitle"></h1><p class="question-help" id="questionHelp"></p><div class="progress" id="progress" aria-hidden="true"></div></div><div class="question-nav"><button type="button" class="nav-count" id="navCount" aria-haspopup="true" aria-expanded="false" aria-controls="questionMenu"></button><button type="button" class="nav-arrow" id="prev" aria-label="Domanda precedente">‹</button><button type="button" class="nav-arrow" id="next" aria-label="Domanda successiva">›</button><div class="question-menu" id="questionMenu" hidden></div></div></div>
+          <div class="question-body"><div class="options" id="options"></div><div class="other"><label class="other-label" for="otherInput">Oppure scrivi la tua risposta</label><textarea class="other-input" id="otherInput" rows="2" placeholder="La tua risposta…"></textarea></div><div class="validation" id="validation" role="status"></div><div class="panel-actions"><span class="hint" id="selectionHint"></span><span class="spacer"></span><button type="button" class="secondary" id="backButton">Indietro</button><button type="button" class="primary" id="continueButton">Continua</button></div><div class="confirmation" id="confirmation" hidden>Risposte inviate nella simulazione. Puoi cambiare variante e riprovare.</div></div>
+        </section>
+        <div class="composer" id="composer"><span class="composer-text">Scrivi un messaggio…</span><div class="composer-foot"><span>✧ &nbsp; Modello</span><span>◌ &nbsp; Medium</span><span>♧ &nbsp; Attach</span><span class="send">↑</span></div></div>
+      </div></div>
+    </main>
+  </div>
+  <nav class="prototype-switcher" aria-label="Varianti del prototipo"><span class="info" id="variantName"></span><span class="divider"></span><button type="button" data-variant="A" title="A · Focus">A</button><button type="button" data-variant="B" title="B · Integrata">B</button><button type="button" data-variant="C" title="C · Pannello">C</button><button type="button" data-variant="D" title="D · Pila">D</button><button type="button" data-variant="E" title="E · Conversazione">E</button><button type="button" data-variant="F" title="F · Decisione">F</button></nav>
+  <script>
+    const questions = [
+      { title:'Come preferisci procedere?', help:'Scegli una proposta oppure descrivi il percorso che hai in mente.', type:'single', options:[{label:'Prima un prototipo',description:'Confrontiamo il risultato visivo prima di toccare l’app.'},{label:'Modifica diretta',description:'Applichiamo subito il flusso alla chat.'},{label:'Partire dal comportamento',description:'Definiamo prima i casi d’uso e le interazioni.'}] },
+      { title:'Quali elementi vuoi includere?', help:'Qui puoi scegliere più risposte e aggiungere un dettaglio personale.', type:'multi', options:[{label:'Opzioni rapide',description:'Risposte suggerite dall’agente.'},{label:'Campo libero',description:'Una risposta personalizzata sempre disponibile.'},{label:'Navigazione tra domande',description:'Passa da una domanda all’altra senza perdere le scelte.'},{label:'Riepilogo finale',description:'Controlla le risposte prima dell’invio.'}] },
+      { title:'Cosa conta di più nel risultato?', help:'L’ultima domanda completa il set. La risposta libera vale anche da sola.', type:'single', options:[{label:'Velocità',description:'Pochi clic per rispondere.'},{label:'Chiarezza',description:'Domande e stato sempre leggibili.'},{label:'Coerenza',description:'Aspetto integrato con la chat esistente.'}] },
+    ];
+    const answers = questions.map(() => ({ selected:[], other:'' }));
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const variants = ['A','B','C','D','E','F'];
+    let variant = variants.includes(params.get('variant')) ? params.get('variant') : 'A';
+    let current = 0;
+    let submitted = false;
+    const answered = (index) => answers[index].selected.length > 0 || answers[index].other.trim().length > 0;
+    function setVariant(value) {
+      variant = value;
+      $('app').className = `app variant-${value}`;
+      document.querySelectorAll('[data-variant]').forEach(button => { button.classList.toggle('active', button.dataset.variant === value); button.setAttribute('aria-current', button.dataset.variant === value ? 'true' : 'false'); });
+      $('variantName').textContent = ({A:'A · Focus', B:'B · Integrata', C:'C · Pannello', D:'D · Pila', E:'E · Conversazione', F:'F · Decisione'})[value];
+      $('composer').classList.toggle('is-hidden', value === 'A' || value === 'D');
+      const nextParams = new URLSearchParams(location.search); nextParams.set('variant', value); history.replaceState(null, '', `${location.pathname}?${nextParams}${location.hash}`);
+      $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+    }
+    function renderMenu() {
+      const menu = $('questionMenu'); menu.replaceChildren();
+      questions.forEach((question, index) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = index === current ? 'current' : '';
+        const number = document.createElement('span'); number.className = 'menu-number'; number.textContent = String(index+1).padStart(2,'0');
+        const label = document.createElement('span'); label.className = 'menu-label'; label.textContent = question.title;
+        const state = document.createElement('span'); state.className = 'menu-state'; state.textContent = answered(index) ? '✓' : '—';
+        button.append(number,label,state); button.addEventListener('click', () => { current=index; menu.hidden=true; $('navCount').setAttribute('aria-expanded','false'); render(); }); menu.append(button);
+      });
+    }
+    function render() {
+      const question=questions[current], answer=answers[current];
+      $('questionTitle').textContent=question.title; $('questionHelp').textContent=question.help;
+      $('navCount').textContent=`${current+1} di ${questions.length}  ▾`;
+      $('selectionHint').textContent=question.type==='multi' ? 'Puoi scegliere più opzioni' : 'Scegli una risposta';
+      $('backButton').hidden=current===0; $('continueButton').textContent=current===questions.length-1 ? 'Invia risposte' : 'Continua';
+      $('validation').textContent=''; $('confirmation').hidden=!submitted;
+      const options=$('options'); options.replaceChildren();
+      question.options.forEach((option,index) => {
+        const row=document.createElement('label'); row.className='option';
+        const input=document.createElement('input'); input.type=question.type==='multi'?'checkbox':'radio'; input.name=`question-${current}`; input.value=String(index); input.checked=answer.selected.includes(index);
+        const copy=document.createElement('span'); const title=document.createElement('strong'); title.textContent=option.label; const detail=document.createElement('small'); detail.textContent=option.description; copy.append(title,detail); row.append(input,copy);
+        row.classList.toggle('selected',input.checked);
+        input.addEventListener('change', () => {
+          if (question.type==='single') { answer.selected=[index]; answer.other=''; $('otherInput').value=''; }
+          else { answer.selected=input.checked ? [...answer.selected,index] : answer.selected.filter(value=>value!==index); }
+          submitted=false; $('confirmation').hidden=true; $('validation').textContent=''; renderMenu();
+          options.querySelectorAll('.option').forEach(label=>label.classList.toggle('selected',label.querySelector('input').checked));
+        });
+        options.append(row);
+      });
+      $('otherInput').value=answer.other;
+      const progress=$('progress'); progress.replaceChildren(); questions.forEach((_,index)=>{const segment=document.createElement('span'); segment.className=index===current?'active':answered(index)?'done':''; progress.append(segment);});
+      renderMenu();
+    }
+    function go(index) { current=Math.max(0,Math.min(questions.length-1,index)); $('questionMenu').hidden=true; $('navCount').setAttribute('aria-expanded','false'); render(); }
+    $('otherInput').addEventListener('input',event=>{ const answer=answers[current]; answer.other=event.target.value; if(questions[current].type==='single' && answer.other.trim()) { answer.selected=[]; document.querySelectorAll('#options input').forEach(input=>input.checked=false); document.querySelectorAll('#options .option').forEach(option=>option.classList.remove('selected')); } submitted=false; $('confirmation').hidden=true; $('validation').textContent=''; renderMenu(); });
+    $('navCount').addEventListener('click',()=>{ const menu=$('questionMenu'); menu.hidden=!menu.hidden; $('navCount').setAttribute('aria-expanded',String(!menu.hidden)); });
+    $('prev').addEventListener('click',()=>go(current===0?questions.length-1:current-1));
+    $('next').addEventListener('click',()=>go((current+1)%questions.length));
+    $('backButton').addEventListener('click',()=>go(current-1));
+    $('continueButton').addEventListener('click',()=>{
+      if(!answered(current)){ $('validation').textContent='Scegli un’opzione o scrivi la tua risposta.'; return; }
+      if(current<questions.length-1){go(current+1); return;}
+      const missing=questions.findIndex((_,index)=>!answered(index));
+      if(missing>=0){go(missing); $('validation').textContent='Completa questa domanda prima dell’invio.'; return;}
+      submitted=true; $('confirmation').hidden=false;
+    });
+    document.querySelectorAll('[data-variant]').forEach(button=>button.addEventListener('click',()=>setVariant(button.dataset.variant)));
+    document.addEventListener('keydown',event=>{ if(event.key==='Escape') { $('questionMenu').hidden=true; $('navCount').setAttribute('aria-expanded','false'); return; } if(event.target.closest('button,input,textarea,[contenteditable]')) return; if(event.key==='ArrowLeft') setVariant(variants[(variants.indexOf(variant)+variants.length-1)%variants.length]); if(event.key==='ArrowRight') setVariant(variants[(variants.indexOf(variant)+1)%variants.length]); });
+    document.addEventListener('click',event=>{ if(!event.target.closest('.question-nav')) { $('questionMenu').hidden=true; $('navCount').setAttribute('aria-expanded','false'); } });
+    render(); setVariant(variant);
+  </script>
+</body>
+</html>

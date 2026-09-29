@@ -65,7 +65,7 @@ function requireFunction(value, label) {
 export function createChatView({
   documentRef = document,
   windowRef = /** @type {Window & Record<string, any>} */ (window),
-  storage = windowRef.sessionStorage,
+  storage = windowRef.localStorage ?? windowRef.sessionStorage,
   cache,
   getKey,
   getChatState,
@@ -97,7 +97,8 @@ export function createChatView({
 
   const chat = documentRef.getElementById('chat');
   const chatWrap = documentRef.getElementById('chatWrap');
-  if (!chat || !chatWrap) throw new Error('chat view roots are missing');
+  const formDock = documentRef.getElementById('formDock');
+  if (!chat || !chatWrap || !formDock) throw new Error('chat view roots are missing');
   /** @type {(selector: string, root?: ParentNode) => any[]} */
   const all = (selector, root = documentRef) => [...root.querySelectorAll(selector)];
 
@@ -111,6 +112,7 @@ export function createChatView({
   let streamingMarkdown = null;
   let formControlSequence = 0;
   const toolCards = new Map();
+  const formAnchors = new WeakMap();
   let persistedFormDrafts = {};
 
   function currentState() {
@@ -136,7 +138,9 @@ export function createChatView({
   }
 
   function loadFormDrafts() {
-    try { persistedFormDrafts = JSON.parse(storage?.getItem('piFormDrafts') || '{}'); }
+    // A form can outlive the desktop process. Keep typed answers with the
+    // session identity, including drafts made before the storage switch.
+    try { persistedFormDrafts = JSON.parse(storage?.getItem('piFormDrafts') ?? windowRef.sessionStorage?.getItem('piFormDrafts') ?? '{}'); }
     catch { persistedFormDrafts = {}; }
   }
 
@@ -456,6 +460,7 @@ export function createChatView({
   function formResult(output) {
     try {
       const parsed = JSON.parse(output ?? '');
+      if (parsed?.status === 'skipped') return parsed;
       return parsed?.status === 'submitted' && parsed.values && typeof parsed.values === 'object' ? parsed : null;
     } catch {
       return null;
@@ -466,33 +471,71 @@ export function createChatView({
     return all('[data-form-field]', card).filter((control) => control.dataset.formField === fieldId);
   }
 
+  function formCustomControl(card, fieldId) {
+    return all('[data-form-custom]', card).find((control) => control.dataset.formCustom === fieldId);
+  }
+
+  function isChoiceField(field) {
+    return field.type === 'radio' || field.type === 'select' || field.type === 'multiselect';
+  }
+
   function setInteractiveFormValues(card, definition, values) {
     for (const field of definition.fields ?? []) {
       const controls = formControls(card, field.id);
       const value = values?.[field.id];
       if (field.type === 'checkbox') {
         if (controls[0]) controls[0].checked = value === true;
-      } else if (field.type === 'multiselect') {
-        const selected = new Set(Array.isArray(value) ? value : []);
-        controls.forEach((control) => { control.checked = selected.has(control.value); });
-      } else if (field.type === 'radio') {
-        controls.forEach((control) => { control.checked = control.value === value; });
+      } else if (isChoiceField(field)) {
+        const selected = field.type === 'multiselect'
+          ? (Array.isArray(value) ? value : value?.selected ?? [])
+          : [typeof value === 'string' ? value : ''];
+        const allowed = new Set((field.options ?? []).map((option) => option.value));
+        controls.forEach((control) => { control.checked = selected.includes(control.value); });
+        const custom = formCustomControl(card, field.id);
+        if (custom) custom.value = value?.custom ?? selected.find((item) => item && !allowed.has(item)) ?? '';
       } else if (controls[0]) {
         controls[0].value = value ?? '';
       }
     }
   }
 
-  function finishInteractiveForm(card, definition, { values = null, error = false } = {}) {
+  function dockInteractiveForm(card) {
+    if (card.classList.contains('isDocked')) return;
+    const anchor = documentRef.createElement('div');
+    anchor.className = 'formTranscriptAnchor';
+    anchor.textContent = 'Answer the questions below to continue';
+    card.parentNode.insertBefore(anchor, card);
+    formAnchors.set(card, anchor);
+    card.classList.add('isDocked');
+    formDock.appendChild(card);
+  }
+
+  function finishInteractiveForm(card, definition, { values = null, error = false, skipped = false } = {}) {
     if (values) setInteractiveFormValues(card, definition, values);
+    card.classList.remove('pending');
     card.classList.toggle('submitted', !!values && !error);
     card.classList.toggle('formError', error);
+    card.classList.toggle('skipped', skipped);
+    for (const row of all('.formField', card)) row.hidden = false;
     const fieldset = card.querySelector('.formFields');
     if (fieldset) fieldset.disabled = true;
     const button = card.querySelector('.formSubmit');
     if (button) button.disabled = true;
+    const nav = card.querySelector('.formNav');
+    if (nav) nav.hidden = true;
+    const actions = card.querySelector('.formActions');
+    if (actions) actions.hidden = true;
+    const title = card.querySelector('.formQuestion');
+    if (title) title.textContent = definition.title || 'Questions';
+    const hint = card.querySelector('.formQuestionHint');
+    if (hint) hint.textContent = definition.description || '';
     const status = card.querySelector('.formStatus');
-    if (status) status.textContent = error ? 'Unavailable' : 'Submitted';
+    if (status) status.textContent = error ? 'Unavailable' : skipped ? 'Skipped' : 'Submitted';
+    if (card.classList.contains('isDocked')) {
+      card.classList.remove('isDocked');
+      formAnchors.get(card)?.replaceWith(card);
+      formAnchors.delete(card);
+    }
     if (card.dataset.draftKey) {
       delete persistedFormDrafts[card.dataset.draftKey];
       saveFormDrafts();
@@ -507,7 +550,6 @@ export function createChatView({
     input.name = field.id;
     input.value = option.value;
     input.dataset.formField = field.id;
-    input.required = inputType === 'radio' && !!field.required;
     const copy = documentRef.createElement('span');
     copy.className = 'formOptionCopy';
     const name = documentRef.createElement('span');
@@ -525,7 +567,7 @@ export function createChatView({
   }
 
   function interactiveFormField(field) {
-    const grouped = field.type === 'radio' || field.type === 'multiselect';
+    const grouped = isChoiceField(field);
     const row = documentRef.createElement(grouped ? 'fieldset' : 'div');
     row.className = 'formField';
     const label = documentRef.createElement(grouped ? 'legend' : 'label');
@@ -548,9 +590,21 @@ export function createChatView({
       const options = documentRef.createElement('div');
       options.className = 'formOptions';
       for (const option of field.options ?? []) {
-        options.appendChild(optionControl(field, option, field.type === 'radio' ? 'radio' : 'checkbox'));
+        options.appendChild(optionControl(field, option, field.type === 'multiselect' ? 'checkbox' : 'radio'));
       }
       row.appendChild(options);
+      const customLabel = documentRef.createElement('label');
+      customLabel.className = 'formCustomLabel';
+      customLabel.textContent = 'Or write your own answer';
+      const custom = documentRef.createElement('textarea');
+      custom.className = 'formCustomInput';
+      custom.rows = 2;
+      custom.maxLength = 4096;
+      custom.dataset.formCustom = field.id;
+      custom.id = `model-form-custom-${++formControlSequence}`;
+      custom.placeholder = 'Your answer…';
+      customLabel.setAttribute('for', custom.id);
+      row.append(customLabel, custom);
       return row;
     }
     if (field.type === 'checkbox') {
@@ -571,20 +625,6 @@ export function createChatView({
     if (field.type === 'textarea') {
       control = documentRef.createElement('textarea');
       control.rows = 3;
-    } else if (field.type === 'select') {
-      control = documentRef.createElement('select');
-      const placeholder = documentRef.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = field.placeholder || 'Select an option…';
-      placeholder.disabled = !!field.required;
-      placeholder.selected = true;
-      control.appendChild(placeholder);
-      for (const option of field.options ?? []) {
-        const element = documentRef.createElement('option');
-        element.value = option.value;
-        element.textContent = option.label;
-        control.appendChild(element);
-      }
     } else {
       control = documentRef.createElement('input');
       control.type = field.type;
@@ -594,7 +634,7 @@ export function createChatView({
     control.required = !!field.required;
     control.id = `model-form-field-${++formControlSequence}`;
     label.setAttribute('for', control.id);
-    if (field.placeholder && field.type !== 'select') control.placeholder = field.placeholder;
+    if (field.placeholder) control.placeholder = field.placeholder;
     row.appendChild(control);
     return row;
   }
@@ -604,11 +644,75 @@ export function createChatView({
     for (const field of definition.fields ?? []) {
       const controls = formControls(card, field.id);
       if (field.type === 'checkbox') values[field.id] = !!controls[0]?.checked;
-      else if (field.type === 'multiselect') values[field.id] = controls.filter((control) => control.checked).map((control) => control.value);
-      else if (field.type === 'radio') values[field.id] = controls.find((control) => control.checked)?.value ?? '';
+      else if (isChoiceField(field)) {
+        const custom = formCustomControl(card, field.id)?.value.trim() ?? '';
+        if (field.type === 'multiselect') {
+          const selected = controls.filter((control) => control.checked).map((control) => control.value);
+          values[field.id] = custom ? { selected, custom } : selected;
+        } else {
+          values[field.id] = custom ? { custom } : controls.find((control) => control.checked)?.value ?? '';
+        }
+      }
       else values[field.id] = controls[0]?.value ?? '';
     }
     return values;
+  }
+
+  function formFieldAnswered(card, field) {
+    const controls = formControls(card, field.id);
+    if (field.type === 'checkbox') return !!controls[0]?.checked;
+    if (isChoiceField(field)) {
+      return controls.some((control) => control.checked) || !!formCustomControl(card, field.id)?.value.trim();
+    }
+    return !!String(controls[0]?.value ?? '').trim();
+  }
+
+  function showFormStep(card, definition, index) {
+    const fields = definition.fields ?? [];
+    const active = Math.max(0, Math.min(index, fields.length - 1));
+    card.dataset.activeStep = String(active);
+    all('.formField', card).forEach((row, position) => { row.hidden = position !== active; });
+    card.querySelector('.formQuestion').textContent = fields[active]?.label ?? definition.title ?? 'Question';
+    card.querySelector('.formQuestionHint').textContent = fields[active]?.description || (active === 0 ? definition.description : '') || '';
+    const count = card.querySelector('.formQuestionCount');
+    count.textContent = `${active + 1} of ${fields.length} ▾`;
+    const menu = card.querySelector('.formQuestionMenu');
+    menu.hidden = true;
+    count.setAttribute('aria-expanded', 'false');
+    menu.replaceChildren();
+    fields.forEach((field, position) => {
+      const item = documentRef.createElement('button');
+      item.type = 'button';
+      item.className = 'formQuestionItem';
+      item.dataset.formStep = String(position);
+      item.textContent = `${position + 1}. ${field.label}`;
+      if (formFieldAnswered(card, field)) item.classList.add('answered');
+      if (position === active) item.classList.add('current');
+      menu.appendChild(item);
+    });
+    const progress = card.querySelector('.formProgress');
+    progress.replaceChildren();
+    fields.forEach((field, position) => {
+      const segment = documentRef.createElement('span');
+      segment.className = position === active ? 'active' : formFieldAnswered(card, field) ? 'done' : '';
+      progress.appendChild(segment);
+    });
+    card.querySelector('.formBack').hidden = active === 0;
+    card.querySelector('.formSubmit').textContent = active === fields.length - 1
+      ? definition.submitLabel || 'Send answers' : 'Continue';
+    card.querySelector('.formValidation').textContent = '';
+  }
+
+  function validateFormStep(card, field) {
+    if (field.required && !formFieldAnswered(card, field)) {
+      card.querySelector('.formValidation').textContent = isChoiceField(field)
+        ? 'Choose an option or write your answer.' : 'This answer is required.';
+      (formCustomControl(card, field.id) ?? formControls(card, field.id)[0])?.focus?.();
+      return false;
+    }
+    if (!isChoiceField(field) && !formControls(card, field.id)[0]?.reportValidity()) return false;
+    card.querySelector('.formValidation').textContent = '';
+    return true;
   }
 
   function renderInteractiveForm(event) {
@@ -617,37 +721,73 @@ export function createChatView({
       setAwaitingInput(true, getKey());
       const definition = event.args ?? {};
       card = documentRef.createElement('section');
-      card.className = 'interactiveForm';
+      card.className = 'interactiveForm pending';
       card.dataset.definition = JSON.stringify(definition);
       const head = documentRef.createElement('div');
       head.className = 'formHead';
-      const heading = documentRef.createElement('div');
+      const nav = documentRef.createElement('div');
+      nav.className = 'formNav';
+      const count = documentRef.createElement('button');
+      count.type = 'button';
+      count.className = 'formQuestionCount';
+      count.setAttribute('aria-haspopup', 'true');
+      count.setAttribute('aria-expanded', 'false');
+      const previous = documentRef.createElement('button');
+      previous.type = 'button';
+      previous.className = 'formStepArrow formPrevious';
+      previous.textContent = '‹';
+      previous.setAttribute('aria-label', 'Previous question');
+      const next = documentRef.createElement('button');
+      next.type = 'button';
+      next.className = 'formStepArrow formNext';
+      next.textContent = '›';
+      next.setAttribute('aria-label', 'Next question');
+      const menu = documentRef.createElement('div');
+      menu.className = 'formQuestionMenu';
+      menu.id = `model-form-menu-${++formControlSequence}`;
+      menu.hidden = true;
+      count.setAttribute('aria-controls', menu.id);
+      nav.append(count, previous, next, menu);
+      const context = documentRef.createElement('div');
+      context.className = 'formContext';
+      context.textContent = definition.title || 'Questions';
       const title = documentRef.createElement('h3');
-      title.textContent = definition.title || 'A few details';
-      heading.appendChild(title);
-      if (definition.description) {
-        const description = documentRef.createElement('p');
-        description.textContent = definition.description;
-        heading.appendChild(description);
-      }
+      title.className = 'formQuestion';
+      const hint = documentRef.createElement('p');
+      hint.className = 'formQuestionHint';
+      const progress = documentRef.createElement('div');
+      progress.className = 'formProgress';
+      progress.setAttribute('aria-hidden', 'true');
       const status = documentRef.createElement('span');
       status.className = 'formStatus';
       status.textContent = 'Needs your input';
       status.setAttribute('aria-live', 'polite');
-      head.append(heading, status);
+      head.append(nav, context, title, hint, progress, status);
       const form = documentRef.createElement('form');
       form.className = 'modelForm';
+      form.noValidate = true;
       const fields = documentRef.createElement('fieldset');
       fields.className = 'formFields';
       for (const field of definition.fields ?? []) fields.appendChild(interactiveFormField(field));
+      const validation = documentRef.createElement('div');
+      validation.className = 'formValidation';
+      validation.setAttribute('role', 'status');
       const actions = documentRef.createElement('div');
       actions.className = 'formActions';
+      const skip = documentRef.createElement('button');
+      skip.type = 'button';
+      skip.className = 'btn outline formSkip';
+      skip.textContent = 'Non rispondere';
+      skip.title = 'Skip this form and stop the current response';
+      const back = documentRef.createElement('button');
+      back.type = 'button';
+      back.className = 'btn outline formBack';
+      back.textContent = 'Back';
       const submit = documentRef.createElement('button');
       submit.type = 'submit';
       submit.className = 'btn teal formSubmit';
-      submit.textContent = definition.submitLabel || 'Submit';
-      actions.appendChild(submit);
-      form.append(fields, actions);
+      actions.append(skip, back, submit);
+      form.append(fields, validation, actions);
       card.append(head, form);
       currentTurn.appendChild(card);
       if (event.id) toolCards.set(event.id, card);
@@ -655,24 +795,70 @@ export function createChatView({
       const draftKey = `${ownerKey ?? ''}\n${event.id ?? ''}`;
       card.dataset.draftKey = draftKey;
       if (persistedFormDrafts[draftKey]) setInteractiveFormValues(card, definition, persistedFormDrafts[draftKey]);
-      const rememberDraft = () => {
+      showFormStep(card, definition, 0);
+      if (!historyRoot) dockInteractiveForm(card);
+      const rememberDraft = (inputEvent) => {
+        const target = inputEvent.target;
+        const fieldId = target?.dataset?.formCustom ?? target?.dataset?.formField;
+        const field = (definition.fields ?? []).find((item) => item.id === fieldId);
+        if (field && field.type !== 'multiselect' && isChoiceField(field)) {
+          if (target.dataset.formCustom && target.value.trim()) {
+            formControls(card, field.id).forEach((control) => { control.checked = false; });
+          } else if (target.checked) {
+            const custom = formCustomControl(card, field.id);
+            if (custom) custom.value = '';
+          }
+        }
         persistedFormDrafts[draftKey] = interactiveFormValues(card, definition);
         saveFormDrafts();
       };
       addChatListener(form, 'input', rememberDraft);
       addChatListener(form, 'change', rememberDraft);
-      addChatListener(form, 'submit', async (submitEvent) => {
-        submitEvent.preventDefault();
-        const missingMulti = (definition.fields ?? []).find((field) => field.type === 'multiselect'
-          && field.required && !formControls(card, field.id).some((control) => control.checked));
-        if (missingMulti) {
-          const first = formControls(card, missingMulti.id)[0];
-          first?.setCustomValidity('Select at least one option');
-          first?.reportValidity();
-          first?.setCustomValidity('');
+      addChatListener(count, 'click', () => {
+        menu.hidden = !menu.hidden;
+        count.setAttribute('aria-expanded', String(!menu.hidden));
+      });
+      addChatListener(menu, 'click', (clickEvent) => {
+        const step = clickEvent.target.closest('[data-form-step]');
+        if (step) showFormStep(card, definition, Number(step.dataset.formStep));
+      });
+      addChatListener(previous, 'click', () => showFormStep(card, definition,
+        (Number(card.dataset.activeStep) + definition.fields.length - 1) % definition.fields.length));
+      addChatListener(next, 'click', () => showFormStep(card, definition,
+        (Number(card.dataset.activeStep) + 1) % definition.fields.length));
+      addChatListener(back, 'click', () => showFormStep(card, definition, Number(card.dataset.activeStep) - 1));
+      addChatListener(skip, 'click', async () => {
+        skip.disabled = true;
+        submit.disabled = true;
+        status.textContent = 'Skipping…';
+        const result = await post(`/api/forms/${encodeURIComponent(event.id)}/skip`, {}, {
+          key: ownerKey, guardChat: true, followKey: false, quiet: ['form_not_pending'],
+        });
+        if (result.error) {
+          skip.disabled = false;
+          submit.disabled = false;
+          status.textContent = 'Needs your input';
+          card.querySelector('.formValidation').textContent = 'Could not skip this form. Try again or reopen the chat.';
           return;
         }
-        if (!form.reportValidity()) return;
+        finishInteractiveForm(card, definition, { skipped: true });
+        // A live skip has been accepted, but the SDK still needs to settle the
+        // turn. Keep the composer closed until its idle status arrives.
+        if (!getChatState(ownerKey)?.streaming) setAwaitingInput(false, ownerKey);
+      });
+      addChatListener(form, 'submit', async (submitEvent) => {
+        submitEvent.preventDefault();
+        const active = Number(card.dataset.activeStep);
+        if (!validateFormStep(card, definition.fields[active])) return;
+        if (active < definition.fields.length - 1) {
+          showFormStep(card, definition, active + 1);
+          return;
+        }
+        for (let index = 0; index < definition.fields.length; index++) {
+          showFormStep(card, definition, index);
+          if (!validateFormStep(card, definition.fields[index])) return;
+        }
+        showFormStep(card, definition, definition.fields.length - 1);
         submit.disabled = true;
         status.textContent = 'Submitting…';
         const result = await post(`/api/forms/${encodeURIComponent(event.id)}/respond`, {
@@ -680,8 +866,8 @@ export function createChatView({
         }, { key: ownerKey, guardChat: true, followKey: false, quiet: ['form_not_pending'] });
         if (result.error) {
           submit.disabled = false;
-          status.textContent = result.code === 'form_not_pending' ? 'No longer active' : 'Needs your input';
-          if (result.code === 'form_not_pending') finishInteractiveForm(card, definition, { error: true });
+          status.textContent = 'Needs your input';
+          card.querySelector('.formValidation').textContent = 'Could not send answers. Try again or reopen the chat.';
           return;
         }
         finishInteractiveForm(card, definition, { values: result.values });
@@ -692,9 +878,15 @@ export function createChatView({
     let definition = {};
     try { definition = JSON.parse(card.dataset.definition || '{}'); } catch {}
     if (event.status === 'end') {
-      setAwaitingInput(false, getKey());
       const result = formResult(event.output);
-      finishInteractiveForm(card, definition, { values: result?.values ?? null, error: !!event.isError || !result });
+      if (result?.status !== 'skipped' || !getChatState(getKey())?.streaming) {
+        setAwaitingInput(false, getKey());
+      }
+      finishInteractiveForm(card, definition, {
+        values: result?.values ?? null,
+        skipped: result?.status === 'skipped',
+        error: !!event.isError || !result,
+      });
     }
     return card;
   }
@@ -1007,6 +1199,7 @@ export function createChatView({
     if (replace) {
       cache.clearView(key);
       chat.replaceChildren();
+      formDock.replaceChildren();
       toolCards.clear();
       currentAssistant = currentThinking = currentTurn = null;
     }
@@ -1040,6 +1233,7 @@ export function createChatView({
       historyRoot = null;
     }
     chat.appendChild(fragment);
+    for (const pending of all('.interactiveForm.pending', chat)) dockInteractiveForm(pending);
     if (savedScrollTop === null) scrollDown();
     else chatWrap.scrollTop = savedScrollTop;
     return { empty: !chat.children.length, scrollTop: chatWrap.scrollTop };
@@ -1184,6 +1378,7 @@ export function createChatView({
 
   function disposeSnapshot(snapshot) {
     snapshot.fragment.replaceChildren();
+    snapshot.formFragment.replaceChildren();
     snapshot.toolCards.length = 0;
     snapshot.currentAssistant = snapshot.currentThinking = snapshot.currentTurn = null;
   }
@@ -1192,12 +1387,15 @@ export function createChatView({
     if (!key || cache.peek(key)?.view.snapshot) return;
     finalizeStreamingMarkdown();
     const fragment = documentRef.createDocumentFragment();
+    const formFragment = documentRef.createDocumentFragment();
     cache.captureView(key, {
       readScrollTop: () => chatWrap.scrollTop,
       detachSnapshot: () => {
         fragment.append(...chat.childNodes);
+        formFragment.append(...formDock.childNodes);
         return {
           fragment,
+          formFragment,
           currentAssistant,
           currentThinking,
           currentTurn,
@@ -1214,10 +1412,12 @@ export function createChatView({
     const entry = cache.ensure(key);
     const snapshot = cache.takeSnapshot(key);
     chat.replaceChildren();
+    formDock.replaceChildren();
     currentAssistant = currentThinking = currentTurn = null;
     toolCards.clear();
     if (snapshot) {
       chat.append(snapshot.fragment);
+      formDock.append(snapshot.formFragment);
       currentAssistant = snapshot.currentAssistant;
       currentThinking = snapshot.currentThinking;
       currentTurn = snapshot.currentTurn;
