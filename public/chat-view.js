@@ -17,7 +17,9 @@ export function decorateMarkdownAlert(quote, documentRef) {
   if (!first.textContent.trim()) first.remove();
 }
 
-const CHAT_URI_PATTERN = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file|ms-settings):|[a-z]:%5c|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
+// Drive paths are handled by the guarded local-path click handler, not navigation.
+// Escape the hyphen in the negated class: .-: would also swallow relative-path slashes.
+const CHAT_URI_PATTERN = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file|ms-settings):|[a-z]:(?:[\\/]|%5c|%2f)|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
 const ICON_COPY = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
 const ICON_RUN = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';

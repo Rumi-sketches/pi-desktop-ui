@@ -14,3 +14,5 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm test
+      # Chromium needs a virtual display; the sandbox switch applies only to this CI fixture.
+      - run: xvfb-run --auto-servernum npm run test:chat-links -- --no-sandbox

@@ -24,7 +24,8 @@
     "shortcut": "node scripts/create-shortcut.mjs",
     "lint": "eslint .",
     "verify": "node scripts/verify.mjs",
-    "test": "node --test \"test/*.test.mjs\" && npm run verify"
+    "test": "node --test \"test/*.test.mjs\" && npm run verify",
+    "test:chat-links": "electron scripts/check-chat-links.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.0",

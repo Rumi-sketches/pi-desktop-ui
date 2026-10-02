@@ -602,6 +602,30 @@ test('sanitization rejects script URLs and compact skills copy only their invoca
   assert.deepEqual(view.clipboard, ['/skill:release-check --strict']);
 });
 
+test('sanitization preserves web and local paths without permitting unknown protocols', () => {
+  const view = fixture();
+  view.controller.renderHistory({
+    key: view.key,
+    messages: [{ role: 'assistant', text: '[skill](C:/Users/Mimmo/.claude/skills/code-review/SKILL.md)' }],
+    replace: true,
+  });
+  const policy = view.sanitizeOptions[0].ALLOWED_URI_REGEXP;
+  for (const href of [
+    'https://example.com/docs', 'http://example.com', 'mailto:reader@example.com',
+    './README.md', '../docs/notes.html', 'docs/file%20with%20spaces.md#L12',
+    'C:/Users/Mimmo/.claude/skills/code-review/SKILL.md',
+    'd:/Projects/folder with spaces/report (final).html',
+    String.raw`C:\Users\Mimmo\file.md`,
+    'C:%5CUsers%5CMimmo%5Cfile.md', 'C:%2FUsers%2FMimmo%2Ffile.md',
+    '/C:/Users/Mimmo/file.md', 'file:///C:/Users/Mimmo/file.md',
+    '#section', 'ms-settings:display',
+  ]) assert.equal(policy.test(href), true, href);
+  for (const href of [
+    'javascript:alert(1)', 'vbscript:msgbox(1)', 'data:text/html,bad',
+    'custom-app:run', 'customapp:run', 'c:drive-relative.md',
+  ]) assert.equal(policy.test(href), false, href);
+});
+
 test('a dispatched steering prompt splits the live answer before its continuation', () => {
   const view = fixture({ commands: [] });
   const steer = { id: 'steer', type: 'steer', text: 'redirect', attachments: [] };
@@ -850,19 +874,33 @@ test('local links use the guarded endpoint while external links stay with the br
   const view = fixture({ post: async (...args) => { calls.push(args); return { path: 'opened' }; } });
   const message = new FakeElement('div');
   message.className = 'md';
-  const local = new FakeElement('a');
-  local.setAttribute('href', './public/app.js:42');
-  message.appendChild(local);
   view.document.chat.appendChild(message);
-  await view.document.chat.emit('click', { target: local });
-  assert.equal(calls[0][0], '/api/open-local-path');
-  assert.deepEqual(calls[0][1], { href: './public/app.js:42' });
+  const localHrefs = [
+    './public/app.js:42', '../docs/notes.html',
+    'C:/Users/Mimmo/.claude/skills/code-review/SKILL.md',
+    String.raw`C:\Users\Mimmo\file.md`,
+    'C:%5CUsers%5CMimmo%5Cfile.md', 'C:%2FUsers%2FMimmo%2Ffile.md',
+    'file:///C:/Users/Mimmo/file%20with%20spaces.md', '/C:/Users/Mimmo/file.md',
+  ];
+  for (const href of localHrefs) {
+    const local = new FakeElement('a');
+    local.setAttribute('href', href);
+    message.appendChild(local);
+    let prevented = false;
+    await view.document.chat.emit('click', { target: local, preventDefault() { prevented = true; } });
+    assert.equal(prevented, true, href);
+    assert.deepEqual(calls.at(-1), ['/api/open-local-path', { href }, { key: view.key, guardChat: true }]);
+  }
 
-  const external = new FakeElement('a');
-  external.setAttribute('href', 'https://example.com/docs');
-  message.appendChild(external);
-  await view.document.chat.emit('click', { target: external });
-  assert.equal(calls.length, 1);
+  for (const href of ['https://example.com/docs', 'mailto:reader@example.com', '#section']) {
+    const external = new FakeElement('a');
+    external.setAttribute('href', href);
+    message.appendChild(external);
+    let prevented = false;
+    await view.document.chat.emit('click', { target: external, preventDefault() { prevented = true; } });
+    assert.equal(prevented, false, href);
+  }
+  assert.equal(calls.length, localHrefs.length);
 });
 
 test('the module starts and disposes its root listener explicitly', () => {
