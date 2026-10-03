@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { EventEmitter } from "node:events";
+import { Server } from "node:http";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 // Same isolation as the other endpoint tests: PI_WEB_UI_AGENT_DIR moves this
@@ -279,49 +279,90 @@ describe("GET /api/search", () => {
     }
   });
 
-  // The handler is called straight, with a request and a response the test
-  // owns: an aborted fetch would prove the client gave up, not that the server
-  // stopped reading. `writes` is the other half of the promise: nothing may be
-  // written on a response that is already gone (DECISIONS.md).
-  function fakeExchange({ deadAfter = Infinity } = {}) {
-    const req = new EventEmitter();
-    let checks = 0;
+  // Observe only Node's HTTP and filesystem boundaries, leaving the route and
+  // streams real. Discovery opens every jsonl once; a second opening is the
+  // content scan. Waiting for the HTTP listener's promise makes the final
+  // read/write assertions deterministic, without sleeps after a client abort.
+  async function observeDroppedSearch(afterReads) {
+    const pathname = `/api/search?scope=all&q=rutabaga&abort-test=${afterReads}`;
+    const originalEmit = Server.prototype.emit;
+    const originalReadStream = fs.createReadStream;
+    let complete, fail;
+    const completed = new Promise((resolve, reject) => { complete = resolve; fail = reject; });
+    const openings = new Map();
+    const reads = [];
+    const readsAfterClose = [];
     const writes = [];
-    const res = {
-      headersSent: false,
-      get destroyed() {
-        checks += 1;
-        return checks > deadAfter;
-      },
-      writeHead: (...a) => writes.push(a),
-      end: (...a) => writes.push(a),
+    let exchange;
+    let closed = false;
+    let readsAtClose;
+    let client;
+
+    Server.prototype.emit = function (event, ...args) {
+      const [req, res] = args;
+      if (event !== "request" || req.url !== pathname) return originalEmit.call(this, event, ...args);
+      exchange = { req, res };
+      for (const method of ["writeHead", "write", "end"]) {
+        const original = res[method];
+        res[method] = function (...values) {
+          writes.push({ method, values });
+          return original.apply(this, values);
+        };
+      }
+      // These are the real server's public request listeners, not a substitute
+      // handler. Retain their promises so assertions run after routing finishes.
+      Promise.all(this.listeners("request").map((listener) => listener.call(this, req, res)))
+        .then(() => complete(), fail);
+      return true;
     };
-    // "rutabaga" is in no chat: left alone the scan reads the whole budget
-    const url = new URL(`${origin}/api/search?scope=all&q=rutabaga`);
-    return { req, res, url, writes, checked: () => checks };
+    fs.createReadStream = function (file, ...args) {
+      const stream = originalReadStream.call(this, file, ...args);
+      if (!exchange || path.dirname(String(file)) !== sessionsDir || !String(file).endsWith(".jsonl")) return stream;
+      const count = (openings.get(file) ?? 0) + 1;
+      openings.set(file, count);
+      if (count > 1) {
+        reads.push(file);
+        if (closed) readsAfterClose.push(file);
+      }
+      if (!closed && (afterReads === 0 || reads.length === afterReads)) {
+        closed = true;
+        readsAtClose = reads.length;
+        if (afterReads === 0) {
+          // Close while discovery is pending, before any content scan. Keep
+          // res writable to prove the request-close signal alone stops work.
+          exchange.req.emit("close");
+        } else {
+          // Synchronous server-side destruction at the Nth real scan opening:
+          // no dependence on when a client-side abort reaches the server.
+          exchange.res.destroy();
+        }
+      }
+      return stream;
+    };
+    syncBuiltinESMExports();
+    try {
+      client = fetch(`${origin}${pathname}`).then((res) => res.text()).catch(() => null);
+      await completed;
+      assert.equal(closed, true, "the disconnect boundary must be reached");
+      assert.equal(readsAtClose, afterReads);
+      assert.equal(reads.length, afterReads, "no further content file may be opened");
+      assert.deepEqual(readsAfterClose, [], "no content read after disconnection");
+      assert.deepEqual(writes, [], "no headers, body or end on a dropped response");
+    } finally {
+      exchange?.res.destroy();
+      if (client) await client;
+      Server.prototype.emit = originalEmit;
+      fs.createReadStream = originalReadStream;
+      syncBuiltinESMExports();
+    }
   }
 
-  test("a request the client dropped mid-scan stops the scan and writes nothing", async () => {
-    const { handleSearchMessages } = await import("../src/chat/api-chat.mjs");
-    const x = fakeExchange({ deadAfter: 5 });
-    await handleSearchMessages({ req: x.req, res: x.res, url: x.url, sessionKey: null });
-    assert.deepEqual(x.writes, [], "nothing may be written on a dead response");
-    // one check per file: the scan stops on the sixth instead of reading 300
-    assert.ok(x.checked() <= 10, `the scan must stop at once, checked ${x.checked()} files`);
+  test("a request the client dropped mid-scan stops the scan and writes nothing", { timeout: 15000 }, async () => {
+    await observeDroppedSearch(5);
   });
 
-  test("a request already closed is not scanned at all", async () => {
-    const { handleSearchMessages } = await import("../src/chat/api-chat.mjs");
-    const x = fakeExchange();
-    const done = handleSearchMessages({ req: x.req, res: x.res, url: x.url, sessionKey: null });
-    // the close listener is registered before the first await, so this lands
-    // while the handler is still resolving the context
-    x.req.emit("close");
-    await done;
-    assert.deepEqual(x.writes, []);
-    // the close event alone answers "is it gone?": the response is never even
-    // asked, and no file is read
-    assert.equal(x.checked(), 0, "the loop must break on its first look");
+  test("a request already closed is not scanned at all", { timeout: 15000 }, async () => {
+    await observeDroppedSearch(0);
   });
 
   test("an empty query is a 400, not the whole list", async () => {

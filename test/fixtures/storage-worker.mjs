@@ -1,7 +1,15 @@
 import { loadPreferences, setTitleGenerationEnabled, setLunaTitleFallbackEnabled, isTitleGenerationEnabled } from "../../src/storage/preferences.mjs";
 import { withFileLock } from "../../src/storage/file-lock.mjs";
 
-const [kind, file] = process.argv.slice(2);
+const [kind, file, handshake] = process.argv.slice(2);
+async function ready() {
+  if (handshake === "handshake") {
+    const released = new Promise((resolve) => process.once("message", resolve));
+    process.send?.("waiting");
+    if (await released !== "ready") throw new Error("expected ready handshake");
+  }
+  process.send?.("ready");
+}
 if (kind === "hold" || kind === "crash") {
   await withFileLock(file, async () => {
     process.send?.("locked");
@@ -12,11 +20,11 @@ if (kind === "hold" || kind === "crash") {
 }
 if (kind === "network-check") {
   const { hasAccessToken, lanAccessEnabled } = await import("../../src/http/network.mjs");
-  process.send?.("ready");
+  await ready();
   process.on("message", () => process.send?.({ enabled: lanAccessEnabled(), valid: hasAccessToken("fixture-token") }));
 } else {
   await loadPreferences();
-  process.send?.("ready");
+  await ready();
   process.on("message", async () => {
     try {
       if (kind === "check") {

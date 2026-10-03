@@ -13,6 +13,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npm test
+      # The behavioral UI tests in npm test launch the real Electron renderer.
+      - run: xvfb-run --auto-servernum npm test
       # Chromium needs a virtual display; the sandbox switch applies only to this CI fixture.
       - run: xvfb-run --auto-servernum npm run test:chat-links -- --no-sandbox

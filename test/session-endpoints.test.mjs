@@ -894,6 +894,38 @@ describe("the cancellable prompt routes", () => {
 });
 
 describe("the archiving routes", () => {
+  // Created after bootstrap: the first-run sweep must not consume these cases.
+  async function createSweepFixtures(prefix) {
+    const now = Date.now();
+    const fixtures = {};
+    const cases = /** @type {Array<[string, number]>} */ ([["old", 72], ["recent", 1], ["done", 72], ["reopened", 72]]);
+    for (const [name, hoursAgo] of cases) {
+      const file = path.join(path.dirname(sessionFile), `${prefix}-${name}.jsonl`);
+      const timestamp = new Date(now - hoursAgo * 60 * 60 * 1000).toISOString();
+      await writeFile(file, `${JSON.stringify({ ...SESSION_HEADER, id: `${prefix}-${name}`, timestamp })}\n${JSON.stringify({
+        type: "message", id: `${name}-user`, parentId: null, timestamp,
+        message: { role: "user", content: [{ type: "text", text: `Archive fixture ${name}` }] },
+      })}\n`);
+      fixtures[name] = file;
+    }
+    for (const status of ["done", "reopened"]) {
+      const result = await postJson("/api/status", { path: fixtures[status], status });
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body, { ok: true, status });
+    }
+    return fixtures;
+  }
+
+  async function assertFixtureStatuses(fixtures, expected) {
+    const listing = await getJson("/api/sessions?scope=all");
+    assert.equal(listing.status, 200);
+    for (const [name, status] of Object.entries(expected)) {
+      const row = listing.body.sessions.find((session) => session.path === fixtures[name]);
+      assert.ok(row, `fixture ${name} must be listed`);
+      assert.equal(row.status, status, name);
+    }
+  }
+
   test("GET answers the archiving state", async () => {
     const { status, body } = await getJson("/api/archiving");
     assert.equal(status, 200);
@@ -913,21 +945,41 @@ describe("the archiving routes", () => {
     assert.equal(on.body.enabled, true);
   });
 
-  test("POST /api/archiving/sweep sweeps and adds the count to the state", async () => {
-    const { status, body } = await postJson("/api/archiving/sweep");
-    assert.equal(status, 200);
-    assert.deepEqual(Object.keys(body).sort(), ["archived", "enabled", "firstRunArchivedAt"]);
-    assert.equal(typeof body.archived, "number");
+  test("POST /api/archiving/sweep archives stale active and reopened chats only", async () => {
+    const fixtures = await createSweepFixtures("manual-sweep");
+    try {
+      await assertFixtureStatuses(fixtures, { old: "active", recent: "active", done: "done", reopened: "reopened" });
+      const off = await sendJson("PUT", "/api/archiving", { enabled: false });
+      assert.equal(off.status, 200);
+      const { status, body } = await postJson("/api/archiving/sweep");
+      assert.equal(status, 200);
+      assert.deepEqual(Object.keys(body).sort(), ["archived", "enabled", "firstRunArchivedAt"]);
+      assert.equal(body.enabled, false);
+      assert.equal(body.archived, 2);
+      await assertFixtureStatuses(fixtures, { old: "done", recent: "active", done: "done", reopened: "done" });
+      assert.equal((await postJson("/api/archiving/sweep")).body.archived, 0);
+    } finally {
+      await Promise.all(Object.values(fixtures).map((file) => rm(file, { force: true })));
+    }
   });
 
   // The old endpoint dropped the sweep, silently, when `enabled` came along.
   // Two routes cannot shadow each other: the sweep runs whatever is toggled.
   test("a sweep next to a toggle is no longer swallowed", async () => {
-    await sendJson("PUT", "/api/archiving", { enabled: true });
-    const { status, body } = await postJson("/api/archiving/sweep");
-    assert.equal(status, 200);
-    assert.equal(body.enabled, true);
-    assert.equal(typeof body.archived, "number");
+    const fixtures = await createSweepFixtures("toggle-sweep");
+    try {
+      const on = await sendJson("PUT", "/api/archiving", { enabled: true });
+      assert.equal(on.status, 200);
+      assert.equal(on.body.enabled, true);
+      await assertFixtureStatuses(fixtures, { old: "active", recent: "active", done: "done", reopened: "reopened" });
+      const { status, body } = await postJson("/api/archiving/sweep");
+      assert.equal(status, 200);
+      assert.equal(body.enabled, true);
+      assert.equal(body.archived, 2);
+      await assertFixtureStatuses(fixtures, { old: "done", recent: "active", done: "done", reopened: "done" });
+    } finally {
+      await Promise.all(Object.values(fixtures).map((file) => rm(file, { force: true })));
+    }
   });
 
   test("a PUT with no enabled field is a 400", async () => {

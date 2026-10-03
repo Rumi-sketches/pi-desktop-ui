@@ -8,7 +8,8 @@ let root;
 let server;
 let url;
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
-const html = '<button onclick="this.textContent=\'Clicked\'">Click</button><script>document.title="Preview"</script>';
+const HTML_BODY_SENTINEL = 'SECRET_HTML_PREVIEW_BODY';
+const html = `<button onclick="this.textContent='Clicked'">${HTML_BODY_SENTINEL}</button><script>document.title="Preview"</script>`;
 const image = png.toString('base64');
 const entry = (id, parentId, message) => ({
   type: 'message', id, parentId, timestamp: new Date().toISOString(),
@@ -80,8 +81,20 @@ test('preview route serves only completed branch calls and never embeds payloads
   assert.equal((await fetch(url)).status, 400);
   const history = await fetch(url.replace('/api/preview?', '/api/history?'));
   assert.equal(history.status, 200);
-  const body = await history.text();
-  assert.equal(body.includes(html), false);
-  assert.equal(body.includes(image), false);
-  assert.match(body, /"previewReady":true/);
+  const body = await history.json();
+  // A plain sentinel survives JSON escaping; raw JSON.includes(html) does not.
+  const exposed = JSON.stringify(body);
+  assert.equal(exposed.includes(HTML_BODY_SENTINEL), false);
+  assert.equal(exposed.includes('secret-failed-html'), false);
+  assert.equal(exposed.includes(image), false);
+  const tools = body.messages.flatMap((message) => message.blocks)
+    .filter((block) => block.type === 'tool');
+  assert.deepEqual(tools, [
+    { type: 'tool', id: 'html-call', name: 'show_html', args: {}, summary: 'Chat preview',
+      status: 'end', output: 'HTML preview available in the chat.', isError: false, previewReady: true },
+    { type: 'tool', id: 'image-call', name: 'show_image', args: {}, summary: 'Chat preview',
+      status: 'end', output: 'Image preview available in the chat.', isError: false, previewReady: true },
+    { type: 'tool', id: 'failed-call', name: 'show_html', args: {}, summary: 'Chat preview',
+      status: 'end', output: 'failed', isError: true, previewReady: false },
+  ]);
 });
