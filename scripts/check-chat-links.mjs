@@ -42,7 +42,7 @@ async function main() {
       ['/marked.js', path.join(ROOT, 'node_modules/marked/lib/marked.umd.js')],
       ['/purify.js', path.join(ROOT, 'node_modules/dompurify/dist/purify.min.js')],
     ]);
-    for (const name of ['chat-view.js', 'chat-cache.js', 'chat-previews.js', 'transport.js']) {
+    for (const name of ['chat-view.js', 'chat-math.js', 'chat-cache.js', 'chat-previews.js', 'transport.js']) {
       assets.set(`/${name}`, path.join(ROOT, 'public', name));
     }
     server = createServer(async (req, res) => {

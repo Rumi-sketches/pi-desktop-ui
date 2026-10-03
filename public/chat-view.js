@@ -1,5 +1,6 @@
 import { withSessionKey } from './transport.js';
 import { showChatPreview } from './chat-previews.js';
+import { createMathExtensions } from './chat-math.js';
 
 export function decorateMarkdownAlert(quote, documentRef) {
   const first = quote.firstElementChild;
@@ -125,7 +126,7 @@ export function createChatView({
     if (!windowRef.marked || windowRef.marked.__piChatViewConfigured) return;
     windowRef.marked.setOptions({ breaks: true, gfm: true });
     windowRef.marked.use({
-      extensions: [{
+      extensions: [...(windowRef.katex ? createMathExtensions(windowRef.katex) : []), {
         name: 'themeMark',
         level: 'inline',
         start(source) { return source.indexOf('=='); },

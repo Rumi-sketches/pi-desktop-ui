@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PAGE_ROUTES, vendorFilePath } from "../src/http/http.mjs";
+import { PAGE_ROUTES, VENDOR_ROUTE, vendorFilePath } from "../src/http/http.mjs";
 
 const VENDOR_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "node_modules");
 
@@ -50,6 +50,43 @@ test("vendorFilePath: an allowed asset resolves inside node_modules", () => {
     vendorFilePath("/vendor/@lobehub/icons-static-png/light/openai.png"),
     path.join(VENDOR_ROOT, "@lobehub/icons-static-png/light/openai.png"),
   );
+});
+
+test("math libraries and fonts are local, served with matching MIME types", async () => {
+  for (const [asset, type] of [
+    ["katex/dist/katex.min.js", "text/javascript; charset=utf-8"],
+    ["katex/dist/katex.min.css", "text/css; charset=utf-8"],
+    ["katex/dist/fonts/KaTeX_Main-Regular.woff2", "font/woff2"],
+    ["katex/dist/fonts/KaTeX_Main-Regular.woff", "font/woff"],
+    ["katex/dist/fonts/KaTeX_Main-Regular.ttf", "font/ttf"],
+  ]) {
+    const pathname = `/vendor/${asset}`;
+    assert.equal(vendorFilePath(pathname), path.join(VENDOR_ROOT, asset));
+    let status, headers, body;
+    const res = {
+      writeHead(code, values) { status = code; headers = values; },
+      end(value) { body = value; },
+    };
+    const handler = /** @type {(bag: any) => Promise<void>} */ (VENDOR_ROUTE[2]);
+    await handler({ res, url: new URL(`http://localhost${pathname}`) });
+    assert.equal(status, 200, asset);
+    assert.equal(headers["Content-Type"], type, asset);
+    assert.ok(body.length > 0, asset);
+  }
+  assert.equal(vendorFilePath("/vendor/katex/package.json"), null);
+  assert.equal(vendorFilePath("/vendor/katex/dist/contrib/auto-render.min.js"), null);
+});
+
+test("math module and same-origin fonts work without relaxing script CSP", async () => {
+  const module = PAGE_ROUTES.find(([, pathname]) => pathname === "/chat-math.js");
+  assert.ok(module);
+  const route = PAGE_ROUTES.find(([, pathname]) => pathname === "/");
+  let headers;
+  const handler = /** @type {(bag: any) => Promise<void>} */ (route[2]);
+  await handler({ res: { writeHead(_code, values) { headers = values; }, end() {} } });
+  assert.match(headers["Content-Security-Policy"], /font-src 'self'/);
+  assert.match(headers["Content-Security-Policy"], /script-src 'self';/);
+  assert.doesNotMatch(headers["Content-Security-Policy"], /script-src[^;]*'unsafe-inline'/);
 });
 
 test("vendorFilePath: a percent-escape is decoded, not passed through", () => {

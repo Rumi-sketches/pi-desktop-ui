@@ -71,6 +71,7 @@ const HTML_CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
+  "font-src 'self'",
   "connect-src 'self'",
   "frame-src 'self'",
   "base-uri 'none'",
@@ -240,6 +241,9 @@ const VENDOR_ALLOWED = [
   "@highlightjs/cdn-assets/highlight.min.js",
   "@highlightjs/cdn-assets/styles/",
   "dompurify/dist/",
+  "katex/dist/katex.min.js",
+  "katex/dist/katex.min.css",
+  "katex/dist/fonts/",
   // the integrated terminals: the UMD builds (globals `Terminal` and
   // `FitAddon`), not the .mjs ones — the page has no bundler.
   "@xterm/xterm/lib/",
@@ -253,6 +257,9 @@ const VENDOR_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".map": "application/json; charset=utf-8",
   ".png": "image/png",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
 };
 
 export function vendorFilePath(pathname) {
@@ -296,6 +303,7 @@ const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 const PAGE_ASSETS = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/chat-view.js": { file: "chat-view.js", type: "text/javascript; charset=utf-8" },
+  "/chat-math.js": { file: "chat-math.js", type: "text/javascript; charset=utf-8" },
   "/chat-previews.js": { file: "chat-previews.js", type: "text/javascript; charset=utf-8" },
   "/settings-view.js": { file: "settings-view.js", type: "text/javascript; charset=utf-8" },
   "/terminal-view.js": { file: "terminal-view.js", type: "text/javascript; charset=utf-8" },

@@ -263,6 +263,7 @@ async function checkHtmlCsp(port) {
 const PAGE_ASSET_TYPES = {
   "/app.js": "text/javascript; charset=utf-8",
   "/chat-view.js": "text/javascript; charset=utf-8",
+  "/chat-math.js": "text/javascript; charset=utf-8",
   "/debate-view.js": "text/javascript; charset=utf-8",
   "/debate-contract.js": "text/javascript; charset=utf-8",
   "/attachments.js": "text/javascript; charset=utf-8",

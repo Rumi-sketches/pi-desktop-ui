@@ -752,6 +752,8 @@ body.sb-closed #chat { max-width: 1100px; }
 .msg.md > *:first-child { margin-top: 0; }
 .msg.md > *:last-child { margin-bottom: 0; }
 .msg.md p { margin: .5rem 0; }
+.msg.md .katex { font-size: 1.08em; overflow-wrap: normal; }
+.msg.md .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: .3rem 0; }
 .msg.md pre { max-width: 100%; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-3); padding: .8rem .9rem; overflow-x: auto; white-space: pre; }
 .msg.md code { font-family: var(--font-mono); font-size: .85em; }
 .msg.md :not(pre) > code { background: var(--panel-2); padding: .08rem .35rem; border-radius: var(--r-1); }
