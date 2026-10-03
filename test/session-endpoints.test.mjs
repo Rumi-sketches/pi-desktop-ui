@@ -550,12 +550,11 @@ describe("the transcript route", () => {
     const { workInProgress } = await import("../src/lifecycle.mjs");
     const previousRunning = bootContext.running;
     const previousPromptStarting = bootContext.promptStarting;
-    const previousFormSkipRequested = bootContext.formSkipRequested;
-    const previousLive = bootContext.live;
     const abort = new AbortController();
+    const event = (type, id) => ({ type, toolName: "request_form", toolCallId: id });
+    const question = { title: "Question", fields: [{ id: "answer", label: "Answer", type: "text" }] };
     try {
       bootContext.running = true;
-      bootContext.live = [];
       assert.equal(contextIsActive(bootContext), true);
       bootContext.running = false;
       bootContext.promptStarting = true;
@@ -565,28 +564,33 @@ describe("the transcript route", () => {
       assert.equal(runningContextKeys().includes(bootContext.key), true);
       assert.equal(workInProgress().agents, 1);
 
-      // The tool-start event precedes broker.wait by a small window.
-      bootContext.live = [{ type: "tool", tool: { name: "request_form", status: "start" } }];
+      // The SDK announces input ownership before it executes the form tool.
+      bootContext.forms.onSessionEvent(event("tool_execution_start", "announced-form"));
       assert.equal(contextIsActive(bootContext), false);
       assert.equal(runningContextKeys().includes(bootContext.key), false);
       assert.equal(workInProgress().agents, 0);
+      assert.equal((await getJson(`/api/state?s=${encodeURIComponent(bootContext.key)}`)).body.awaitingInput, true);
+      bootContext.forms.onSessionEvent(event("tool_execution_end", "announced-form"));
 
-      const pending = bootContext.formBroker.wait("form-test", { fields: [] }, abort.signal).catch(() => {});
-      bootContext.live = [];
+      const pending = bootContext.forms.tool.execute("form-test", question, abort.signal, undefined, undefined).catch(() => {});
       assert.equal(contextIsActive(bootContext), false);
       assert.equal(workInProgress().busy, false);
       assert.equal((await getJson("/api/sessions?scope=all")).body.running.includes(bootContext.key), false);
       abort.abort();
       await pending;
       assert.equal(contextIsActive(bootContext), true);
-      bootContext.formSkipRequested = true;
+      const skipped = bootContext.forms.tool.execute("skip-test", question, undefined, undefined, undefined);
+      await bootContext.forms.skip("skip-test");
+      await skipped;
       assert.equal(contextIsActive(bootContext), false);
+      bootContext.forms.onSessionEvent({ type: "agent_settled" });
+      assert.equal(contextIsActive(bootContext), true);
     } finally {
       abort.abort();
+      bootContext.forms.onSessionEvent(event("tool_execution_end", "announced-form"));
+      bootContext.forms.onSessionEvent({ type: "agent_settled" });
       bootContext.running = previousRunning;
       bootContext.promptStarting = previousPromptStarting;
-      bootContext.formSkipRequested = previousFormSkipRequested;
-      bootContext.live = previousLive;
     }
   });
 

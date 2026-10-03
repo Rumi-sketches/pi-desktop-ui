@@ -167,7 +167,7 @@ export function normalizeFormResponse(form, input) {
   return values;
 }
 
-export class InteractiveFormBroker {
+class InteractiveFormBroker {
   constructor() {
     this.pending = new Map();
   }
@@ -279,7 +279,7 @@ export function formStateFromBranch(branch) {
   return { pending, outcomes };
 }
 
-export function createInteractiveFormTool(broker) {
+function createInteractiveFormTool(broker) {
   return defineTool({
     name: "request_form",
     label: "Request form",
@@ -294,4 +294,206 @@ export function createInteractiveFormTool(broker) {
     executionMode: "sequential",
     execute: async (toolCallId, params, signal) => broker.wait(toolCallId, normalizeFormRequest(params), signal),
   });
+}
+
+export class FormError extends Error {
+  /** @param {number} status @param {string} code @param {string} message */
+  constructor(status, code, message) {
+    super(message);
+    this.name = "FormError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * Owns live and recovered forms, including the handoff back to the session.
+ * The context is resolved lazily because the SDK needs the tool before it
+ * creates the session. No tool executes until context construction completes.
+ * @param {{
+ *   sessionManager: { getBranch: () => any[] },
+ *   getContext: () => { session: any, promptQueue: { clear: (reason: string) => any },
+ *     promptStarting: boolean, running: boolean, runStartedAt: number|null },
+ *   emit: (event: any) => void,
+ *   emitActivity: (running: boolean, paused?: boolean) => void,
+ * }} options
+ */
+export function createChatForms({ sessionManager, getContext, emit, emitActivity }) {
+  const broker = new InteractiveFormBroker();
+  const announced = new Set();
+  let recovered = formStateFromBranch(sessionManager.getBranch()).pending;
+  let skipRequested = false;
+
+  function isPending(id) {
+    return recovered?.id === id || broker.has(id) || announced.has(id);
+  }
+
+  function awaitingInput() {
+    return !!recovered || broker.waiting || announced.size > 0;
+  }
+
+  function notPending() {
+    return new FormError(409, "form_not_pending", "this form is no longer waiting for a response");
+  }
+
+  function validate(form, input) {
+    try {
+      return normalizeFormResponse(form, input);
+    } catch (error) {
+      throw new FormError(400, "invalid_form_response", String(error.message ?? error));
+    }
+  }
+
+  function appendToolResult(id, name, text, details, isError = false) {
+    const { session } = getContext();
+    const result = {
+      role: "toolResult", toolCallId: id, toolName: name,
+      content: [{ type: "text", text }], details, isError, timestamp: Date.now(),
+    };
+    // Both copies must contain a result before a provider sees the next turn.
+    session.sessionManager.appendMessage(result);
+    session.agent.state.messages.push(result);
+  }
+
+  function restoreToolExchange(pending, outcome) {
+    if (!pending.abortedResult) {
+      appendToolResult(pending.id, "request_form", JSON.stringify(outcome), outcome);
+    }
+    for (const call of pending.followingCalls) {
+      appendToolResult(call.id, call.name,
+        "Tool call was not executed because the app stopped while waiting for a form response.", {}, true);
+    }
+  }
+
+  function emitOutcome(id, outcome) {
+    emit({ kind: "tool", id, name: "request_form", status: "end", output: JSON.stringify(outcome) });
+  }
+
+  function submit(id, input) {
+    if (broker.has(id)) {
+      try {
+        return broker.submit(id, input);
+      } catch (error) {
+        throw new FormError(400, "invalid_form_response", String(error.message ?? error));
+      }
+    }
+    const ctx = getContext();
+    if (recovered?.id !== id || ctx.promptStarting) throw notPending();
+    const values = validate(recovered.form, input);
+    const pending = recovered;
+    // Consume and claim synchronously: another form response or prompt cannot
+    // race the restoration and start a second continuation.
+    recovered = null;
+    ctx.promptStarting = true;
+    ctx.runStartedAt = Date.now();
+    const outcome = { status: "submitted", values };
+    try {
+      restoreToolExchange(pending, outcome);
+    } catch (error) {
+      recovered = pending;
+      ctx.promptStarting = false;
+      ctx.runStartedAt = null;
+      throw error;
+    }
+    ctx.session.sendCustomMessage({
+      customType: FORM_OUTCOME_TYPE,
+      content: [{ type: "text", text: pending.abortedResult
+        ? `The user answered the interrupted request_form (${id}): ${JSON.stringify(values)}. Continue using these answers.`
+        : "The pending form has been answered. Continue from its tool result." }],
+      display: false,
+      details: { toolCallId: id, ...outcome },
+    }, { triggerTurn: true })
+      .catch((error) => emit({ kind: "error", message: String(error) }))
+      .finally(() => {
+        ctx.promptStarting = false;
+        if (!ctx.running) ctx.runStartedAt = null;
+      });
+    emitOutcome(id, outcome);
+    return values;
+  }
+
+  async function skip(id) {
+    const ctx = getContext();
+    if (recovered?.id === id && !ctx.promptStarting) {
+      const pending = recovered;
+      recovered = null;
+      try {
+        restoreToolExchange(pending, { status: "skipped" });
+      } catch (error) {
+        recovered = pending;
+        throw error;
+      }
+      await ctx.session.sendCustomMessage({
+        customType: FORM_OUTCOME_TYPE,
+        content: [{ type: "text", text: `The user skipped the interrupted request_form (${id}) without answering it.` }],
+        display: false,
+        details: { toolCallId: id, status: "skipped" },
+      });
+    } else if (broker.has(id) && !skipRequested) {
+      // Clear before resolving the tool: the SDK can immediately resume and
+      // deliver queued steering or follow-up at the next turn boundary.
+      ctx.promptQueue.clear("aborted");
+      skipRequested = true;
+      broker.skip(id);
+    } else {
+      throw notPending();
+    }
+    emitOutcome(id, { status: "skipped" });
+    emitActivity(false, true);
+  }
+
+  async function abort() {
+    if (recovered) {
+      await skip(recovered.id);
+      return true;
+    }
+    const ctx = getContext();
+    const id = broker.pending.keys().next().value;
+    ctx.promptQueue.clear("aborted");
+    if (id) {
+      skipRequested = true;
+      broker.skip(id);
+      await ctx.session.waitForIdle();
+    } else {
+      await ctx.session.abort();
+    }
+    return false;
+  }
+
+  async function shutdown() {
+    // Interrupted is recoverable; skipped is final. Resolve before abort so
+    // shutdown cannot trigger another provider call from a waiting tool.
+    broker.interruptAll();
+    await getContext().session.abort();
+  }
+
+  function onSessionEvent(event) {
+    if (event.type === "tool_execution_start" && event.toolName === "request_form") {
+      // This announcement precedes tool.execute and closes the observation
+      // window where the broker has not registered its waiting promise yet.
+      announced.add(event.toolCallId);
+      emitActivity(false, true);
+    } else if (event.type === "tool_execution_end" && event.toolName === "request_form") {
+      announced.delete(event.toolCallId);
+      if (event.result?.details?.status === "submitted" && getContext().running) emitActivity(true);
+    } else if (event.type === "agent_settled") {
+      announced.clear();
+      emitActivity(false, skipRequested);
+      skipRequested = false;
+    }
+  }
+
+  return {
+    tool: createInteractiveFormTool(broker),
+    get awaitingInput() { return awaitingInput(); },
+    get paused() { return skipRequested || awaitingInput(); },
+    get recoveryPending() { return !!recovered; },
+    isPending,
+    outcomes: (branch) => formStateFromBranch(branch).outcomes,
+    submit,
+    skip,
+    abort,
+    shutdown,
+    onSessionEvent,
+  };
 }

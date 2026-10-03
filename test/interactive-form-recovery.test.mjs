@@ -56,7 +56,7 @@ test("a form aborted by server shutdown can be answered after reopening", async 
     const firstTurn = ctx.session.sendCustomMessage({
       customType: "test-prompt", content: [{ type: "text", text: "Ask a question" }], display: false,
     }, { triggerTurn: true }).catch(() => {});
-    await until(() => ctx.formBroker.waiting);
+    await until(() => ctx.forms.awaitingInput);
     const file = ctx.sessionFile;
     assert.ok(file);
 
@@ -69,7 +69,7 @@ test("a form aborted by server shutdown can be answered after reopening", async 
 
     server = await startServer({ port: 0 });
     const reopened = await useContext(file);
-    assert.equal(reopened.recoveredForm?.id, "form-after-restart");
+    assert.equal(reopened.forms.isPending("form-after-restart"), true);
     reopened.session.agent.state.model = model;
     let received = null;
     reopened.session.agent.streamFunction = async (_model, context) => {
@@ -90,14 +90,22 @@ test("a form aborted by server shutdown can be answered after reopening", async 
     assert.equal(laterCard?.status, "end");
     assert.equal(laterCard?.isError, true);
 
-    const response = await fetch(`${base}/api/forms/form-after-restart/respond${query}`, {
+    const invalid = await fetch(`${base}/api/forms/form-after-restart/respond${query}`, {
       method: "POST", headers: { Origin: base, "Content-Type": "application/json" },
-      body: JSON.stringify({ values: { color: "blue" } }),
+      body: JSON.stringify({ values: { unknown: "bad answer" } }),
     });
-    assert.equal(response.status, 200);
-    assert.deepEqual((await response.json()).values, { color: "blue" });
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error.code, "invalid_form_response");
+    assert.equal(reopened.forms.isPending("form-after-restart"), true);
+    const responses = await Promise.all(["blue", "red"].map((color) => fetch(`${base}/api/forms/form-after-restart/respond${query}`, {
+      method: "POST", headers: { Origin: base, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: { color } }),
+    })));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+    const acceptedValues = (await responses.find((response) => response.status === 200).json()).values;
+    assert.equal((await responses.find((response) => response.status === 409).json()).error.code, "form_not_pending");
     await until(() => received !== null);
-    assert.match(received.at(-1).content[0].text, /"color":"blue"/);
+    assert.ok(received.at(-1).content[0].text.includes(JSON.stringify(acceptedValues)));
     assert.equal(received.filter((message) => message.role === "toolResult"
       && message.toolCallId === "form-after-restart").length, 1);
     assert.equal(received.filter((message) => message.role === "toolResult" && message.toolCallId === "later-form").length, 1);
@@ -124,13 +132,22 @@ test("a form aborted by server shutdown can be answered after reopening", async 
       const run = live.session.sendCustomMessage({
         customType: "test-prompt", content: [{ type: "text", text: `Ask question ${turn}` }], display: false,
       }, { triggerTurn: true });
-      await until(() => live.formBroker.has(`live-form-${turn}`));
-      const skipped = await fetch(`${base}/api/forms/live-form-${turn}/skip?s=${encodeURIComponent(live.key)}`, {
+      await until(() => live.forms.isPending(`live-form-${turn}`));
+      for (const type of ["steer", "followUp"]) {
+        const queued = await fetch(`${base}/api/prompt?s=${encodeURIComponent(live.key)}`, {
+          method: "POST", headers: { Origin: base, "Content-Type": "application/json" },
+          body: JSON.stringify({ text: "This queued instruction must not run", type }),
+        });
+        assert.equal(queued.status, 202);
+      }
+      const route = turn === 1 ? `/api/forms/live-form-${turn}/skip` : "/api/abort";
+      const skipped = await fetch(`${base}${route}?s=${encodeURIComponent(live.key)}`, {
         method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: "{}",
       });
       assert.equal(skipped.status, 200);
       await run;
       assert.equal(liveCalls, turn, "skipping must not request another provider response");
+      assert.deepEqual(live.promptQueue.publicItems(), []);
       const liveHistory = await (await fetch(`${base}/api/history?s=${encodeURIComponent(live.key)}`)).json();
       const card = liveHistory.messages.flatMap((message) => message.blocks)
         .find((block) => block.id === `live-form-${turn}`);
@@ -148,7 +165,7 @@ test("a form aborted by server shutdown can be answered after reopening", async 
     const deferredRun = deferred.session.sendCustomMessage({
       customType: "test-prompt", content: [{ type: "text", text: "Ask one more question" }], display: false,
     }, { triggerTurn: true });
-    await until(() => deferred.formBroker.waiting);
+    await until(() => deferred.forms.awaitingInput);
     const deferredFile = deferred.sessionFile;
     await server.stop();
     server = null;
@@ -174,6 +191,44 @@ test("a form aborted by server shutdown can be answered after reopening", async 
     assert.equal(skippedHistory.awaitingInput, false);
     assert.equal(skippedCard.status, "end");
     assert.equal(JSON.parse(skippedCard.output).status, "skipped");
+
+    // A crash can leave a persisted assistant call with no tool result at all.
+    const missing = await createContext({ mode: "new", cwd: process.cwd() });
+    missing.session.sessionManager.appendMessage(await fakeResponse([{
+      type: "toolCall", id: "missing-form", name: "request_form",
+      arguments: { title: "Unsaved answer", fields: [{ id: "color", label: "Color", type: "text" }] },
+    }, {
+      type: "toolCall", id: "unexecuted-read", name: "read", arguments: { path: "package.json" },
+    }], "toolUse").result());
+    const missingFile = missing.session.sessionManager.getSessionFile();
+    await server.stop();
+    server = null;
+    server = await startServer({ port: 0 });
+    base = server.url.replace(/\/$/, "");
+    const restoredMissing = await useContext(missingFile);
+    restoredMissing.session.agent.state.model = model;
+    let missingCalls = 0;
+    let restoredMessages;
+    restoredMissing.session.agent.streamFunction = async (_model, context) => {
+      missingCalls++;
+      restoredMessages = context.messages;
+      return fakeResponse([{ type: "text", text: "Recovered." }], "stop");
+    };
+    const answeredMissing = await fetch(`${base}/api/forms/missing-form/respond?s=${encodeURIComponent(missingFile)}`, {
+      method: "POST", headers: { Origin: base, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: { color: "green" } }),
+    });
+    assert.equal(answeredMissing.status, 200);
+    await until(() => missingCalls === 1);
+    await restoredMissing.session.waitForIdle();
+    for (const id of ["missing-form", "unexecuted-read"]) {
+      assert.equal(restoredMessages.filter((message) => message.role === "toolResult" && message.toolCallId === id).length, 1);
+    }
+    assert.equal(restoredMessages.find((message) => message.toolCallId === "unexecuted-read").isError, true);
+    const missingHistory = await (await fetch(`${base}/api/history?s=${encodeURIComponent(missingFile)}`)).json();
+    const missingCard = missingHistory.messages.flatMap((message) => message.blocks).find((block) => block.id === "missing-form");
+    assert.equal(missingCard.status, "end");
+    assert.deepEqual(JSON.parse(missingCard.output), { status: "submitted", values: { color: "green" } });
   } finally {
     await server?.stop();
     await rm(agentDir, { recursive: true, force: true });

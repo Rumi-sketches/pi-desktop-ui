@@ -38,7 +38,7 @@ import { agentBootstrapState } from "../storage/preferences.mjs";
 import { readSessionRecords } from "../storage/session-store.mjs";
 import { configureTitleModelRuntime } from "./titles.mjs";
 import { createPromptQueueController } from "./prompt-queue.mjs";
-import { InteractiveFormBroker, createInteractiveFormTool, formStateFromBranch } from "./interactive-forms.mjs";
+import { createChatForms } from "./interactive-forms.mjs";
 import { createPreviewTools, previewKind } from "./chat-previews.mjs";
 
 // ---- thinking levels -------------------------------------------------------
@@ -78,19 +78,11 @@ export function broadcastUsage(ctx) {
   broadcast(ctx, { kind: "usage", totals, metrics: ctx.metrics });
 }
 
-// The SDK announces a tool immediately before entering its execute function.
-// Consult the live segment as well as the broker to close that tiny observation
-// window for tabs attaching at exactly that boundary.
-export function contextAwaitingInput(ctx) {
-  return !!ctx.recoveredForm || ctx.formBroker.waiting || ctx.live.some((segment) =>
-    segment.type === "tool" && segment.tool.name === "request_form" && segment.tool.status !== "end");
-}
-
 // A pending form keeps the agent turn open, but no work advances until the
 // user answers it. Keep that distinction at the source of activity indicators.
 export const contextIsActive = (ctx) =>
   (ctx.promptStarting || ctx.running || ctx.session.isStreaming)
-  && !ctx.formSkipRequested && !contextAwaitingInput(ctx);
+  && !ctx.forms.paused;
 
 // AgentSession can emit several agent_start/agent_end pairs inside one
 // prompt() call (automatic retries, compaction and queued continuations).
@@ -126,7 +118,7 @@ export function attachEventClient(ctx, res) {
     cwd: ctx.cwd,
     running: ctx.promptStarting || ctx.running || ctx.session.isStreaming,
     runStartedAt: Number.isFinite(ctx.runStartedAt) ? ctx.runStartedAt : null,
-    awaitingInput: contextAwaitingInput(ctx),
+    awaitingInput: ctx.forms.awaitingInput,
     queuedPrompts: ctx.promptQueue.publicItems(),
   });
   const ping = setInterval(() => sseWrite(res, SSE_PING), SSE_PING_MS);
@@ -483,9 +475,7 @@ function wireSession(ctx) {
       };
       ctx.live.push({ type: "tool", tool: { ...ev } });
       broadcast(ctx, ev);
-      if (event.toolName === "request_form") {
-        broadcastGlobal({ kind: "running", key: ctx.key, running: false, paused: true });
-      }
+      ctx.forms.onSessionEvent(event);
     } else if (event.type === "tool_execution_update") {
       const output = extractToolText(event.partialResult);
       const seg = ctx.live.find((s) => s.type === "tool" && s.tool.id === event.toolCallId);
@@ -509,9 +499,7 @@ function wireSession(ctx) {
         isError: event.isError,
         output,
       });
-      if (event.toolName === "request_form" && event.result?.details?.status === "submitted" && ctx.running) {
-        broadcastGlobal({ kind: "running", key: ctx.key, running: true });
-      }
+      ctx.forms.onSessionEvent(event);
     } else if (event.type === "message_end" && event.message?.role === "assistant") {
       // The browser keeps streamed content in place, so it needs the same end
       // metadata that a later /api/history reload derives from the session.
@@ -567,9 +555,7 @@ function wireSession(ctx) {
       if (!transition) return;
       ctx.turnModel = null;
       broadcast(ctx, { kind: "status", ...transition });
-      broadcastGlobal({ kind: "running", key: ctx.key, running: false, cwd: ctx.cwd,
-        ...(ctx.formSkipRequested ? { paused: true } : {}) });
-      ctx.formSkipRequested = false;
+      ctx.forms.onSessionEvent(event);
     } else if (event.type === "auto_retry_end" && !event.success && event.finalError) {
       // the SDK swallows the failure internally after giving up (e.g. an OAuth
       // refresh that keeps failing): if we don't surface it here, the turn just
@@ -648,7 +634,17 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
   } else {
     sessionManager = SessionManager.continueRecent(cwd);
   }
-  const formBroker = new InteractiveFormBroker();
+  let ctx;
+  const forms = createChatForms({
+    sessionManager,
+    getContext: () => ctx,
+    emit: (event) => broadcast(ctx, event),
+    emitActivity: (running, paused = false) => broadcastGlobal({
+      kind: "running", key: ctx.key, running,
+      ...(!running ? { cwd: ctx.cwd } : {}),
+      ...(paused ? { paused: true } : {}),
+    }),
+  });
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
@@ -663,7 +659,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     resourceLoader,
     sessionManager,
     modelRuntime,
-    customTools: [createInteractiveFormTool(formBroker), ...createPreviewTools()],
+    customTools: [forms.tool, ...createPreviewTools()],
   });
   applyBootstrapTools(session);
   const file = session.sessionManager?.getSessionFile?.() ?? null;
@@ -681,7 +677,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     known.lastActive = Date.now();
     return known;
   }
-  const ctx = {
+  ctx = {
     key,
     session,
     cwd,
@@ -698,9 +694,7 @@ export async function createContext({ cwd = DEFAULT_CWD, mode = "continue", open
     promptStarting: false,
     bootstrapPrepared: false,
     promptQueue: null,
-    formBroker,
-    recoveredForm: formStateFromBranch(sessionManager.getBranch()).pending,
-    formSkipRequested: false,
+    forms,
   };
   ctx.promptQueue = createPromptQueueController({
     session,
@@ -876,11 +870,7 @@ export async function disposeAllContexts() {
   // Snapshot: disposeContext() mutates `contexts` while we walk it.
   for (const ctx of [...contexts.values()]) {
     try {
-      // A form waiting for input survives restart. Resolve it as interrupted
-      // before aborting the session, so the SDK records a terminal tool result
-      // without starting another provider request during shutdown.
-      ctx.formBroker.interruptAll();
-      await ctx.session.abort();
+      await ctx.forms.shutdown();
     } catch (err) {
       console.error(`${PRODUCT_ID}: aborting session on shutdown failed (${err?.message ?? err})`);
     }

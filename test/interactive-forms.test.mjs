@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  InteractiveFormBroker,
-  createInteractiveFormTool,
+  createChatForms,
   formStateFromBranch,
   normalizeFormRequest,
   normalizeFormResponse,
@@ -112,42 +111,177 @@ test("choice fields accept bounded custom answers without accepting unknown opti
     { target: "Desktop app" });
 });
 
-test("the broker resolves a tool call once and refuses late submissions", async () => {
-  const broker = new InteractiveFormBroker();
-  const waiting = broker.wait("call-1", form());
-  const values = { name: "Studio", platform: "web", features: [], approved: true };
-  assert.deepEqual(broker.submit("call-1", values), values);
-  assert.equal(broker.submit("call-1", values), null);
+function formsFixture(branch = []) {
+  const events = [];
+  const activity = [];
+  const persisted = [];
+  const continuations = [];
+  const queued = ["steer", "followUp"];
+  const ctx = {
+    promptStarting: false, running: false, runStartedAt: null,
+    promptQueue: { clear() { queued.length = 0; } },
+    session: {
+      sessionManager: { appendMessage(message) { persisted.push(message); } },
+      agent: { state: { messages: [] } },
+      async sendCustomMessage(message, options) { continuations.push({ message, options }); },
+      async waitForIdle() {},
+      async abort() {},
+    },
+  };
+  const forms = createChatForms({
+    sessionManager: { getBranch: () => branch }, getContext: () => ctx,
+    emit: (event) => events.push(event),
+    emitActivity: (running, paused = false) => activity.push({ running, paused }),
+  });
+  return { forms, ctx, events, activity, persisted, continuations, queued };
+}
+
+function recoveredBranch({ interrupted = false } = {}) {
+  const branch = /** @type {any[]} */ ([{ type: "message", message: { role: "assistant", content: [
+    { type: "toolCall", id: "recovered", name: "request_form", arguments: form() },
+    { type: "toolCall", id: "later", name: "read", arguments: { path: "package.json" } },
+  ] } }]);
+  if (interrupted) branch.push({ type: "message", message: {
+    role: "toolResult", toolCallId: "recovered", content: [{ type: "text", text: "form request aborted" }],
+  } });
+  return branch;
+}
+
+const validValues = () => ({ name: "Studio", platform: "web", features: [], approved: true });
+
+test("a live form accepts one valid response and rejects invalid or late answers", async () => {
+  const { forms } = formsFixture();
+  const waiting = forms.tool.execute("call-1", form(), undefined, undefined, undefined);
+  assert.throws(() => forms.submit("call-1", {}), { code: "invalid_form_response", status: 400 });
+  assert.equal(forms.isPending("call-1"), true);
+  assert.deepEqual(forms.submit("call-1", validValues()), validValues());
+  assert.throws(() => forms.submit("call-1", validValues()), { code: "form_not_pending", status: 409 });
   const result = await waiting;
-  assert.deepEqual(JSON.parse(result.content[0].text), { status: "submitted", values });
+  const content = result.content[0];
+  assert.equal(content.type, "text");
+  if (content.type === "text") assert.deepEqual(JSON.parse(content.text), { status: "submitted", values: validValues() });
 });
 
-test("aborting a turn removes its pending form", async () => {
-  const broker = new InteractiveFormBroker();
+test("aborting the tool execution removes its pending form", async () => {
+  const { forms } = formsFixture();
   const controller = new AbortController();
-  const waiting = broker.wait("call-2", form(), controller.signal);
+  const waiting = forms.tool.execute("call-2", form(), controller.signal, undefined, undefined);
   controller.abort();
   await assert.rejects(waiting, /form request aborted/);
-  assert.equal(broker.submit("call-2", {}), null);
+  assert.equal(forms.awaitingInput, false);
+  assert.throws(() => forms.submit("call-2", {}), { code: "form_not_pending" });
 });
 
-test("broker exposes only the interval spent waiting for user input", async () => {
-  const broker = new InteractiveFormBroker();
-  assert.equal(broker.waiting, false);
-
-  const waiting = broker.wait("call-waiting", form());
-  assert.equal(broker.waiting, true);
-  broker.submit("call-waiting", { name: "Studio", platform: "web", features: [], approved: true });
+test("the form module reports input ownership only while a form awaits it", async () => {
+  const { forms } = formsFixture();
+  assert.equal(forms.awaitingInput, false);
+  const waiting = forms.tool.execute("call-waiting", form(), undefined, undefined, undefined);
+  assert.equal(forms.awaitingInput, true);
+  forms.submit("call-waiting", validValues());
   await waiting;
-
-  assert.equal(broker.waiting, false);
+  assert.equal(forms.awaitingInput, false);
 });
 
-test("the tool advertises the native form capability to the model", () => {
-  const tool = createInteractiveFormTool(new InteractiveFormBroker());
+test("the module provides the native sequential form tool", () => {
+  const { tool } = formsFixture().forms;
   assert.equal(tool.name, "request_form");
   assert.match(tool.promptSnippet, /fillable form/);
   assert.equal(tool.executionMode, "sequential");
+});
+
+test("tool announcements own input before execute and release it at tool end", () => {
+  const { forms, ctx, activity } = formsFixture();
+  ctx.running = true;
+  forms.onSessionEvent({ type: "tool_execution_start", toolName: "request_form", toolCallId: "announced" });
+  assert.equal(forms.awaitingInput, true);
+  assert.equal(forms.isPending("announced"), true);
+  assert.equal(forms.paused, true);
+  assert.throws(() => forms.submit("announced", validValues()), { code: "form_not_pending" });
+  forms.onSessionEvent({ type: "tool_execution_end", toolName: "request_form", toolCallId: "announced",
+    result: { details: { status: "submitted" } } });
+  assert.equal(forms.awaitingInput, false);
+  assert.equal(forms.isPending("announced"), false);
+  assert.deepEqual(activity, [{ running: false, paused: true }, { running: true, paused: false }]);
+  forms.onSessionEvent({ type: "tool_execution_start", toolName: "request_form", toolCallId: "next" });
+  forms.onSessionEvent({ type: "agent_settled" });
+  assert.equal(forms.isPending("next"), false);
+  assert.equal(forms.paused, false);
+});
+
+for (const interrupted of [false, true]) {
+  test(`recovery consumes one answer and repairs its batch (${interrupted ? "interrupted" : "missing result"})`, async () => {
+    const { forms, ctx, persisted, continuations } = formsFixture(recoveredBranch({ interrupted }));
+    assert.equal(forms.recoveryPending, true);
+    assert.throws(() => forms.submit("recovered", {}), { code: "invalid_form_response" });
+    assert.equal(forms.isPending("recovered"), true);
+    forms.submit("recovered", validValues());
+    assert.equal(forms.isPending("recovered"), false);
+    assert.equal(ctx.promptStarting, true);
+    assert.throws(() => forms.submit("recovered", validValues()), { code: "form_not_pending" });
+    await assert.rejects(forms.skip("recovered"), { code: "form_not_pending" });
+    assert.deepEqual(persisted.map((message) => message.toolCallId), interrupted ? ["later"] : ["recovered", "later"]);
+    assert.deepEqual(ctx.session.agent.state.messages, persisted);
+    assert.equal(persisted.at(-1).isError, true);
+    assert.equal(continuations.length, 1);
+    assert.equal(continuations[0].options.triggerTurn, true);
+    assert.deepEqual(continuations[0].message.details,
+      { toolCallId: "recovered", status: "submitted", values: validValues() });
+  });
+}
+
+test("a failure before restoring the first result releases the claim and permits retry", () => {
+  const { forms, ctx, continuations } = formsFixture(recoveredBranch());
+  const append = ctx.session.sessionManager.appendMessage;
+  ctx.session.sessionManager.appendMessage = () => { throw new Error("write failed before append"); };
+  assert.throws(() => forms.submit("recovered", validValues()), /write failed before append/);
+  assert.equal(forms.awaitingInput, true);
+  assert.equal(forms.recoveryPending, true);
+  assert.equal(ctx.promptStarting, false);
+  assert.equal(ctx.runStartedAt, null);
+  assert.equal(continuations.length, 0);
+  ctx.session.sessionManager.appendMessage = append;
+  forms.submit("recovered", validValues());
+  assert.equal(continuations.length, 1);
+});
+
+test("skipping a recovered form repairs the exchange without starting a model turn", async () => {
+  const { forms, persisted, continuations } = formsFixture(recoveredBranch());
+  await forms.skip("recovered");
+  assert.equal(forms.recoveryPending, false);
+  assert.deepEqual(persisted.map((message) => message.toolCallId), ["recovered", "later"]);
+  assert.deepEqual(persisted[0].details, { status: "skipped" });
+  assert.equal(continuations.length, 1);
+  assert.equal(continuations[0].options, undefined);
+  await assert.rejects(forms.skip("recovered"), { code: "form_not_pending" });
+});
+
+for (const action of ["skip", "abort"]) {
+  test(`${action} clears queued prompts before the waiting tool resumes`, async () => {
+    const { forms, queued, activity } = formsFixture();
+    const waiting = forms.tool.execute("skip-live", form(), undefined, undefined, undefined).then((result) => {
+      assert.deepEqual(queued, []);
+      return result;
+    });
+    if (action === "skip") await forms.skip("skip-live");
+    else await forms.abort();
+    assert.deepEqual((await waiting).details, { status: "skipped" });
+    assert.equal(forms.paused, true);
+    forms.onSessionEvent({ type: "agent_settled" });
+    assert.equal(forms.paused, false);
+    assert.deepEqual(activity.at(-1), { running: false, paused: true });
+    const next = forms.tool.execute("next", form(), undefined, undefined, undefined);
+    forms.submit("next", validValues());
+    assert.deepEqual((await next).details, { status: "submitted", values: validValues() });
+  });
+}
+
+test("shutdown interrupts a waiting form before aborting its session", async () => {
+  const { forms, ctx } = formsFixture();
+  const waiting = forms.tool.execute("shutdown", form(), undefined, undefined, undefined);
+  ctx.session.abort = async () => { assert.equal(forms.awaitingInput, false); };
+  await forms.shutdown();
+  assert.deepEqual((await waiting).details, { status: "interrupted" });
+  assert.equal((await waiting).terminate, true);
 });
 
 test("an aborted form remains recoverable after shutdown, while later turns and outcomes close it", () => {
