@@ -67,6 +67,7 @@ class FakeElement {
     if (selector === '.themeCard[data-t]') return nodes.filter((node) => node.classList.contains('themeCard') && 't' in node.dataset);
     if (selector === '.accentDot[data-a]') return nodes.filter((node) => node.classList.contains('accentDot') && 'a' in node.dataset);
     if (selector === '.logoStyleCard') return nodes.filter((node) => node.classList.contains('logoStyleCard'));
+    if (selector === '.workStyleCard') return nodes.filter((node) => node.classList.contains('workStyleCard'));
     return [];
   }
   querySelector() { return null; }
@@ -151,6 +152,7 @@ function fixture({ deferNetwork = false, modelCatalog = false } = {}) {
     confirmAction: () => true,
   });
   let chatArchiving = true;
+  const workStyleCalls = [];
   const controller = createSettingsView({
     api, post, sendJson, escapeHtml,
     formatNumber: String, formatMoney: (value) => `$${value.toFixed(2)}`,
@@ -162,6 +164,12 @@ function fixture({ deferNetwork = false, modelCatalog = false } = {}) {
     themes: [{ id: 'paseo', name: 'Paseo', cols: ['#fff'] }],
     accents: [{ id: '', name: 'Default', col: '' }],
     logoStyles: [{ id: 'brand', name: 'Provider colours' }],
+    workStyles: [{ id: 'block', name: 'One block', hint: 'chapters' }, { id: 'flow', name: 'Flow', hint: 'own rows' }],
+    applyWorkStyle(id) {
+      document.documentElement.dataset.work = id ?? 'block';
+      workStyleCalls.push(['apply', id]);
+    },
+    playWorkStyleDemo(root, style) { workStyleCalls.push(['play', root.id, style]); },
     agentInputs, getRenderedChatKey: () => 'chat-key', setSidebarCollapsed() {},
     getChatNotifications: () => false, setChatNotifications() {},
   });
@@ -169,6 +177,7 @@ function fixture({ deferNetwork = false, modelCatalog = false } = {}) {
     document,
     calls,
     controller,
+    workStyleCalls,
     setSaveResult(value) { saveResult = value; },
     resolveNetwork() { networkResolvers.shift()?.(); },
   };
@@ -277,6 +286,20 @@ test('settings switches keep click and keyboard activation on their own endpoint
           { lunaTitleFallback: true }, { lunaTitleFallback: true }, { lunaTitleFallback: true },
         ]);
     } finally { globalThis.setTimeout = originalSetTimeout; }
+  });
+});
+
+test('the theme section switches the work style and replays its preview', async () => {
+  await withBrowserGlobals(async (installDocument) => {
+    const state = fixture();
+    installDocument(state.document);
+    await state.controller.show();
+    assert.deepEqual(state.workStyleCalls, [['apply', undefined]], 'opening marks the current style without playing');
+
+    await state.document.getElementById('workStyle_flow').emit('click');
+    assert.deepEqual(state.workStyleCalls.slice(1), [['apply', 'flow'], ['play', 'workDemo', 'flow']]);
+    await state.document.getElementById('workDemoReplay').emit('click');
+    assert.deepEqual(state.workStyleCalls.at(-1), ['play', 'workDemo', 'flow']);
   });
 });
 

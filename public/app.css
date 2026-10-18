@@ -857,7 +857,6 @@ body.sb-closed #chat { max-width: 1100px; }
 .codeBox:hover .codeCopyBtn { opacity: 1; }
 .codeCopyBtn:hover { color: var(--txt); border-color: var(--teal); }
 .codeCopyBtn.copied { color: var(--teal); border-color: var(--accent-line); }
-.thinking { color: var(--faint); font-style: italic; font-size: .85rem; white-space: pre-wrap; }
 .tool { display: inline-flex; align-items: center; gap: .4rem; font: 11.5px var(--font-mono); color: var(--tool-nm); }
 .sys { font-size: .78rem; color: var(--faint); }
 /* errors: never mistakable for a plain system message */
@@ -1232,32 +1231,127 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 /* preview of the provider logos in both variants */
 .logoStyleCard .prev { display: flex; gap: .3rem; margin-bottom: .45rem; }
 .logoStyleCard[data-l="mono"] .prev .logo { background: transparent !important; color: var(--txt-dim) !important; }
+/* the work styles; the preview plays a short run through the real work blocks */
+.workStyleCard { display: flex; flex-direction: column; gap: .15rem; }
+.workStyleCard .hint { color: var(--txt-dim); font-size: var(--fs-xs); }
+.workDemoCard { max-width: 640px; margin-top: .6rem; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--bg); overflow: hidden; }
+.workDemoBar {
+  display: flex; align-items: center; justify-content: space-between; padding: .3rem .4rem .3rem .75rem;
+  border-bottom: 1px solid var(--line); color: var(--faint); font-size: var(--fs-xs);
+}
+.workDemoBar .btn { padding: .2rem .6rem; font-size: var(--fs-xs); }
+.workDemo { display: flex; flex-direction: column; gap: .8rem; min-height: 250px; padding: .9rem 1rem 1rem; }
 
-/* Tool calls form a work timeline. The collapsed row explains the action and
-   its result; expansion is reserved for raw input and output. */
-.toolCard {
-  position: relative; min-width: 0; margin: 0; padding-left: 32px;
-  background: transparent;
+/* A work block folds the model's reasoning, tool calls and interim updates
+   behind one summary row. The same list serves three levels: closed shows the
+   row, peek the latest reasoning paragraph and tool call, full every step. */
+.workBlock {
+  --wb-node: 20px; --wb-gap: .6rem; --wb-ease: cubic-bezier(.2, .7, .2, 1);
+  min-width: 0; margin: .1rem 0 .35rem;
 }
-.toolCard::before {
-  content: ''; position: absolute; left: 7px; top: 0; bottom: 0; width: 1px; background: var(--line-2);
+.wbFold {
+  display: grid; grid-template-rows: 1fr; opacity: 1; visibility: visible;
+  transition: grid-template-rows .36s var(--wb-ease), opacity .28s var(--wb-ease), visibility 0s;
 }
+.wbClip { min-height: 0; overflow: hidden; }
+/* folded rows leave the tab order once the collapse has finished */
+.workBlock[data-level="closed"] > .wbBody,
+.workBlock[data-level="peek"] .wbStep:not(.isTail),
+.workBlock[data-level="peek"] .isTail .wbPara:not(:last-child) {
+  grid-template-rows: 0fr; opacity: 0; visibility: hidden;
+  transition: grid-template-rows .36s var(--wb-ease), opacity .2s var(--wb-ease), visibility 0s .36s;
+}
+.wbFold.wbEnter { animation: wbUnfold .36s var(--wb-ease); }
+@keyframes wbUnfold { from { grid-template-rows: 0fr; opacity: 0; } }
+
+.wbHead {
+  display: flex; align-items: center; gap: var(--wb-gap); width: calc(100% + .6rem); min-width: 0; min-height: 34px;
+  margin-left: -.3rem; padding: .3rem .55rem .3rem .3rem; border-radius: var(--r-3);
+  text-align: left; color: var(--txt-dim); font-size: 13.5px; transition: background-color .15s;
+}
+.wbHead:hover { background: color-mix(in srgb, var(--panel-3) 60%, transparent); }
+.wbHead:focus-visible, .wbMore:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.wbGlyph { flex: none; display: grid; place-items: center; width: var(--wb-node); height: var(--wb-node); color: var(--faint); }
+.wbSpin {
+  display: none; width: 13px; height: 13px; border-radius: 50%;
+  border: 1.6px solid color-mix(in srgb, var(--teal) 22%, transparent); border-top-color: var(--teal);
+  animation: wbSpin .9s linear infinite;
+}
+.workBlock.live .wbSpin { display: block; }
+.workBlock.live .wbCheck { display: none; }
+@keyframes wbSpin { to { transform: rotate(360deg); } }
+.wbHeadline { position: relative; flex: 1 1 auto; min-width: 0; height: 1.6em; overflow: hidden; }
+.wbLine { position: absolute; inset: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wbLine.wbEnter { animation: wbLineIn .34s var(--wb-ease); }
+.wbLine.wbLeave { animation: wbLineOut .34s var(--wb-ease) forwards; }
+@keyframes wbLineIn { from { transform: translateY(100%); opacity: 0; } }
+@keyframes wbLineOut { 60%, to { transform: translateY(-100%); opacity: 0; } }
+/* a light sweep across the text that is still being worked on */
+.workBlock.live .wbLine:not(.wbLeave), .toolCard.running .toolHead .nm {
+  background: linear-gradient(90deg, var(--txt-dim) 0 38%, var(--txt) 50%, var(--txt-dim) 62% 100%);
+  background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: wbShimmer 2.4s linear infinite;
+}
+.workBlock.live .wbLine.wbEnter { animation: wbLineIn .34s var(--wb-ease), wbShimmer 2.4s linear infinite; }
+@keyframes wbShimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.wbMeta {
+  flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.wbFailed { color: var(--crit); }
+.wbChevron { flex: none; display: grid; color: var(--faint); transform: rotate(-90deg); transition: transform .34s var(--wb-ease); }
+.workBlock[data-level="peek"] .wbChevron { transform: rotate(0deg); }
+.workBlock[data-level="full"] .wbChevron { transform: rotate(180deg); }
+
+.wbSteps { padding-top: .1rem; }
+/* per-message timestamps and actions belong to answers, not to steps */
+.wbSteps > .msgMeta, .wbSteps > .msgActions { display: none; }
+.workBlock[data-level="peek"] .wbSteps { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1rem); mask-image: linear-gradient(to bottom, transparent, #000 1rem); }
+.wbStepIn { position: relative; display: grid; grid-template-columns: var(--wb-node) minmax(0, 1fr); column-gap: var(--wb-gap); }
+.wbStepIn::before {
+  content: ''; position: absolute; left: calc(var(--wb-node) / 2 - .5px); top: 0; bottom: 0; width: 1px; background: var(--line-2);
+}
+.wbNode {
+  position: relative; z-index: 1; justify-self: center; width: 7px; height: 7px; margin-top: .72rem;
+  border: 1.5px solid var(--line-2); border-radius: 50%; background: var(--bg);
+}
+.wbUpdate .wbNode { width: 8px; height: 8px; border: 0; background: var(--teal); }
+.thinking { min-width: 0; padding: .32rem 0 .1rem; color: var(--txt-dim); font-size: 13px; line-height: 1.6; }
+.thinking p { margin: 0; padding-bottom: .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thinking .isHeading p { font-weight: var(--w-semi); }
+.thinking code { padding: .05rem .3rem; border-radius: var(--r-1); background: var(--panel-3); font: 12px var(--font-mono); }
+.wbUpdate .msg { padding: .3rem 0 .45rem; color: var(--txt); font-size: 13.5px; }
+.wbUpdate .msg.md p { margin: .3rem 0; }
+.wbGhost { overflow: hidden; pointer-events: none; animation: wbGhostOut .36s var(--wb-ease) forwards; }
+@keyframes wbGhostOut { to { height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; } }
+.wbFoot { padding: 0 0 .35rem calc(var(--wb-node) + var(--wb-gap)); }
+.wbFoot[hidden] { display: none; }
+.wbMore { margin-left: -.35rem; padding: .1rem .35rem; border-radius: var(--r-1); color: var(--faint); font-size: 12px; }
+.wbMore:hover { color: var(--teal); }
+
+/* A tool call reads as a verb and its target; the row opens on the raw
+   input and output. Inside a block its icon sits on the step line. */
+.toolCard { --wb-node: 20px; --wb-gap: .6rem; position: relative; min-width: 0; }
+.body > .toolCard { margin: .3rem 0; }
+.wbTool .toolCard { grid-column: 1 / -1; }
 .toolHead {
-  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto 10px;
-  align-items: start; gap: .65rem; width: 100%; min-width: 0; padding: .55rem .4rem .55rem 0;
-  border-radius: var(--r-2); text-align: left; color: var(--txt-dim); font: var(--w-normal) 12px var(--font-ui);
+  display: grid; grid-template-columns: var(--wb-node) minmax(0, 1fr) auto 10px; align-items: center;
+  column-gap: var(--wb-gap); width: 100%; min-width: 0; padding: .3rem .4rem .3rem 0; border-radius: var(--r-2);
+  text-align: left; color: var(--txt-dim); font: var(--w-normal) 13px var(--font-ui);
 }
-.toolHead:hover { background: color-mix(in srgb, var(--panel-3) 42%, transparent); }
-.toolDot {
-  position: absolute; left: -29px; top: .9rem; width: 9px; height: 9px; border: 2px solid var(--warn);
-  border-radius: 50%; background: var(--bg); box-shadow: 0 0 0 4px var(--warn-dim);
+/* the disc masks the step line behind the icon; hover skips the icon column */
+.toolHead::before {
+  content: ''; grid-column: 1; grid-row: 1; justify-self: center; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--bg);
 }
-.toolCard.done .toolDot { border-color: var(--ok); box-shadow: none; }
-.toolCard.error .toolDot { border-color: var(--crit); box-shadow: 0 0 0 4px var(--danger-bg); }
-.toolMain { display: grid; min-width: 0; gap: .18rem; }
-.toolTitle { display: flex; align-items: center; gap: .5rem; min-width: 0; font-family: var(--font-mono); }
+.toolHead:hover {
+  background: linear-gradient(90deg, transparent calc(var(--wb-node) + var(--wb-gap) / 2),
+    color-mix(in srgb, var(--panel-3) 60%, transparent) 0);
+}
+.toolHead:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
 .toolIcon {
-  flex: none; display: inline-block; width: 15px; height: 15px; background: var(--txt-dim);
+  position: relative; z-index: 1; grid-column: 1; grid-row: 1; justify-self: center;
+  width: 15px; height: 15px; background: var(--txt-dim); transition: background-color .2s;
   mask: url('/tool-icons/tool.svg') center / contain no-repeat;
 }
 .toolIcon[data-kind="read"] { mask-image: url('/tool-icons/file-text.svg'); }
@@ -1267,67 +1361,46 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .toolIcon[data-kind="search"] { mask-image: url('/tool-icons/search.svg'); }
 .toolIcon[data-kind="folder"] { mask-image: url('/tool-icons/folder.svg'); }
 .toolIcon[data-kind="web"] { mask-image: url('/tool-icons/world.svg'); }
-.toolHead .nm { flex: none; color: var(--tool-nm); font-weight: var(--w-semi); }
-.toolHead .sm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--txt-dim); }
-.toolResult { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
+.toolCard.running .toolIcon { background: var(--teal); }
+.toolCard.running .toolHead::before { animation: wbPulse 1.5s var(--wb-ease, ease-out) infinite; }
+@keyframes wbPulse {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--teal) 45%, transparent); }
+  to { box-shadow: 0 0 0 6px color-mix(in srgb, var(--teal) 0%, transparent); }
+}
+.toolCard.error .toolIcon { background: var(--crit); }
+.toolTitle { grid-column: 2; display: flex; align-items: baseline; gap: .45rem; min-width: 0; }
+.toolHead .nm { flex: none; color: var(--txt); font-weight: var(--w-med); }
+.toolHead .sm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--txt-dim); font: 12px var(--font-mono); }
+.toolResult {
+  grid-column: 3; max-width: 34ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.toolCard.error .toolResult { color: var(--crit); }
+.toolHead .caret { grid-column: 4; color: var(--faint); opacity: 0; transition: transform .15s, opacity .15s; }
+.toolHead:hover .caret, .toolHead:focus-visible .caret, .toolCard.open .toolHead .caret { opacity: 1; }
+.toolCard.open .toolHead .caret { transform: rotate(90deg); }
+.toolBody { display: none; margin: .1rem .4rem .6rem calc(var(--wb-node) + var(--wb-gap)); }
+.toolCard.open .toolBody { display: block; animation: scFade .2s ease-out; }
+.toolBody h6 { margin: .45rem 0 .25rem; color: var(--faint); font: var(--w-med) 10.5px var(--font-ui); }
+.toolBody pre {
+  margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-2);
+  padding: .6rem .7rem; overflow: auto; max-height: 320px; font: 11.5px/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wbFold, .wbHead, .wbChevron, .toolIcon, .toolHead .caret { transition: none; }
+  .wbFold.wbEnter, .wbLine.wbEnter, .wbSpin, .toolCard.running .toolHead::before, .toolCard.open .toolBody { animation: none; }
+  .wbLine.wbLeave, .wbGhost { display: none; }
+  .workBlock.live .wbLine, .toolCard.running .toolHead .nm { animation: none; background: none; color: inherit; }
+  .wbSpin { border-style: dashed; }
+}
+
+/* Chat previews are tool results the reader asked for. */
 .chatPreview { margin: 8px 12px 12px; max-width: 720px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: white; color: #333; }
 .chatPreview iframe { display: block; width: 100%; height: 360px; border: 0; }
 .chatPreview img { display: block; max-width: 100%; max-height: 520px; object-fit: contain; }
 .chatPreview details { border-top: 1px solid #ddd; padding: .5rem .75rem; font: 12px var(--font-ui); }
 .chatPreview summary { cursor: pointer; }
 .chatPreview pre { overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; font: 11px/1.5 var(--font-mono); }
-.toolHead .st { padding-top: .05rem; color: var(--faint); font: 10.5px var(--font-mono); }
-.toolCard.done .st { color: var(--ok); }
-.toolCard.error .st { color: var(--crit); }
-.toolHead .caret { margin-top: .22rem; transition: transform .15s; color: var(--faint); }
-.toolCard.open .toolHead .caret { transform: rotate(90deg); }
-.toolBody {
-  display: none; margin: 0 .4rem .75rem 0; padding: .15rem 0 0 .75rem;
-  border-left: 2px solid var(--line-2);
-}
-.toolCard.open .toolBody { display: block; }
-.toolBody h6 { margin: .45rem 0 .25rem; color: var(--faint); font: var(--w-med) 10.5px var(--font-ui); }
-.toolBody pre {
-  margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-2);
-  padding: .6rem .7rem; overflow: auto; max-height: 320px; font: 11.5px/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word;
-}
-
-/* The group reads as one quiet step in the chat's work timeline. */
-.toolGroup { margin: .55rem 0; min-width: 0; border-left: 2px solid var(--line-2); }
-.toolGroup[open] { border-left-color: var(--teal); }
-.toolGroup > summary {
-  position: relative; display: flex; align-items: center; flex-wrap: wrap;
-  column-gap: .65rem; row-gap: .25rem; min-height: 58px;
-  padding: .5rem 1rem .5rem 1.25rem; border-radius: 0 var(--r-2) var(--r-2) 0;
-  cursor: pointer; color: var(--txt-dim); font-size: 13px; list-style: none;
-}
-.toolGroup > summary::-webkit-details-marker { display: none; }
-.toolGroup > summary:hover { background: color-mix(in srgb, var(--panel-3) 45%, transparent); }
-.toolGroup > summary::before {
-  content: ''; position: absolute; left: -6px; top: calc(50% - 5px);
-  width: 10px; height: 10px; border-radius: 50%; background: var(--teal);
-}
-.toolGroup > summary::after {
-  content: ''; order: 2; flex: none; width: 7px; height: 7px; margin: 0 .25rem 0 auto;
-  border-right: 1.5px solid var(--txt-dim); border-bottom: 1.5px solid var(--txt-dim);
-  transform: rotate(45deg); transition: transform .15s;
-}
-.toolGroup[open] > summary::after { transform: rotate(225deg); }
-.toolGroup > summary:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
-.toolGroupCount { flex: none; color: var(--txt); font-size: 14px; font-weight: var(--w-semi); }
-.toolGroupPreview { display: flex; flex-wrap: wrap; gap: .15rem .5rem; min-width: 0; color: var(--txt-dim); }
-.toolGroupPreview::before { content: '·'; color: var(--faint); }
-.toolGroupPreview span { font: 12px var(--font-ui); white-space: nowrap; }
-.toolGroupPreview span + span::before { content: '·'; margin-right: .5rem; color: var(--faint); }
-.toolGroupThought {
-  order: 3; flex-basis: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; color: var(--txt-dim); font-size: 12.5px;
-}
-.toolGroupThought[hidden] { display: none; }
-.toolGroupCalls { padding: .3rem .7rem .6rem 1rem; }
-@media (prefers-reduced-motion: reduce) {
-  .toolGroup > summary::after { transition: none; }
-}
 
 /* Model-requested input is a first-class transcript block. It is rendered from
    a validated schema, never from model-authored HTML. */

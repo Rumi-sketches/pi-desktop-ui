@@ -84,7 +84,7 @@ class FakeElement {
     if (value.includes('class="toolHead"')) {
       const head = new FakeElement('button');
       head.className = 'toolHead';
-      for (const name of ['nm', 'sm', 'toolResult', 'st']) {
+      for (const name of ['toolIcon', 'nm', 'sm', 'toolResult']) {
         const part = new FakeElement('span');
         part.className = name;
         head.appendChild(part);
@@ -273,6 +273,7 @@ class FakeDocument {
  *   isActiveKey?: (key: string) => boolean,
  *   hljs?: any,
  *   localStorage?: any,
+ *   workStyle?: string,
  * }} [options]
  */
 function fixture({
@@ -283,6 +284,7 @@ function fixture({
   isActiveKey = () => true,
   hljs = null,
   localStorage = null,
+  workStyle = 'block',
 } = {}) {
   const document = new FakeDocument();
   const cache = createChatCache();
@@ -335,6 +337,7 @@ function fixture({
     requestHistoryPage,
     isActiveKey,
     onToolEvent(event) { toolEvents.push(event); },
+    getWorkStyle: () => workStyle,
   });
   controller.start();
   return {
@@ -675,86 +678,255 @@ test('tool cards summarize output and expose one expandable timeline entry', asy
   assert.equal(head.getAttribute('aria-expanded'), 'true');
 });
 
-test('four consecutive tool calls collapse into a group with individual expandable details', async () => {
+function workBlocks(view) {
+  return view.document.chat.querySelectorAll('.workBlock');
+}
+
+function headline(block) {
+  return block.querySelector('.wbHeadline').dataset.text;
+}
+
+test('reasoning and tool calls share one closed work block that names the current step', () => {
   const view = fixture();
-  for (const [index, name] of ['read', 'read', 'bash', 'edit', 'bash'].entries()) {
-    view.controller.applyStreamEvent({ kind: 'tool', id: `call-${index}`, name, status: 'start', args: {} }, view.state);
-    if (index === 2) assert.equal(view.document.chat.querySelector('.toolGroup'), null);
-  }
-  const group = view.document.chat.querySelector('.toolGroup');
-  assert.equal(group.open, undefined);
-  assert.equal(group.querySelectorAll('.toolCard').length, 5);
-  assert.equal(group.querySelector('.toolGroupCount').textContent, '5 tool calls');
-  assert.equal(group.querySelector('.toolGroupPreview').textContent, '2 reads2 shell commands1 edit');
-  assert.deepEqual(group.querySelectorAll('.toolIcon').map((icon) => icon.dataset.kind),
-    ['read', 'read', 'bash', 'edit', 'bash']);
-  view.controller.applyStreamEvent({ kind: 'tool', id: 'call-0', name: 'read', status: 'preview' }, view.state);
-  assert.equal(group.open, undefined);
-  const head = group.querySelector('.toolHead');
-  await head.emit('click');
-  assert.equal(head.getAttribute('aria-expanded'), 'true');
-  view.controller.applyStreamEvent({ kind: 'tool', id: 'call-4', name: 'bash', status: 'end', isError: true, output: 'failed' }, view.state);
-  assert.equal(group.open, undefined);
-  assert.equal(group.querySelectorAll('.toolHead').at(-1).getAttribute('aria-expanded'), 'true');
-  view.controller.applyStreamEvent({ kind: 'text', delta: 'Next step' }, view.state);
-  view.controller.applyStreamEvent({ kind: 'tool', id: 'call-5', name: 'read', status: 'start', args: {} }, view.state);
-  assert.equal(group.querySelectorAll('.toolCard').length, 5);
-  assert.equal(view.document.chat.querySelectorAll('.toolCard').length, 6);
+  view.state.responseStartedAt = Date.now() - 20_000;
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: '**Locating the bug**\n\nFirst look at ' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: '`sendBtn`.' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'read-1', name: 'read', status: 'start', summary: 'public/app.js', args: {} }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'bash-1', name: 'bash', status: 'start', summary: 'npm test', args: {} }, view.state);
+
+  const [block, ...others] = workBlocks(view);
+  assert.equal(others.length, 0);
+  assert.equal(block.dataset.level, 'closed');
+  assert.ok(block.classList.contains('live'));
+  assert.equal(block.querySelector('.wbHead').getAttribute('aria-expanded'), 'false');
+  assert.equal(headline(block), 'Locating the bug');
+  const paragraphs = block.querySelectorAll('.wbPara');
+  assert.deepEqual(paragraphs.map((paragraph) => paragraph.classList.contains('isHeading')), [true, false]);
+  assert.equal(paragraphs[1].querySelector('code').textContent, 'sendBtn');
+  assert.deepEqual(block.querySelectorAll('.toolCard .nm').map((name) => name.textContent), ['Reading', 'Running']);
+  assert.match(block.querySelector('.wbMeta').textContent, /^2 tools · 0:2\d$/, 'the clock matches the run timer');
+
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'read-1', name: 'read', status: 'end', output: 'one\ntwo' }, view.state);
+  assert.equal(block.querySelector('.toolCard .nm').textContent, 'Read');
 });
 
-test('expanded tool rows use distinct icons with a generic fallback', () => {
+test('a finished tool keeps the summary until the next step instead of falling back to Thinking', () => {
+  const view = fixture();
+  const event = (payload) => view.controller.applyStreamEvent(payload, view.state);
+  event({ kind: 'thinking', delta: 'Look at the docs first.' });
+  const [block] = workBlocks(view);
+  assert.equal(headline(block), 'Thinking');
+  event({ kind: 'tool', id: 'ls-1', name: 'ls', status: 'start', summary: 'docs', args: {} });
+  assert.equal(headline(block), 'Listing docs');
+  assert.deepEqual(block.querySelectorAll('.wbLine').map((line) => line.textContent), ['Thinking', 'Listing docs'],
+    'a new tool changes the summary once, straight to its verb and target');
+  event({ kind: 'tool', id: 'ls-1', name: 'ls', status: 'end', output: 'api.md' });
+  assert.equal(headline(block), 'Listed docs');
+  event({ kind: 'thinking', delta: 'Now the API reference.' });
+  assert.equal(headline(block), 'Listed docs');
+  event({ kind: 'tool', id: 'read-1', name: 'read', status: 'start', summary: 'docs/api.md', args: {} });
+  assert.equal(headline(block), 'Reading docs/api.md');
+});
+
+test('assistant text followed by more work becomes an interim update and leads the summary', () => {
+  const view = fixture();
+  view.controller.applyStreamEvent({ kind: 'thinking', delta: '**Reading the composer**' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'text', delta: 'Found the cause. Fixing it now.' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'edit-1', name: 'edit', status: 'start', args: {} }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'edit-1', name: 'edit', status: 'end', isError: true, output: 'no match' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'text', delta: 'Done.' }, view.state);
+  view.controller.finalizeStreamingMarkdown();
+
+  const [block] = workBlocks(view);
+  assert.equal(workBlocks(view).length, 1);
+  const update = block.querySelector('.wbUpdate .msg.assistant');
+  assert.equal(update.dataset.raw, 'Found the cause. Fixing it now.');
+  assert.equal(headline(block), 'Found the cause. Fixing it now.');
+  const answer = view.document.chat.querySelectorAll('.msg.assistant').at(-1);
+  assert.equal(answer.dataset.raw, 'Done.');
+  assert.equal(answer.closest('.workBlock'), null, 'the final answer stays in the flow');
+  assert.equal(block.querySelector('.wbFailed').textContent, ' · 1 failed');
+
+  view.controller.clearSegments();
+  assert.equal(block.classList.contains('live'), false);
+  assert.match(headline(block), /^Worked for \d+s$/);
+  assert.equal(block.querySelector('.wbMeta').textContent, '1 edit · 1 failed');
+});
+
+test('the summary row cycles closed, peek and full, and peek keeps only the latest steps', async () => {
+  const view = fixture();
+  const event = (payload) => view.controller.applyStreamEvent(payload, view.state);
+  event({ kind: 'thinking', delta: 'Start here.' });
+  event({ kind: 'tool', id: 'grep-1', name: 'grep', status: 'start', args: {} });
+  event({ kind: 'text', delta: 'Narrowed it down.' });
+  event({ kind: 'thinking', delta: 'First idea.\n\nSecond idea.' });
+  event({ kind: 'tool', id: 'read-1', name: 'read', status: 'start', args: {} });
+  const [block] = workBlocks(view);
+  const head = block.querySelector('.wbHead');
+  const more = block.querySelector('.wbMore');
+
+  await view.document.chat.emit('click', { target: head });
+  assert.equal(block.dataset.level, 'peek');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  const tail = block.querySelectorAll('.wbStep').filter((step) => step.classList.contains('isTail'));
+  assert.deepEqual(tail.map((step) => step.classList.contains('wbThought') ? 'thought' : 'tool'), ['thought', 'tool']);
+  assert.equal(tail[0].querySelectorAll('.wbPara').length, 2, 'peek hides the earlier paragraph with CSS, not by removal');
+  assert.equal(block.querySelector('.wbFoot').hidden, false);
+  assert.equal(more.textContent, 'Show all 5 steps');
+
+  await view.document.chat.emit('click', { target: more });
+  assert.equal(block.dataset.level, 'full');
+  assert.equal(more.textContent, 'Show less');
+  await view.document.chat.emit('click', { target: head });
+  assert.equal(block.dataset.level, 'closed');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+});
+
+test('tool rows use distinct icons with a generic fallback', () => {
   const view = fixture();
   for (const [index, name] of ['read', 'bash', 'edit', 'write', 'grep', 'custom_tool'].entries()) {
     view.controller.applyStreamEvent({ kind: 'tool', id: `icon-${index}`, name, status: 'start', args: {} }, view.state);
   }
-  const group = view.document.chat.querySelector('.toolGroup');
-  assert.deepEqual(group.querySelectorAll('.toolIcon').map((icon) => icon.dataset.kind),
+  const [block] = workBlocks(view);
+  assert.deepEqual(block.querySelectorAll('.toolIcon').map((icon) => icon.dataset.kind),
     ['read', 'bash', 'edit', 'write', 'search', 'other']);
+  assert.equal(block.querySelectorAll('.toolCard .nm').at(-1).textContent, 'custom_tool');
 });
 
-test('thoughts join tool groups and only assistant text breaks the sequence', () => {
+test('previews and error notices stay outside work blocks', () => {
   const view = fixture();
-  for (let index = 0; index < 4; index++) {
-    view.controller.applyStreamEvent({ kind: 'thinking', delta: `Step ${index}` }, view.state);
-    view.controller.applyStreamEvent({ kind: 'tool', id: `step-${index}`, name: 'read', status: 'start', args: {} }, view.state);
-  }
-  const group = view.document.chat.querySelector('.toolGroup');
-  assert.equal(group.querySelectorAll('.toolCard').length, 4);
-  assert.equal(group.querySelectorAll('.thinking').length, 4);
-  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Step 3');
-  view.controller.applyStreamEvent({ kind: 'thinking', delta: 'Working' }, view.state);
-  view.controller.applyStreamEvent({ kind: 'thinking', delta: ' more' }, view.state);
-  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Working more');
-  view.controller.applyStreamEvent({ kind: 'tool', id: 'step-4', name: 'edit', status: 'start', args: {} }, view.state);
-  assert.equal(group.querySelectorAll('.toolCard').length, 5);
-  view.controller.applyStreamEvent({ kind: 'thinking', delta: '**Checking\n repository state first**' }, view.state);
-  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Checking repository state first');
-  view.controller.applyStreamEvent({ kind: 'thinking', delta: ' **Planning preview cleanup**' }, view.state);
-  assert.equal(group.querySelector('.toolGroupThought').textContent,
-    'Checking repository state first Planning preview cleanup');
-  assert.equal(group.querySelectorAll('.thinking').at(-1).textContent,
-    'Checking\n repository state first Planning preview cleanup');
-  view.controller.applyStreamEvent({ kind: 'text', delta: 'Result' }, view.state);
-  view.controller.applyStreamEvent({ kind: 'tool', id: 'step-5', name: 'bash', status: 'start', args: {} }, view.state);
-  assert.equal(group.querySelectorAll('.toolCard').length, 5);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'read-1', name: 'read', status: 'start', args: {} }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'html-1', name: 'show_html', status: 'start', args: {} }, view.state);
+  view.controller.applyStreamEvent({ kind: 'error', message: 'retrying' }, view.state);
+  view.controller.applyStreamEvent({ kind: 'tool', id: 'read-2', name: 'read', status: 'start', args: {} }, view.state);
+
+  const cards = view.document.chat.querySelectorAll('.toolCard');
+  assert.equal(cards.find((card) => card.dataset.tool === 'show_html').closest('.workBlock'), null);
+  assert.equal(workBlocks(view).length, 2, 'a preview breaks the stretch of work');
+  assert.equal(workBlocks(view).filter((block) => block.classList.contains('live')).length, 1,
+    'only the newest block keeps working');
 });
 
-test('persisted assistant messages group across timestamps and thoughts', () => {
+test('history rebuilds one work block per stretch with updates and a timed summary', () => {
   const view = fixture();
-  const messages = Array.from({ length: 5 }, (_, index) => ({
-    role: 'assistant', timestamp: '2026-09-23T19:25:00Z',
-    blocks: [
-      { type: 'thinking', text: `Checking step ${index}` },
-      { type: 'tool', id: `history-${index}`, name: 'edit', status: 'end', output: 'done' },
+  const at = (seconds) => new Date(Date.UTC(2026, 9, 18, 10, 0, seconds)).toISOString();
+  view.controller.renderHistory({
+    key: view.key,
+    replace: true,
+    messages: [
+      { role: 'user', text: 'Fix it', timestamp: at(0) },
+      { role: 'assistant', timestamp: at(5), blocks: [
+        { type: 'text', text: 'Checking the **logs**.' },
+        { type: 'tool', id: 'h-read', name: 'read', status: 'end', output: 'ok' },
+      ] },
+      { role: 'assistant', timestamp: at(65), blocks: [
+        { type: 'thinking', text: '**Planning the fix**' },
+        { type: 'tool', id: 'h-edit', name: 'edit', status: 'end', output: 'done' },
+      ] },
+      { role: 'assistant', timestamp: at(70), blocks: [{ type: 'text', text: 'Finished.' }] },
     ],
-  }));
-  messages.push({ role: 'assistant', timestamp: '2026-09-23T19:26:00Z', blocks: [{ type: 'text', text: 'Finished.' }] });
-  view.controller.renderHistory({ key: 'test', messages, replace: true });
-  const group = view.document.chat.querySelector('.toolGroup');
-  assert.equal(group.querySelectorAll('.toolCard').length, 5);
-  assert.equal(group.querySelectorAll('.thinking').length, 5);
-  assert.equal(group.querySelector('.toolGroupThought').textContent, 'Checking step 4');
-  assert.equal(view.document.chat.querySelector('.msg.assistant').dataset.raw, 'Finished.');
+  });
+
+  const blocks = workBlocks(view);
+  assert.equal(blocks.length, 1);
+  const [block] = blocks;
+  assert.equal(block.classList.contains('live'), false);
+  assert.equal(headline(block), 'Worked for 1m 05s');
+  assert.equal(block.querySelector('.wbMeta').textContent, '1 read · 1 edit');
+  assert.equal(block.querySelector('.wbUpdate .msg').dataset.raw, 'Checking the **logs**.');
+  assert.equal(block.querySelectorAll('.msgActions').length, 0, 'interim updates carry no answer actions');
+  assert.equal(block.querySelectorAll('.msgMeta').length, 2, 'work messages keep their timestamps inside the block');
+  const answer = view.document.chat.querySelectorAll('.msg.assistant').at(-1);
+  assert.equal(answer.dataset.raw, 'Finished.');
+  assert.equal(answer.closest('.workBlock'), null);
+  assert.ok(answer.parentNode.querySelector('.msgActions'));
+});
+
+test('the flow style leaves updates in the chat and folds each stretch of work on its own', () => {
+  const view = fixture({ workStyle: 'flow' });
+  const event = (payload) => view.controller.applyStreamEvent(payload, view.state);
+  event({ kind: 'thinking', delta: '**Locating the bug**\n\nStart with the composer.' });
+  event({ kind: 'tool', id: 'grep-1', name: 'grep', status: 'start', summary: 'sendBtn', args: {} });
+  const [first] = workBlocks(view);
+  assert.equal(headline(first), 'Searching sendBtn', 'the latest named step leads while the stretch is live');
+  event({ kind: 'tool', id: 'grep-1', name: 'grep', status: 'end', output: '3 matches' });
+  assert.equal(headline(first), 'Searched sendBtn', 'a finished tool does not hand the row back to an older heading');
+  event({ kind: 'thinking', delta: 'Three places set it.' });
+  assert.equal(headline(first), 'Searched sendBtn', 'reasoning without a heading leaves the row alone');
+  event({ kind: 'text', delta: 'Found the cause. Fixing it now.' });
+  assert.equal(first.classList.contains('live'), false, 'an update ends the stretch before it');
+  assert.equal(headline(first), 'Locating the bug');
+  assert.match(first.querySelector('.wbMeta').textContent, /^1 tool · \d+s$/);
+  event({ kind: 'tool', id: 'edit-1', name: 'edit', status: 'start', summary: 'app.js', args: {} });
+  event({ kind: 'tool', id: 'edit-1', name: 'edit', status: 'end', isError: true, output: 'no match' });
+  event({ kind: 'text', delta: 'Done.' });
+  view.controller.finalizeStreamingMarkdown();
+  view.controller.clearSegments();
+
+  const blocks = workBlocks(view);
+  assert.equal(blocks.length, 2);
+  const update = view.document.chat.querySelectorAll('.msg.assistant')[0];
+  assert.equal(update.dataset.raw, 'Found the cause. Fixing it now.');
+  assert.equal(update.closest('.workBlock'), null, 'the update stays in the flow');
+  assert.equal(view.document.chat.querySelectorAll('.wbUpdate').length, 0);
+  const order = [...update.parentNode.children].filter((node) => node.classList.contains('workBlock') || node.classList.contains('msg'));
+  assert.deepEqual(order.map((node) => node.classList.contains('workBlock') ? 'block' : node.dataset.raw),
+    ['block', 'Found the cause. Fixing it now.', 'block', 'Done.']);
+  assert.equal(headline(blocks[1]), 'Edited app.js', 'a single tool names the stretch');
+  assert.match(blocks[1].querySelector('.wbMeta').textContent, /^\d+s · 1 failed$/, 'the headline already names the tool');
+});
+
+test('a flow history rebuild splits work at the updates and keeps them in the chat', () => {
+  const view = fixture({ workStyle: 'flow' });
+  const at = (seconds) => new Date(Date.UTC(2026, 9, 18, 10, 0, seconds)).toISOString();
+  view.controller.renderHistory({
+    key: view.key,
+    replace: true,
+    messages: [
+      { role: 'user', text: 'Fix it', timestamp: at(0) },
+      { role: 'assistant', timestamp: at(5), blocks: [
+        { type: 'tool', id: 'h-ls', name: 'ls', status: 'end', output: 'ok' },
+        { type: 'text', text: 'Checking the **logs**.' },
+        { type: 'tool', id: 'h-read', name: 'read', status: 'end', output: 'ok' },
+      ] },
+      { role: 'assistant', timestamp: at(65), blocks: [
+        { type: 'thinking', text: '**Planning the fix**' },
+        { type: 'tool', id: 'h-edit', name: 'edit', status: 'end', output: 'done' },
+      ] },
+      { role: 'assistant', timestamp: at(70), blocks: [{ type: 'text', text: 'Finished.' }] },
+    ],
+  });
+
+  const blocks = workBlocks(view);
+  assert.equal(blocks.length, 2);
+  assert.equal(headline(blocks[0]), 'Listed');
+  assert.equal(headline(blocks[1]), 'Planning the fix', 'the stretch after an update spans the next message');
+  assert.equal(blocks[1].querySelector('.wbMeta').textContent, '2 tools · 1m 05s');
+  const texts = view.document.chat.querySelectorAll('.msg.assistant');
+  assert.deepEqual(texts.map((text) => text.closest('.workBlock') === null), [true, true]);
+});
+
+test('a running history rebuild keeps its last block working until the run ends', () => {
+  const view = fixture();
+  view.state.responseStartedAt = Date.now() - 12_000;
+  view.controller.renderHistory({
+    key: view.key,
+    replace: true,
+    messages: [{ role: 'user', text: 'Go' }],
+    live: [
+      { type: 'thinking', text: '**Scanning files**' },
+      { type: 'tool', tool: { id: 'live-1', name: 'ls', status: 'start', args: {} } },
+    ],
+  });
+  const [block] = workBlocks(view);
+  assert.ok(block.classList.contains('live'));
+  assert.equal(headline(block), 'Scanning files');
+  assert.match(block.querySelector('.wbMeta').textContent, /^1 tool · 0:1\d$/);
+
+  view.state.responseStartedAt = null; // the app clears the run start before settling the view
+  view.controller.clearSegments();
+  assert.equal(block.classList.contains('live'), false);
+  assert.match(headline(block), /^Worked for 1\ds$/);
 });
 
 test('live mutations follow the reader only when already at the bottom', () => {

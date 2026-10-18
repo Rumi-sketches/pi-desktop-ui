@@ -2,6 +2,11 @@ import { withSessionKey } from './transport.js';
 
 const PREVIEW_TOOLS = { show_html: 'html', show_image: 'image' };
 
+/** Whether a tool's result is shown to the reader as a chat preview. */
+export function isPreviewTool(name) {
+  return Object.hasOwn(PREVIEW_TOOLS, name ?? '');
+}
+
 /**
  * Add a finished tool's preview without embedding its input in the event stream.
  * @param {HTMLElement} card
