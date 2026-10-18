@@ -1338,7 +1338,7 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .thinking p { margin: 0; padding-bottom: .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .thinking .isHeading p { font-weight: var(--w-semi); }
 .thinking code { padding: .05rem .3rem; border-radius: var(--r-1); background: var(--panel-3); font: 12px var(--font-mono); }
-.wbUpdate .msg { padding: .3rem 0 .45rem; color: var(--txt); font-size: 13.5px; }
+.wbUpdate .msg { padding: .3rem 0 .45rem; color: var(--txt-prose); font-size: 13.5px; }
 .wbUpdate .msg.md p { margin: .3rem 0; }
 .wbGhost { overflow: hidden; pointer-events: none; animation: wbGhostOut .36s var(--wb-ease) forwards; }
 @keyframes wbGhostOut { to { height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; } }
