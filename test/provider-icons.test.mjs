@@ -17,19 +17,19 @@ test('every provider record documents an official source and usage constraint', 
   }
 });
 
-test('Claude, OpenAI and GLM use the local Lobe Icons package', () => {
-  for (const name of ['anthropic', 'openai', 'glm']) {
-    const record = PROVIDER_ICONS[name];
-    assert.equal(record.icon.kind, 'brand');
+test('every known maker uses the local Lobe Icons package', () => {
+  for (const [name, record] of Object.entries(PROVIDER_ICONS)) {
+    assert.equal(record.icon.kind, 'brand', name);
     assert.match(record.source, /lobehub\/lobe-icons/);
-    assert.match(record.icon.svg, /\/vendor\/@lobehub\/icons-static-png\/(light|dark)\//);
-    assert.match(record.icon.monoSvg, /\/vendor\/@lobehub\/icons-static-png\/(light|dark)\//);
+    const asset = /\/(vendor\/@lobehub\/icons-static-png\/(light|dark)\/|provider-logos\/[a-z]+-(light|dark)\.png)/;
+    assert.match(record.icon.svg, asset, name);
+    assert.match(record.icon.monoSvg, asset, name);
   }
 });
 
 test('OpenRouter uses transparent PNGs in both display modes', () => {
   const record = PROVIDER_ICONS.openrouter;
-  const icon = providerIcon('openrouter', 'model');
+  const icon = providerIcon('openrouter');
   assert.equal(record.icon.kind, 'brand');
   assert.equal(icon.id, 'openrouter');
   assert.equal(icon.mono, 'image');
@@ -51,18 +51,30 @@ test('provider and model aliases resolve without stealing known providers', () =
   assert.equal(providerIcon('omnikey', 'grok-4.5').id, 'xai');
 });
 
-test('only marks with verified permission use a brand asset', () => {
-  const branded = Object.entries(PROVIDER_ICONS)
-    .filter(([, record]) => record.icon.kind === 'brand')
-    .map(([name]) => name);
-  assert.deepEqual(branded, ['anthropic', 'openai', 'glm', 'xai', 'openrouter']);
+test('aggregators never lend their mark to the models they route', () => {
+  assert.equal(providerIcon('openrouter', 'z-ai/glm-5.3').id, 'glm');
+  assert.equal(providerIcon('openrouter', 'xiaomi/mimo-v2-flash').id, 'mimo');
+  assert.match(providerIconHtml('openrouter', 'xiaomi/mimo-v2-flash'), /\/provider-logos\/mimo-light\.png/);
+  // A Xiaomi plan names the company; its MiMo models keep the model mark.
+  assert.equal(providerIcon('xiaomi-token-plan-ams').id, 'xiaomi');
+  assert.equal(providerIcon('xiaomi-token-plan-ams', 'mimo-v2.6-pro').id, 'mimo');
+  assert.equal(providerIcon('openrouter', 'qwen/qwen3-coder').id, 'qwen');
+  assert.equal(providerIcon('openrouter', 'minimax/minimax-m2').id, 'minimax');
+  assert.equal(providerIcon('openrouter', 'google/gemini-3-pro').id, 'google');
+  assert.equal(providerIcon('openrouter', 'anthropic/claude-sonnet-5').id, 'anthropic');
+  assert.equal(providerIcon('openrouter', 'mistralai/devstral').id, 'mistral');
+  assert.equal(providerIcon('openrouter', 'acme/unknown-model').id, '_');
+  assert.equal(providerIcon('openrouter', 'openrouter/auto').id, 'openrouter');
+  assert.equal(providerIcon('github-copilot', 'gpt-5.6').id, 'openai');
+  // Without a model the provider itself is shown, as in the Settings list.
+  assert.equal(providerIcon('openrouter').id, 'openrouter');
 });
 
 test('unknown providers stay neutral and branded PNGs expose both modes', () => {
   const unknown = providerIcon('acme', 'model');
   assert.equal(unknown.id, '_');
   assert.equal(unknown.kind, 'neutral');
-  const html = providerIconHtml('openrouter', 'model', 'lg fixed');
+  const html = providerIconHtml('openrouter', '', 'lg fixed');
   assert.match(html, /data-provider-icon="openrouter"/);
   assert.match(html, /data-mono="image"/);
   assert.match(html, /logo-brand/);
@@ -77,6 +89,7 @@ test('all UI surfaces import the one map and the browser preloads its served mod
   assert.match(appSource, /import \{ providerIconHtml \} from '.\/provider-icons\.js';/);
   assert.doesNotMatch(appSource, /const LOGOS\s*=/);
   assert.match(appSource, /h\.innerHTML = providerIconHtml\(s\.provider, s\.model\)/);
+  assert.match(appSource, /head\.innerHTML = `\$\{providerIconHtml\(prov\)\}/);
   assert.match(settingsSource, /providerIconHtml\(p\.id\)/);
   assert.match(appSource, /classList\.add\('icon-failed'\)/);
   assert.match(cssSource, /\.logo\.icon-failed \.logo-neutral/);

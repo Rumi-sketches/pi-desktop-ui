@@ -324,6 +324,12 @@ const PAGE_ASSETS = {
   ].map((name) => [`/tool-icons/${name}.svg`, {
     file: `tool-icons/${name}.svg`, type: "image/svg+xml",
   }])),
+  // Provider marks cropped from Lobe Icons assets (see public/provider-icons.js).
+  ...Object.fromEntries([
+    "mimo-light", "mimo-dark", "xiaomi-light", "xiaomi-dark",
+  ].map((name) => [`/provider-logos/${name}.png`, {
+    file: `provider-logos/${name}.png`, type: "image/png",
+  }])),
   // The app mark, for the tab and for whatever pins the page. `/favicon.ico`
   // is not in the HTML: browsers ask for it on their own, and answering 404 to
   // a request nobody made is still a 404 in the console.

@@ -46,15 +46,20 @@ Mini-ADR del progetto. Una voce per decisione: contesto in una riga, decisione, 
 - **Perché**: il server deve poter annullare un solo elemento, mantenere separate le chat e non
   dipendere da campi privati di pi.
 
-## I marchi dubbi usano il simbolo neutro
+## Ogni modello mostra il logo del suo produttore
 
-- **Contesto**: alcune fonti pubblicano un logo ma richiedono approvazione o vietano modifiche e
-  ricolorazioni; Simple Icons non distribuisce più l'icona OpenAI.
-- **Decisione**: `public/provider-icons.js` registra fonte, termini e vincolo per ogni provider. Un
-  asset di marchio appare solo quando i termini ne consentono chiaramente questo uso. Negli altri
-  casi, e nella modalità mono dei marchi non modificabili, la UI usa il simbolo neutro. Gli alias
-  passano dalla stessa mappa. OpenAI non dipende da Simple Icons.
-- **Perché**: un logo riconoscibile non implica il permesso di incorporarlo o alterarlo.
+- **Contesto**: con il simbolo neutro per i marchi dai termini restrittivi, metà dei modelli nel
+  selettore non era riconoscibile a colpo d'occhio, e i modelli serviti da OpenRouter ne
+  ereditavano il logo.
+- **Decisione**: `public/provider-icons.js` associa a ogni produttore noto il suo logo dal pacchetto
+  locale Lobe Icons (MIT), servito da `/vendor` senza CDN. Il logo identifica il produttore del
+  modello in un'app locale: è un uso nominativo, non un'associazione con il marchio. I provider
+  marcati `aggregator` (OpenRouter, GitHub Copilot, Groq, Ollama) mostrano il proprio logo solo per
+  sé stessi; i modelli che servono prendono quello del produttore dall'id del modello. Il simbolo
+  neutro resta per i produttori sconosciuti e per gli asset che non si caricano. Gli alias passano
+  dalla stessa mappa.
+- **Perché**: riconoscere subito il modello serve a chi usa l'app più di una prudenza legale pensata
+  per prodotti distribuiti; e il marchio di chi instrada un modello non ne identifica il produttore.
 
 ## Lavoro server scatenato da input utente ha un budget e un abort
 
