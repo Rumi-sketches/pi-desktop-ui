@@ -119,6 +119,7 @@
      because [data-theme] and :root are the same element (<html>) */
   --teal-dim: color-mix(in srgb, var(--teal) 12%, transparent);
   --accent-line: color-mix(in srgb, var(--teal) 36%, transparent);
+  --txt-prose: color-mix(in srgb, var(--txt) 75%, var(--bg)); /* long assistant text */
   --crit-line: color-mix(in srgb, var(--crit) 36%, transparent);
   --warn-dim: color-mix(in srgb, var(--warn) 14%, transparent);
   --danger-bg: color-mix(in srgb, var(--crit) 16%, var(--panel));
@@ -738,30 +739,48 @@ body.sb-closed #chat { max-width: 1100px; }
 .turn .body { min-width: 0; }
 .who { display: flex; align-items: center; gap: .35rem; font: var(--w-semi) .66rem var(--font-ui); color: var(--faint); text-transform: uppercase; letter-spacing: .09em; margin-bottom: .15rem; }
 .who .mprov { color: var(--txt-faint); }
-/* user: right-aligned pill, no avatar and no name — the shape alone says who spoke */
-.turn.user { display: flex; justify-content: flex-end; }
-.turn.user .body { display: flex; flex-direction: column; align-items: flex-end; max-width: 74%; }
+/* user: a quoted line with an accent bar, left-aligned like the reply, so the
+   eye reads one column; no avatar and no name — the bar alone says who spoke */
+.turn.user .body { display: flex; flex-direction: column; align-items: flex-start; }
 .turn.user .who { display: none; }
 .turn.user .msg {
-  background: var(--panel-3); border: 1px solid var(--line); border-radius: var(--r-4);
-  padding: .45rem .75rem; color: var(--txt); line-height: 1.5;
+  border-left: 2px solid var(--teal); padding: .1rem 0 .1rem .9rem;
+  color: var(--txt-dim); line-height: 1.6;
 }
-.turn.user .msgActions { justify-content: flex-end; }
+.turn.user .msgMeta, .turn.user .msgActions { padding-left: calc(.9rem + 2px); }
 .msg { min-width: 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.62; }
-.msg.md { white-space: normal; }
+/* assistant prose: body text a step below full white, headings and bold at
+   full strength, so hierarchy comes from contrast as well as size */
+.msg.md { white-space: normal; line-height: 1.75; color: var(--txt-prose); }
 .msg.md > *:first-child { margin-top: 0; }
 .msg.md > *:last-child { margin-bottom: 0; }
-.msg.md p { margin: .5rem 0; }
+.msg.md p { margin: 1em 0; }
+.msg.md :is(h1, h2, h3, h4, h5, h6) { margin: 1.7em 0 1em; color: var(--txt); font-weight: var(--w-semi); line-height: 1.35; }
+.msg.md :is(h1, h2, h3, h4, h5, h6) + * { margin-top: .55em; }
+.msg.md h1 { font-size: 1.25em; }
+.msg.md h2 { font-size: 1.08em; padding-bottom: .35em; border-bottom: 1px solid var(--line); }
+.msg.md h3 { font-size: .8em; margin-top: 1.4em; color: var(--txt-dim); text-transform: uppercase; letter-spacing: .07em; }
+.msg.md :is(h4, h5, h6) { font-size: 1em; }
+.msg.md strong { color: color-mix(in srgb, var(--txt) 88%, var(--bg)); font-weight: var(--w-semi); }
+.msg.md :is(ul, ol) { margin: 1em 0; padding-left: 1.3em; }
+.msg.md li + li { margin-top: .4em; }
+.msg.md li > p { margin: .4em 0; }
+/* nested lists hang on a thin guide line, so sub-points read as one group */
+.msg.md li > :is(ul, ol) { margin: .4em 0 .1em -.6em; padding-left: 1.6em; border-left: 1px solid var(--line); }
+.msg.md ul > li::marker { color: var(--teal); }
+.msg.md ol > li::marker { color: var(--teal); font-family: var(--font-mono); font-size: .9em; }
+.msg.md :is(blockquote, li, details, .mdAlert) > :first-child { margin-top: 0; }
+.msg.md :is(blockquote, li, details, .mdAlert) > :last-child { margin-bottom: 0; }
 .msg.md .katex { font-size: 1.08em; overflow-wrap: normal; }
 .msg.md .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: .3rem 0; }
-.msg.md pre { max-width: 100%; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-3); padding: .8rem .9rem; overflow-x: auto; white-space: pre; }
+.msg.md pre { margin: 1em 0; max-width: 100%; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-3); padding: .8rem .9rem; overflow-x: auto; white-space: pre; }
 .msg.md code { font-family: var(--font-mono); font-size: .85em; }
 .msg.md :not(pre) > code { background: var(--panel-2); padding: .08rem .35rem; border-radius: var(--r-1); }
-.msg.md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: .6rem 0; }
+.msg.md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 1em 0; }
 .msg.md th, .msg.md td { border: 1px solid var(--line); padding: .3rem .65rem; }
 .msg.md th { background: var(--panel-2); font-weight: var(--w-semi); text-align: left; }
 .msg.md tbody tr:nth-child(even) { background: color-mix(in srgb, var(--panel-2) 42%, transparent); }
-.msg.md blockquote { border-left: 2px solid var(--line-2); margin: .6rem 0; padding-left: .8rem; color: var(--txt-dim); }
+.msg.md blockquote { border-left: 2px solid var(--line-2); margin: 1em 0; padding-left: .8rem; color: var(--txt-dim); }
 .msg.md mark {
   padding: .04em .2em; border-radius: var(--r-1); color: inherit;
   background: color-mix(in srgb, var(--teal) 24%, transparent);
@@ -774,7 +793,7 @@ body.sb-closed #chat { max-width: 1100px; }
 .msg.md .mdAlertLabel { display: block; margin-bottom: .2rem; color: var(--teal); font-weight: var(--w-semi); }
 .msg.md .mdAlert-warning, .msg.md .mdAlert-caution { border-color: color-mix(in srgb, var(--crit) 48%, var(--line)); background: var(--danger-bg); }
 .msg.md .mdAlert-warning .mdAlertLabel, .msg.md .mdAlert-caution .mdAlertLabel { color: var(--crit); }
-.msg.md details { margin: .6rem 0; padding: .45rem .65rem; border: 1px solid var(--line); border-radius: var(--r-2); }
+.msg.md details { margin: 1em 0; padding: .45rem .65rem; border: 1px solid var(--line); border-radius: var(--r-2); }
 .msg.md summary { cursor: pointer; color: var(--txt-dim); font-weight: var(--w-semi); }
 .msg.md a { color: var(--teal); }
 .msgMeta {
@@ -782,7 +801,6 @@ body.sb-closed #chat { max-width: 1100px; }
   color: var(--txt-faint); font: var(--w-normal) var(--fs-xs) var(--font-ui);
   line-height: 1.2; white-space: nowrap;
 }
-.turn.user .msgMeta { justify-content: flex-end; }
 .msgMeta .runDuration { color: var(--faint); }
 .msg img { max-width: 220px; border-radius: var(--r-3); display: block; margin: .4rem 0; border: 1px solid var(--line); }
 /* attached images: compact thumbnails ABOVE the message text */
@@ -1320,7 +1338,7 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 .thinking p { margin: 0; padding-bottom: .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .thinking .isHeading p { font-weight: var(--w-semi); }
 .thinking code { padding: .05rem .3rem; border-radius: var(--r-1); background: var(--panel-3); font: 12px var(--font-mono); }
-.wbUpdate .msg { padding: .3rem 0 .45rem; color: var(--txt); font-size: 13.5px; }
+.wbUpdate .msg { padding: .3rem 0 .45rem; color: var(--txt-prose); font-size: 13.5px; }
 .wbUpdate .msg.md p { margin: .3rem 0; }
 .wbGhost { overflow: hidden; pointer-events: none; animation: wbGhostOut .36s var(--wb-ease) forwards; }
 @keyframes wbGhostOut { to { height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; } }
@@ -1636,7 +1654,6 @@ pre.raw { background: var(--code-bg); border: 1px solid var(--line); border-radi
 
   /* chat area */
   #chat { padding: .9rem .8rem 1rem; gap: .9rem; }
-  .turn.user .body { max-width: 86%; }
   #hero { padding: 1.6rem 0 1.2rem; }
   #hero h1 { font-size: 1.6rem; }
   .msg img { max-width: 100%; }
