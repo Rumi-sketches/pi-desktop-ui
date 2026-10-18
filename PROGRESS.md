@@ -127,6 +127,12 @@ Turning the web UI into a desktop app, without giving up the terminal + browser 
   bootstrap reloads, keeps the turn open until a valid answer arrives and leaves completed forms in
   the transcript. The response timer starts per prompt, remains visible through thinking and tool
   calls, and pauses while a form waits for input.
+- **Model work folds into one summary row.** Reasoning, tool calls and the short updates the model
+  writes between them share a work block per stretch of a turn. The row names the current step while
+  streaming and the duration and tool breakdown afterwards; it opens on the latest step, then on
+  every step. The final answer stays in the flow. Settings → Theme switches to a second style that
+  leaves the updates in the chat and folds each stretch between them on its own, with a preview
+  that plays a scripted run through the same code.
 - **Provider presentation is consistent.** The model menu uses the maintained PNG icon set where its
   terms allow it and falls back to the neutral mark for unsupported or restricted brands.
 
