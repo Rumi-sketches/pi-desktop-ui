@@ -1056,7 +1056,8 @@ function renderModelMenu() {
     const head = document.createElement('button');
     head.type = 'button';
     head.className = 'dd-item' + (hasSel ? ' hasSel' : '');
-    head.innerHTML = `${providerIconHtml(prov, hasSel ? activeChatState().model.id : list[0]?.id ?? '')}<span class="col">
+    // The group head names the provider, so its icon must not borrow a model's.
+    head.innerHTML = `${providerIconHtml(prov)}<span class="col">
       <span>${esc(prov)}</span>
       <span class="desc">${list.length} model${list.length === 1 ? '' : 's'}${hasSel ? ' · in use' : ''}</span></span>
       <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>`;
