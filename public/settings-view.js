@@ -19,9 +19,12 @@ import { providerIconHtml } from './provider-icons.js';
  * @property {(id: string) => void} applyTheme
  * @property {(id: string) => void} applyAccent
  * @property {(id: string) => void} applyLogoStyle
+ * @property {(id: string) => void} [applyWorkStyle]
+ * @property {(root: HTMLElement, style: string) => void} [playWorkStyleDemo]
  * @property {any[]} themes
  * @property {any[]} accents
  * @property {any[]} logoStyles
+ * @property {any[]} [workStyles]
  * @property {any} agentInputs
  * @property {() => string|null} getRenderedChatKey
  * @property {(collapsed: boolean) => void} setSidebarCollapsed
@@ -51,9 +54,12 @@ export function createSettingsView({
   applyTheme,
   applyAccent,
   applyLogoStyle,
+  applyWorkStyle = () => {},
+  playWorkStyleDemo = () => {},
   themes: THEMES,
   accents: ACCENTS,
   logoStyles: LOGO_STYLES,
+  workStyles: WORK_STYLES = [],
   agentInputs,
   getRenderedChatKey,
   setSidebarCollapsed,
@@ -419,6 +425,17 @@ async function renderSettings() {
           <span class="prev">${['anthropic', 'openai', 'glm', 'openrouter'].map((p) => providerIconHtml(p, '', 'lg fixed')).join('')}</span>
           <span class="nm">${esc(s.name)}</span>
         </button>`).join('')}</div>
+
+      ${WORK_STYLES.length ? `<h4 style="margin:1rem 0 .4rem;font-size:.82rem;color:var(--teal)">Model work</h4>
+      <div class="themeGrid">${WORK_STYLES.map((s) => `
+        <button class="themeCard workStyleCard" id="workStyle_${s.id}" data-w="${s.id}">
+          <span class="nm">${esc(s.name)}</span>
+          <span class="hint">${esc(s.hint)}</span>
+        </button>`).join('')}</div>
+      <div class="workDemoCard">
+        <div class="workDemoBar"><span>Preview</span><button type="button" class="btn outline" id="workDemoReplay">Replay</button></div>
+        <div class="workDemo" id="workDemo"></div>
+      </div>` : ''}
     </div>
 
     <div class="sec" id="sec-usage">
@@ -882,6 +899,23 @@ async function renderSettings() {
   body.querySelectorAll('.accentDot[data-a]').forEach((b) => b.addEventListener('click', () => applyAccent(b.dataset.a)));
   body.querySelectorAll('.logoStyleCard').forEach((b) => b.addEventListener('click', () => applyLogoStyle(b.dataset.l)));
   applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
+  const workDemo = $('workDemo');
+  const playWorkDemo = () => { if (workDemo) playWorkStyleDemo(workDemo, document.documentElement.dataset.work); };
+  body.querySelectorAll('.workStyleCard').forEach((b) => b.addEventListener('click', () => {
+    applyWorkStyle(b.dataset.w);
+    playWorkDemo();
+  }));
+  $('workDemoReplay')?.addEventListener('click', playWorkDemo);
+  applyWorkStyle(document.documentElement.dataset.work);
+  // The preview plays once it scrolls into view, not while another section is read.
+  if (workDemo && typeof IntersectionObserver === 'function') {
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      playWorkDemo();
+    });
+    observer.observe(workDemo);
+  }
   applyTheme(document.documentElement.dataset.theme);
   applyAccent(localStorage.getItem('piAccent') || '');
 

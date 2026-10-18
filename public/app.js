@@ -23,6 +23,7 @@ import { createTransport } from './transport.js';
 import { providerIconHtml } from './provider-icons.js';
 import { createAgentInputs } from './agent-inputs.js';
 import { createSettingsView } from './settings-view.js';
+import { playWorkStyleDemo } from './work-style-demo.js';
 import { createTerminalView } from './terminal-view.js';
 import { createDebateView } from './debate-view.js';
 import { readAttachmentFiles, composeAttachments } from './attachments.js';
@@ -302,6 +303,7 @@ const chatView = createChatView({
   }),
   isActiveKey: (key) => key === activeChatKey(),
   onToolEvent: taskFromTool,
+  getWorkStyle: () => document.documentElement.dataset.work,
 });
 chatView.start();
 const chatScroller = $('chatWrap');
@@ -344,6 +346,20 @@ function applyLogoStyle(id) {
   $$('.logoStyleCard').forEach((c) => c.classList.toggle('sel', c.dataset.l === v));
 }
 applyLogoStyle(localStorage.getItem('piLogoStyle') || 'brand');
+
+// how the model's work folds in the chat (see work-blocks.js); the chat reads
+// it while rendering, and returning to a chat rebuilds it from history
+const WORK_STYLES = [
+  { id: 'block', name: 'One block', hint: 'Updates fold in as chapters' },
+  { id: 'flow', name: 'Updates in the flow', hint: 'Each stretch of work folds on its own' },
+];
+function applyWorkStyle(id) {
+  const v = WORK_STYLES.some((s) => s.id === id) ? id : 'block';
+  document.documentElement.dataset.work = v;
+  localStorage.setItem('piWorkStyle', v);
+  $$('.workStyleCard').forEach((c) => c.classList.toggle('sel', c.dataset.w === v));
+}
+applyWorkStyle(localStorage.getItem('piWorkStyle') || 'block');
 
 /* ---------------- dropdowns ---------------- */
 // model flyouts live in <body>: they must be closed along with their dropdown
@@ -615,6 +631,7 @@ function renderResponseActivity(chatState = activeChatState()) {
   $('responseSpinner').setAttribute('aria-label', `${chatState.responseActivityLabel}, ${$('responseElapsed').textContent}`);
 }
 setInterval(() => {
+  chatView.tickWork();
   const state = activeChatState();
   if (state.awaitingInput) return;
   if (state.agentTask && !state.agentTask.t1) renderResponseActivity(state);
@@ -1039,7 +1056,8 @@ function renderModelMenu() {
     const head = document.createElement('button');
     head.type = 'button';
     head.className = 'dd-item' + (hasSel ? ' hasSel' : '');
-    head.innerHTML = `${providerIconHtml(prov, hasSel ? activeChatState().model.id : list[0]?.id ?? '')}<span class="col">
+    // The group head names the provider, so its icon must not borrow a model's.
+    head.innerHTML = `${providerIconHtml(prov)}<span class="col">
       <span>${esc(prov)}</span>
       <span class="desc">${list.length} model${list.length === 1 ? '' : 's'}${hasSel ? ' · in use' : ''}</span></span>
       <svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>`;
@@ -2647,9 +2665,12 @@ const settingsController = createSettingsView({
   applyTheme,
   applyAccent,
   applyLogoStyle,
+  applyWorkStyle,
+  playWorkStyleDemo,
   themes: THEMES,
   accents: ACCENTS,
   logoStyles: LOGO_STYLES,
+  workStyles: WORK_STYLES,
   agentInputs,
   getRenderedChatKey: () => renderedChatKey,
   setSidebarCollapsed,

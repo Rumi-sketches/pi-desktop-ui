@@ -1,20 +1,24 @@
-# Tool call summary design QA
+# Work block design QA
 
-- Source visual: `C:/Users/Mimmo/.codex/generated_images/01a0d253-398e-7d83-95df-6016ea7d0f52/exec-6853207c-5ebc-406b-8891-b584e3ac2a2c.png` (2166 × 726 px, dark concept).
-- Implementation capture: Codex in-app Browser tab 1, `http://127.0.0.1:3789/`, captured in this task at 1842 × 985 px. The browser capture is retained in the task output rather than as a workspace file.
-- State: first tool group closed and expanded, 9 calls in the user's existing chat. The app was in its saved Paseo light theme; the concept uses the Noir dark theme. The comparison is therefore about component structure, typography, spacing, and interaction, while colors follow the app's theme tokens.
-- Density normalization: source is a concept artboard at roughly double density; implementation is a browser viewport capture at default density. No pixel-by-pixel comparison was used.
+- Source visual: `prototypes/work-block.html`, variant A (one block per stretch of work, interim updates as chapters), approved before implementation.
+- Implementation capture: headless Edge driving `npm start` on `http://127.0.0.1:3799/` at 1180 × 820 px. The captures stay in the task output rather than in the workspace.
+- States: a finished chat with four blocks (59 steps in the largest, 4 failed tool calls) closed, on peek and fully open, in Paseo and Noir; two new runs with `xiaomi/mimo-v2.6-pro` captured while streaming and after they ended.
+- Density normalization: prototype and app were both captured at default density; the prototype uses fake data, so the comparison covers structure, copy and motion rather than content.
 
 ## Findings
 
-No actionable P0–P2 differences remain. The collapsed row has the same left timeline rail and marker, count-first hierarchy, subdued tool breakdown, smaller second-line activity preview, and right-side expansion affordance. On expansion, tool rows show distinct 15 px icons. The icons were initially absent because their files were not served; the asset allowlist was added, and the subsequent browser capture shows them.
+No actionable P0–P2 differences remain. The summary row keeps the prototype's hierarchy: a spinner or check, one headline, a muted count on the right and a chevron that turns with the level. While a run streams, the headline sweeps with a light shimmer. It follows the latest interim update, falling back to the latest bold reasoning heading and then the running tool. When the run ends it reads `Worked for 24s` with a per-tool breakdown, and failures are counted in the theme's critical colour.
 
-Typography uses the app's Segoe UI stack. Spacing keeps the summary at about 62 px in the observed chat. Colors follow the active palette, including the theme accent for the marker. The component has no image content besides Tabler icon assets; their shapes are sharp and correctly aligned. The activity copy and counts are legible, and raw bold markers are removed from the preview and expanded thinking text.
+Interim updates first stream as normal text. They leave the flow with a collapse once the next tool call starts, and the final answer stays outside the block. Tool rows put their icon on the step line, use a verb and target (`Ran ls docs`, `Read README.md`) and open on the raw input and output. Error rows are red and open by default.
+
+Variant B ships as the second style, chosen under Settings → Theme → Model work. Updates stay in the chat and each stretch of work between them folds on its own. While a stretch runs, its row names the latest named step: a tool call, running or finished, or a reasoning heading. When the stretch ends, the row names its first heading, its only tool call or a breakdown of its tool calls. The settings preview plays a scripted run through the real work block module in the chosen style.
+
+Two issues found during the live checks were fixed before this record. The finished duration fell back to `1s` because the app clears the run start before settling the view. The live clock also lagged the composer timer by the time to the first event.
 
 ## Verification
 
-- Browser: collapsed and expanded states inspected in the existing chat; icons visible for `read`, `bash`, and `edit`.
-- Automated: `npm test` passed (372 passed, 2 skipped); `npm run lint` passed.
-- Focused regions: the tool summary and its first expanded rows were large enough to inspect in the browser capture; no separate detail crop was needed.
+- Real use: history and live runs in the browser build; the live block followed the update text, absorbed it at the next tool call, and settled when the run ended. In the flow style a live run split at its update, and the same chat rebuilt from history in both styles. The settings preview played in both styles.
+- Automated: `npm test` passed, including seven work block tests in `test/chat-view.test.mjs`.
+- Not covered: the Electron shell (`npm run app`) was not launched for this record; it serves the same page.
 
 final result: passed

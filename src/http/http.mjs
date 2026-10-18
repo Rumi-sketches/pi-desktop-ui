@@ -305,6 +305,8 @@ const PAGE_ASSETS = {
   "/chat-view.js": { file: "chat-view.js", type: "text/javascript; charset=utf-8" },
   "/chat-math.js": { file: "chat-math.js", type: "text/javascript; charset=utf-8" },
   "/chat-previews.js": { file: "chat-previews.js", type: "text/javascript; charset=utf-8" },
+  "/work-blocks.js": { file: "work-blocks.js", type: "text/javascript; charset=utf-8" },
+  "/work-style-demo.js": { file: "work-style-demo.js", type: "text/javascript; charset=utf-8" },
   "/settings-view.js": { file: "settings-view.js", type: "text/javascript; charset=utf-8" },
   "/terminal-view.js": { file: "terminal-view.js", type: "text/javascript; charset=utf-8" },
   "/debate-view.js": { file: "debate-view.js", type: "text/javascript; charset=utf-8" },
@@ -323,6 +325,12 @@ const PAGE_ASSETS = {
     "file-text", "terminal-2", "edit", "file-plus", "search", "folder", "world", "tool",
   ].map((name) => [`/tool-icons/${name}.svg`, {
     file: `tool-icons/${name}.svg`, type: "image/svg+xml",
+  }])),
+  // Provider marks cropped from Lobe Icons assets (see public/provider-icons.js).
+  ...Object.fromEntries([
+    "mimo-light", "mimo-dark", "xiaomi-light", "xiaomi-dark",
+  ].map((name) => [`/provider-logos/${name}.png`, {
+    file: `provider-logos/${name}.png`, type: "image/png",
   }])),
   // The app mark, for the tab and for whatever pins the page. `/favicon.ico`
   // is not in the HTML: browsers ask for it on their own, and answering 404 to

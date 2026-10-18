@@ -123,6 +123,17 @@ describe("routes that keep working", () => {
     assert.equal(unknown.status, 404);
   });
 
+  test("cropped provider logos are served from the fixed asset list", async () => {
+    for (const name of ["mimo-light", "mimo-dark", "xiaomi-light", "xiaomi-dark"]) {
+      const logo = await fetch(`${origin}/provider-logos/${name}.png`);
+      assert.equal(logo.status, 200, name);
+      assert.equal(logo.headers.get("content-type"), "image/png");
+      assert.ok((await logo.arrayBuffer()).byteLength > 0, name);
+    }
+    const unknown = await fetch(`${origin}/provider-logos/unknown.png`);
+    assert.equal(unknown.status, 404);
+  });
+
   test("the vendor sub-tree is a prefix route: unknown verb, 405", async () => {
     const { status, allow } = await request("POST", "/vendor/marked/lib/marked.esm.js");
     assert.equal(status, 405);

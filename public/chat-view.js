@@ -1,5 +1,6 @@
 import { withSessionKey } from './transport.js';
-import { showChatPreview } from './chat-previews.js';
+import { isPreviewTool, showChatPreview } from './chat-previews.js';
+import { createWorkBlocks, toolVerb } from './work-blocks.js';
 import { createMathExtensions } from './chat-math.js';
 
 export function decorateMarkdownAlert(quote, documentRef) {
@@ -63,6 +64,7 @@ function requireFunction(value, label) {
  *   requestHistoryPage: (before: number, key: string) => Promise<any>,
  *   isActiveKey: (key: string) => boolean,
  *   onToolEvent?: (event: any, key: string) => void,
+ *   getWorkStyle?: () => string,
  * }} options
  */
 export function createChatView({
@@ -85,6 +87,7 @@ export function createChatView({
   requestHistoryPage,
   isActiveKey,
   onToolEvent = () => {},
+  getWorkStyle = () => 'block',
 }) {
   requireFunction(getKey, 'getKey');
   requireFunction(getChatState, 'getChatState');
@@ -173,6 +176,15 @@ export function createChatView({
     if (key) untrack = cache.trackTimer(key, id, clearTimeout);
     return id;
   }
+
+  const work = createWorkBlocks({
+    documentRef,
+    root: chat,
+    later: addChatTimer,
+    inHistory: () => historyRoot !== null,
+    runStartedAt: () => currentState()?.responseStartedAt,
+    workStyle: getWorkStyle,
+  });
 
   function enhanceMarkdownStructure(div) {
     for (const quote of all('blockquote', div)) decorateMarkdownAlert(quote, documentRef);
@@ -398,6 +410,7 @@ export function createChatView({
       meta.appendChild(duration);
     }
     body.appendChild(meta);
+    work.adoptMeta(meta);
     return meta;
   }
 
@@ -895,7 +908,7 @@ export function createChatView({
   }
 
   function toolResultSummary(output, { running = false, isError = false } = {}) {
-    if (running) return 'Running…';
+    if (running) return '';
     const text = String(output ?? '').trim();
     if (!text) return isError ? 'Failed without output' : 'Completed without output';
     const lines = text.split(/\r?\n/);
@@ -909,105 +922,20 @@ export function createChatView({
     grep: 'search', find: 'search', ls: 'folder',
     web: 'web', search: 'search', fetch: 'web',
   };
-  const toolCountLabels = {
-    read: ['read', 'reads'], bash: ['shell command', 'shell commands'],
-    edit: ['edit', 'edits'], write: ['write', 'writes'],
-    grep: ['search', 'searches'], find: ['search', 'searches'],
-    ls: ['listing', 'listings'],
-  };
-
-  function toolCountLabel(name, count) {
-    const labels = toolCountLabels[name];
-    return `${count} ${labels ? labels[count === 1 ? 0 : 1] : name}`;
-  }
-
-  function updateToolGroup(group) {
-    const entries = [...group.querySelector('.toolGroupCalls').children];
-    const cards = entries.filter((entry) => entry.classList.contains('toolCard'));
-    group.querySelector('.toolGroupCount').textContent = `${cards.length} tool calls`;
-    const thoughts = entries.filter((entry) => entry.classList.contains('thinking'));
-    const latest = group.querySelector('.toolGroupThought');
-    const thoughtText = thoughts.length ? thoughts[thoughts.length - 1].textContent.trim() : '';
-    latest.textContent = thoughtText.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
-    latest.hidden = !latest.textContent;
-    const counts = new Map();
-    for (const card of cards) {
-      const name = card.querySelector('.nm').textContent || 'tool';
-      counts.set(name, (counts.get(name) ?? 0) + 1);
-    }
-    const preview = group.querySelector('.toolGroupPreview');
-    preview.replaceChildren();
-    for (const [name, count] of counts) {
-      const pill = documentRef.createElement('span');
-      pill.textContent = toolCountLabel(name, count);
-      preview.appendChild(pill);
-    }
-  }
-
-  function appendGroupedThinking(body, text = '') {
-    const thought = bubble('thinking', text.replace(/\*\*/g, ''), body);
-    thought.dataset.rawText = text;
-    const trailingMeta = thought.previousElementSibling?.classList.contains('msgMeta')
-      ? thought.previousElementSibling : null;
-    const group = trailingMeta?.previousElementSibling ?? thought.previousElementSibling;
-    if (group?.classList.contains('toolGroup')) {
-      const calls = group.querySelector('.toolGroupCalls');
-      if (trailingMeta) calls.appendChild(trailingMeta);
-      calls.appendChild(thought);
-      updateToolGroup(group);
-    }
-    return thought;
-  }
-
-  function appendToolCard(body, card) {
-    const previous = body.lastElementChild;
-    const trailingMeta = previous?.classList.contains('msgMeta') ? previous : null;
-    const existingGroup = trailingMeta?.previousElementSibling ?? previous;
-    if (existingGroup?.classList.contains('toolGroup')) {
-      const calls = existingGroup.querySelector('.toolGroupCalls');
-      if (trailingMeta) calls.appendChild(trailingMeta);
-      calls.appendChild(card);
-      updateToolGroup(existingGroup);
-      return;
-    }
-    body.appendChild(card);
-    const nodes = [];
-    for (let node = card; node && (node.classList.contains('toolCard') || node.classList.contains('thinking') || node.classList.contains('msgMeta')); node = node.previousElementSibling) nodes.unshift(node);
-    if (nodes.filter((node) => node.classList.contains('toolCard')).length !== 4) return;
-    const group = documentRef.createElement('details');
-    group.className = 'toolGroup';
-    const summary = documentRef.createElement('summary');
-    const count = documentRef.createElement('span');
-    count.className = 'toolGroupCount';
-    const preview = documentRef.createElement('span');
-    preview.className = 'toolGroupPreview';
-    const thought = documentRef.createElement('span');
-    thought.className = 'toolGroupThought';
-    summary.append(count, preview, thought);
-    const calls = documentRef.createElement('div');
-    calls.className = 'toolGroupCalls';
-    group.append(summary, calls);
-    body.insertBefore(group, nodes[0]);
-    group.querySelector('.toolGroupCalls').append(...nodes);
-    updateToolGroup(group);
-  }
-
   function renderTool(event) {
     return mutateTranscript(() => {
       if (!currentTurn) currentTurn = newTurn('pi');
       if (event.name === 'request_form') return renderInteractiveForm(event);
       let card = event.id ? toolCards.get(event.id) : null;
+      let joinWork = false;
       if (!card) {
         card = documentRef.createElement('div');
         card.className = 'toolCard running';
         card.innerHTML = `<button type="button" class="toolHead" aria-expanded="false">
-          <span class="toolDot" aria-hidden="true"></span>
-          <span class="toolMain">
-            <span class="toolTitle"><span class="nm"></span><span class="sm"></span></span>
-            <span class="toolResult">Running…</span>
-          </span>
-          <span class="st">running</span>
-          <svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+          <span class="toolIcon" aria-hidden="true"></span>
+          <span class="toolTitle"><span class="nm"></span><span class="sm"></span></span>
+          <span class="toolResult"></span>
+          <svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
         </button>
         <div class="toolBody">
           <h6>Input</h6><pre class="args">…</pre>
@@ -1018,18 +946,17 @@ export function createChatView({
           const open = card.classList.toggle('open');
           head.setAttribute('aria-expanded', String(open));
         });
-        appendToolCard(currentTurn, card);
+        // Previews are results the reader asked for, so they stay in the flow.
+        if (isPreviewTool(event.name)) currentTurn.appendChild(card);
+        else joinWork = true;
         if (event.id) toolCards.set(event.id, card);
         addCopyButtons(card);
       }
       const query = (selector) => card.querySelector(selector);
-      if (event.name && !query('.toolIcon')) {
-        query('.nm').textContent = event.name;
-        const icon = documentRef.createElement('span');
-        icon.className = 'toolIcon';
-        icon.dataset.kind = toolIconKinds[event.name] ?? 'other';
-        icon.setAttribute('aria-hidden', 'true');
-        query('.nm').parentNode.insertBefore(icon, query('.nm'));
+      if (event.name && !card.dataset.tool) {
+        card.dataset.tool = event.name;
+        query('.nm').textContent = toolVerb(event.name, false);
+        query('.toolIcon').dataset.kind = toolIconKinds[event.name] ?? 'other';
       }
       if (event.status === 'preview') {
         showChatPreview(card, event, getKey(), documentRef, (url) => windowRef.fetch(url));
@@ -1037,6 +964,7 @@ export function createChatView({
         query('.sm').textContent = event.summary || '';
         query('.sm').title = event.summary || '';
         query('.args').textContent = typeof event.args === 'string' ? event.args : JSON.stringify(event.args ?? {}, null, 2);
+        work.toolChanged(card);
       } else if (event.status === 'update') {
         if (event.output) {
           query('.out').textContent = event.output;
@@ -1046,7 +974,7 @@ export function createChatView({
         card.classList.remove('running');
         card.classList.toggle('done', !event.isError);
         card.classList.toggle('error', !!event.isError);
-        query('.st').textContent = event.isError ? 'error' : 'done';
+        query('.nm').textContent = toolVerb(card.dataset.tool, true);
         query('.toolResult').textContent = toolResultSummary(event.output, { isError: !!event.isError });
         query('.out').textContent = event.output || '(no output)';
         if (event.previewReady) showChatPreview(card, event, getKey(), documentRef, (url) => windowRef.fetch(url));
@@ -1054,9 +982,10 @@ export function createChatView({
           card.classList.add('open');
           query('.toolHead').setAttribute('aria-expanded', 'true');
         }
+        work.toolChanged(card);
       }
-      const group = card.closest('.toolGroup');
-      if (group && event.status === 'start') updateToolGroup(group);
+      // A new card joins its block once named, so the summary changes once, to verb and target.
+      if (joinWork) work.addTool(currentTurn, card);
       return card;
     });
   }
@@ -1122,10 +1051,15 @@ export function createChatView({
     const previousTurn = currentTurn;
     historyRoot = fragment;
     try {
+      let previousTime = null;
       for (const message of messages) {
         const blocks = Array.isArray(message.blocks) && message.blocks.length
           ? message.blocks
           : (message.text ? [{ type: 'text', text: message.text }] : []);
+        const messageTime = timestampMillis(message.timestamp);
+        // Entries are stamped when persisted: the previous one marks when this one began.
+        work.setHistoryClock(previousTime ?? messageTime, messageTime);
+        if (messageTime !== null) previousTime = messageTime;
         if (!blocks.length && !message.errorMessage) continue;
         const body = newTurn(message.role === 'user' ? 'user' : 'pi',
           message.role === 'assistant' && (message.provider || message.model)
@@ -1147,7 +1081,7 @@ export function createChatView({
             lastText = skillInvocationElement(block);
             body.appendChild(lastText);
           } else if (block.type === 'thinking') {
-            appendGroupedThinking(body, block.text ?? '');
+            work.addThought(body, block.text ?? '');
           } else if (block.type === 'tool') {
             renderTool({ ...block, status: 'start' });
             if (block.status === 'end') renderTool({ ...block, status: 'end' });
@@ -1161,10 +1095,16 @@ export function createChatView({
           durationMs: message.durationMs,
           role: message.role,
         });
-        if (lastText) addMessageActions(body, lastText, { entryId: message.entryId });
+        // Text beside tool calls is an interim update inside a work block, not an answer.
+        if (lastText && !blocks.some((block) => block.type === 'tool')) {
+          addMessageActions(body, lastText, { entryId: message.entryId });
+        }
       }
+      work.setHistoryClock(null, null);
+      work.refreshAll(fragment);
       return fragment;
     } finally {
+      work.setHistoryClock(null, null);
       historyRoot = previousRoot;
       currentTurn = previousTurn;
     }
@@ -1219,7 +1159,7 @@ export function createChatView({
           currentAssistant = bubble('assistant', segment.text ?? '', currentTurn);
         } else if (segment.type === 'thinking') {
           currentAssistant = null;
-          currentThinking = appendGroupedThinking(currentTurn, segment.text ?? '');
+          currentThinking = work.addThought(currentTurn, segment.text ?? '');
         } else if (segment.type === 'tool' && segment.tool) {
           currentAssistant = currentThinking = null;
           renderTool({ ...segment.tool, status: 'start' });
@@ -1231,6 +1171,10 @@ export function createChatView({
             renderTool({ ...segment.tool, status: 'update' });
           }
         }
+      }
+      if (live.length && currentTurn) {
+        work.resumeLast(currentTurn);
+        work.refreshAll(fragment);
       }
     } finally {
       historyRoot = null;
@@ -1249,6 +1193,7 @@ export function createChatView({
         currentThinking = null;
         if (!currentAssistant) {
           if (!currentTurn) currentTurn = newTurn('pi');
+          work.textStarted();
           currentAssistant = bubble('assistant', '', currentTurn);
         }
         appendMarkdown(currentAssistant, event.delta);
@@ -1258,11 +1203,8 @@ export function createChatView({
         flushAssistantMeta(chatState);
         currentAssistant = null;
         if (!currentTurn) currentTurn = newTurn('pi');
-        if (!currentThinking) currentThinking = appendGroupedThinking(currentTurn);
-        currentThinking.dataset.rawText = (currentThinking.dataset.rawText ?? '') + event.delta;
-        mutateTranscript(() => { currentThinking.textContent = currentThinking.dataset.rawText.replace(/\*\*/g, ''); });
-        const thinkingGroup = currentThinking.closest('.toolGroup');
-        if (thinkingGroup) updateToolGroup(thinkingGroup);
+        if (!currentThinking) currentThinking = mutateTranscript(() => work.addThought(currentTurn));
+        mutateTranscript(() => work.appendThought(currentThinking, event.delta));
         return true;
       }
       case 'tool':
@@ -1425,12 +1367,16 @@ export function createChatView({
       currentThinking = snapshot.currentThinking;
       currentTurn = snapshot.currentTurn;
       for (const [id, card] of snapshot.toolCards) toolCards.set(id, card);
+      // A run that ended while this chat was parked leaves nothing spinning.
+      if (!getChatState(key)?.streaming) work.finishAll();
     }
     if (entry.view.scrollTop !== null) chatWrap.scrollTop = entry.view.scrollTop;
   }
 
+  /** The run is over: forget the open segments and settle its work blocks. */
   function clearSegments() {
     currentAssistant = currentThinking = currentTurn = null;
+    work.finishAll();
   }
 
   function showHero(projectName = '') {
@@ -1460,6 +1406,7 @@ export function createChatView({
   }
 
   async function onChatClick(event) {
+    if (work.handleClick(event.target)) return;
     const queueRemove = event.target.closest('[data-queue-remove]');
     if (queueRemove) {
       await cancelQueuedPrompt(queueRemove.dataset.queueRemove);
@@ -1518,6 +1465,7 @@ export function createChatView({
     finalizeStreamingMarkdown,
     flushAssistantMeta,
     clearSegments,
+    tickWork: () => work.tick(),
     renderQueuedPrompts,
     dispatchQueuedPrompts,
     showHero,
