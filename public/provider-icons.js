@@ -43,6 +43,16 @@ function localIcon(slug) {
 // `terms` point at the asset and its license. `aggregator` marks providers that
 // serve other companies' models: their own mark identifies only the provider
 // itself, never the models routed through it.
+/**
+ * @typedef {object} ProviderRecord
+ * @property {string[]} aliases
+ * @property {boolean} [aggregator]
+ * @property {string} source
+ * @property {string} terms
+ * @property {string} constraint
+ * @property {{ kind: string, bg: string, fg: string, svg: string, monoSvg: string, mono: string }} icon
+ */
+/** @type {Readonly<Record<string, ProviderRecord>>} */
 export const PROVIDER_ICONS = Object.freeze({
   anthropic: Object.freeze({
     aliases: ['anthropic', 'claude', 'fable', 'opus', 'sonnet', 'haiku'],
